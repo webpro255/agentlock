@@ -281,7 +281,7 @@ Apache 2.0 — see [LICENSE](LICENSE).
 
 ## Author
 
-**David Grice** — [AgentShield](https://agent-shield.com) — [agentlock.dev](https://agentlock.dev)
+**David Grice** — [agentlock.dev](https://agentlock.dev)
 
 ---
 
