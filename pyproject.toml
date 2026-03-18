@@ -10,7 +10,7 @@ readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
 authors = [
-    { name = "David Grice", email = "david@agent-shield.com" },
+    { name = "David Grice", email = "webpro255@users.noreply.github.com" },
 ]
 keywords = [
     "ai",

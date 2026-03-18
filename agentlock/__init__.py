@@ -30,7 +30,7 @@ Quick start::
     if result.allowed:
         output = gate.execute("read_db", my_db_func, token=result.token)
 
-Copyright 2026 David Grice (AgentShield — agent-shield.com)
+Copyright 2026 David Grice
 SPDX-License-Identifier: Apache-2.0
 """
 

@@ -16,7 +16,7 @@ AgentLock is a security-critical library. We take vulnerability reports seriousl
 
 Instead, report vulnerabilities via one of these channels:
 
-1. **Email:** security@agent-shield.com
+1. **Email:** security@agentlock.dev
 2. **GitHub Security Advisories:** Use the "Report a vulnerability" button on the [Security tab](https://github.com/webpro255/agentlock/security/advisories/new)
 
 ### What to Include
