@@ -1,0 +1,334 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentlock.dev/schema/v1.0",
+  "title": "AgentLock Tool Definition Schema v1.0",
+  "description": "Authorization schema for AI agent tool calls. Defines the agentlock permissions block that extends standard tool definitions with access control, rate limiting, data policies, and audit requirements.",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Tool identifier"
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable tool description"
+    },
+    "parameters": {
+      "type": "object",
+      "description": "Tool parameter schema"
+    },
+    "agentlock": {
+      "$ref": "#/$defs/AgentLockPermissions"
+    }
+  },
+  "required": [
+    "name",
+    "agentlock"
+  ],
+  "$defs": {
+    "ApprovalChannel": {
+      "description": "Out-of-band approval delivery channel.",
+      "enum": [
+        "push_notification",
+        "email",
+        "sms",
+        "in_app"
+      ],
+      "title": "ApprovalChannel",
+      "type": "string"
+    },
+    "ApprovalThreshold": {
+      "description": "When human approval is triggered.",
+      "enum": [
+        "always",
+        "bulk_operations",
+        "external_communication",
+        "financial_above_limit",
+        "first_invocation_per_session"
+      ],
+      "title": "ApprovalThreshold",
+      "type": "string"
+    },
+    "AuditConfig": {
+      "additionalProperties": false,
+      "description": "Audit logging requirements.  Audit is never optional.",
+      "properties": {
+        "log_level": {
+          "$ref": "#/$defs/AuditLogLevel",
+          "default": "standard"
+        },
+        "include_parameters": {
+          "default": true,
+          "title": "Include Parameters",
+          "type": "boolean"
+        },
+        "retention_days": {
+          "default": 90,
+          "minimum": 1,
+          "title": "Retention Days",
+          "type": "integer"
+        }
+      },
+      "title": "AuditConfig",
+      "type": "object"
+    },
+    "AuditLogLevel": {
+      "description": "Audit detail level.",
+      "enum": [
+        "minimal",
+        "standard",
+        "full"
+      ],
+      "title": "AuditLogLevel",
+      "type": "string"
+    },
+    "AuthMethod": {
+      "description": "Supported authentication mechanisms.",
+      "enum": [
+        "oauth2",
+        "magic_link",
+        "mfa",
+        "api_key"
+      ],
+      "title": "AuthMethod",
+      "type": "string"
+    },
+    "DataBoundary": {
+      "description": "Scope of data access.",
+      "enum": [
+        "authenticated_user_only",
+        "team",
+        "organization"
+      ],
+      "title": "DataBoundary",
+      "type": "string"
+    },
+    "DataClassification": {
+      "description": "Data sensitivity classification.",
+      "enum": [
+        "public",
+        "internal",
+        "confidential",
+        "may_contain_pii",
+        "contains_pii",
+        "contains_phi",
+        "contains_financial"
+      ],
+      "title": "DataClassification",
+      "type": "string"
+    },
+    "DataPolicyConfig": {
+      "additionalProperties": false,
+      "description": "Data classification and redaction rules.",
+      "properties": {
+        "input_classification": {
+          "$ref": "#/$defs/DataClassification",
+          "default": "public"
+        },
+        "output_classification": {
+          "$ref": "#/$defs/DataClassification",
+          "default": "public"
+        },
+        "prohibited_in_output": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Prohibited In Output",
+          "type": "array"
+        },
+        "redaction": {
+          "$ref": "#/$defs/RedactionMode",
+          "default": "none"
+        }
+      },
+      "title": "DataPolicyConfig",
+      "type": "object"
+    },
+    "HumanApprovalConfig": {
+      "additionalProperties": false,
+      "description": "Human-in-the-loop approval gate.",
+      "properties": {
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "threshold": {
+          "$ref": "#/$defs/ApprovalThreshold",
+          "default": "always"
+        },
+        "channel": {
+          "$ref": "#/$defs/ApprovalChannel",
+          "default": "push_notification"
+        }
+      },
+      "title": "HumanApprovalConfig",
+      "type": "object"
+    },
+    "RateLimitConfig": {
+      "additionalProperties": false,
+      "description": "Per-user, per-session rate limiting.",
+      "properties": {
+        "max_calls": {
+          "minimum": 1,
+          "title": "Max Calls",
+          "type": "integer"
+        },
+        "window_seconds": {
+          "minimum": 1,
+          "title": "Window Seconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "max_calls",
+        "window_seconds"
+      ],
+      "title": "RateLimitConfig",
+      "type": "object"
+    },
+    "RecipientPolicy": {
+      "description": "Allowed recipient scope for outbound communication tools.",
+      "enum": [
+        "known_contacts_only",
+        "same_domain",
+        "allowlist",
+        "any"
+      ],
+      "title": "RecipientPolicy",
+      "type": "string"
+    },
+    "RedactionMode": {
+      "description": "How prohibited data types are handled.",
+      "enum": [
+        "auto",
+        "manual",
+        "none"
+      ],
+      "title": "RedactionMode",
+      "type": "string"
+    },
+    "RiskLevel": {
+      "description": "Tool risk classification.",
+      "enum": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "title": "RiskLevel",
+      "type": "string"
+    },
+    "ScopeConfig": {
+      "additionalProperties": false,
+      "description": "Constrains what data a tool invocation can access.",
+      "properties": {
+        "data_boundary": {
+          "$ref": "#/$defs/DataBoundary",
+          "default": "authenticated_user_only"
+        },
+        "max_records": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Records"
+        },
+        "allowed_recipients": {
+          "$ref": "#/$defs/RecipientPolicy",
+          "default": "known_contacts_only"
+        }
+      },
+      "title": "ScopeConfig",
+      "type": "object"
+    },
+    "SessionConfig": {
+      "additionalProperties": false,
+      "description": "Session lifetime and re-authentication rules.",
+      "properties": {
+        "max_duration_seconds": {
+          "default": 900,
+          "minimum": 1,
+          "title": "Max Duration Seconds",
+          "type": "integer"
+        },
+        "require_reauth_on_scope_change": {
+          "default": true,
+          "title": "Require Reauth On Scope Change",
+          "type": "boolean"
+        }
+      },
+      "title": "SessionConfig",
+      "type": "object"
+    },
+    "AgentLockPermissions": {
+      "additionalProperties": false,
+      "description": "The ``agentlock`` permissions block attached to a tool definition.\n\nThis is the core of the specification.  Every field has a secure default\nso that an empty permissions block denies by default.\n\nExample::\n\n    perms = AgentLockPermissions(\n        risk_level=\"high\",\n        requires_auth=True,\n        allowed_roles=[\"admin\"],\n    )",
+      "properties": {
+        "version": {
+          "default": "1.0",
+          "title": "Version",
+          "type": "string"
+        },
+        "risk_level": {
+          "$ref": "#/$defs/RiskLevel",
+          "default": "high"
+        },
+        "requires_auth": {
+          "default": true,
+          "title": "Requires Auth",
+          "type": "boolean"
+        },
+        "auth_methods": {
+          "items": {
+            "$ref": "#/$defs/AuthMethod"
+          },
+          "title": "Auth Methods",
+          "type": "array"
+        },
+        "allowed_roles": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Roles",
+          "type": "array"
+        },
+        "scope": {
+          "$ref": "#/$defs/ScopeConfig"
+        },
+        "rate_limit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RateLimitConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "data_policy": {
+          "$ref": "#/$defs/DataPolicyConfig"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionConfig"
+        },
+        "audit": {
+          "$ref": "#/$defs/AuditConfig"
+        },
+        "human_approval": {
+          "$ref": "#/$defs/HumanApprovalConfig"
+        }
+      },
+      "title": "AgentLockPermissions",
+      "type": "object"
+    }
+  }
+}
