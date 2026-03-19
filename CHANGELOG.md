@@ -10,8 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Core AgentLock permissions schema (v1.0)
-- `AuthorizationGate` — central enforcement point with deny-by-default semantics
-- `AgentLockPermissions` — Pydantic model for the `agentlock` permissions block
+- `AuthorizationGate`  central enforcement point with deny-by-default semantics
+- `AgentLockPermissions`  Pydantic model for the `agentlock` permissions block
 - `@agentlock` decorator for one-line tool protection
 - Single-use, time-limited, operation-bound execution tokens
 - Session management with expiry and scope tracking
