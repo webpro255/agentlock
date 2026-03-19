@@ -18,7 +18,7 @@
 
 ## The Problem
 
-Every major AI agent framework — LangChain, CrewAI, AutoGen, and others — treats tool calls as trusted function invocations with **no identity verification, no scope constraints, and no access control**.
+Every major AI agent framework LangChain, CrewAI, AutoGen, and others treats tool calls as trusted function invocations with **no identity verification, no scope constraints, and no access control**.
 
 ```json
 {
@@ -28,7 +28,7 @@ Every major AI agent framework — LangChain, CrewAI, AutoGen, and others — tr
 }
 ```
 
-This tool will send an email to **anyone**, with **any content**, at **any time**, for **any reason**, initiated by **any user** — or attacker — who can communicate with the agent.
+This tool will send an email to **anyone**, with **any content**, at **any time**, for **any reason**, initiated by **any user**  or attacker  who can communicate with the agent.
 
 This is the equivalent of giving every application on a computer full root access and hoping it behaves.
 
