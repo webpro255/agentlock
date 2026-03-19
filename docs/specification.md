@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-AI agents are being deployed with direct access to tools that can read databases, send emails, execute financial transactions, and modify production systems. Yet these tools have no standardized permission model. Every major agent framework — LangChain, CrewAI, AutoGen, and others — treats tool calls as trusted function invocations with no identity verification, scope constraints, or access control.
+AI agents are being deployed with direct access to tools that can read databases, send emails, execute financial transactions, and modify production systems. Yet these tools have no standardized permission model. Every major agent framework LangChain, CrewAI, AutoGen, and others treats tool calls as trusted function invocations with no identity verification, scope constraints, or access control.
 
 AgentLock defines an open standard for authorization in AI agent systems. It introduces a permissions schema that any tool can implement, any agent framework can enforce, and any security team can audit.
 
