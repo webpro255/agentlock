@@ -27,12 +27,12 @@ pytest
 
 ## Code Standards
 
-- **Python 3.10+** — all code must support Python 3.10 and above
-- **Type hints everywhere** — all function signatures must be annotated
-- **`from __future__ import annotations`** — required in every module
-- **Google-style docstrings** — for all public classes and functions
-- **Pydantic v2** — for schema models
-- **No unnecessary dependencies** — core library depends only on `pydantic`
+- **Python 3.10+** - all code must support Python 3.10 and above
+- **Type hints everywhere** - all function signatures must be annotated
+- **`from __future__ import annotations`** - required in every module
+- **Google-style docstrings** - for all public classes and functions
+- **Pydantic v2** - for schema models
+- **No unnecessary dependencies** - core library depends only on `pydantic`
 
 ## Testing
 
@@ -57,11 +57,11 @@ pytest tests/test_gate.py -v
 
 ### High Priority
 
-- **Real-world integration testing** — test with actual LangChain, CrewAI, AutoGen deployments
-- **Additional audit backends** — Redis, PostgreSQL, CloudWatch, Datadog
-- **Additional auth providers** — OAuth2 providers, SAML, OIDC
-- **Performance benchmarks** — measure gate overhead at scale
-- **Documentation improvements** — tutorials, guides, API reference
+- **Real-world integration testing** - test with actual LangChain, CrewAI, AutoGen deployments
+- **Additional audit backends** - Redis, PostgreSQL, CloudWatch, Datadog
+- **Additional auth providers** - OAuth2 providers, SAML, OIDC
+- **Performance benchmarks** - measure gate overhead at scale
+- **Documentation improvements** - tutorials, guides, API reference
 
 ### Schema Extensions (v1.1+)
 
@@ -79,19 +79,19 @@ pytest tests/test_gate.py -v
 
 ## Pull Request Guidelines
 
-- **One feature per PR** — keep changes focused
-- **Update tests** — new code needs tests
-- **Update docs** — if you change the API, update the docs
-- **No breaking changes without discussion** — open an issue first
-- **Keep commits clean** — squash fixup commits before merge
+- **One feature per PR** - keep changes focused
+- **Update tests** - new code needs tests
+- **Update docs** - if you change the API, update the docs
+- **No breaking changes without discussion** - open an issue first
+- **Keep commits clean** - squash fixup commits before merge
 
 ## Architecture Notes
 
-- `agentlock/gate.py` — Central enforcement point. Changes here affect everything.
-- `agentlock/schema.py` — Pydantic models for the spec. Changes here affect the standard.
-- `agentlock/policy.py` — Policy evaluation. Check order matters.
-- `agentlock/integrations/` — Framework wrappers. Must lazy-import framework dependencies.
-- `schema/agentlock-v1.0.json` — Hand-written JSON schema. Must stay in sync with Pydantic models.
+- `agentlock/gate.py` - Central enforcement point. Changes here affect everything.
+- `agentlock/schema.py` - Pydantic models for the spec. Changes here affect the standard.
+- `agentlock/policy.py` - Policy evaluation. Check order matters.
+- `agentlock/integrations/` - Framework wrappers. Must lazy-import framework dependencies.
+- `schema/agentlock-v1.0.json` - Hand-written JSON schema. Must stay in sync with Pydantic models.
 
 ## License
 
