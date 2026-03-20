@@ -33,17 +33,26 @@ from dataclasses import dataclass
 from typing import Any
 
 from agentlock.audit import AuditBackend, AuditLogger, InMemoryAuditBackend
+from agentlock.context import ContextProvenance, ContextTracker
 from agentlock.exceptions import (
     DeniedError,
     RateLimitedError,
 )
+from agentlock.memory_gate import MemoryDecision, MemoryGate, MemoryStore
 from agentlock.policy import PolicyEngine, RequestContext
 from agentlock.rate_limit import RateLimiter
 from agentlock.redaction import RedactionEngine, RedactionResult
 from agentlock.schema import AgentLockPermissions
 from agentlock.session import Session, SessionStore
 from agentlock.token import ExecutionToken, TokenStore
-from agentlock.types import DataBoundary, DenialReason
+from agentlock.types import (
+    ContextSource,
+    DataBoundary,
+    DegradationEffect,
+    DenialReason,
+    MemoryPersistence,
+    MemoryWriter,
+)
 
 
 @dataclass
@@ -92,6 +101,7 @@ class AuthorizationGate:
         audit_backend: AuditBackend | None = None,
         token_ttl: int = 60,
         session_duration: int = 900,
+        memory_store: MemoryStore | None = None,
     ) -> None:
         self._tools: dict[str, AgentLockPermissions] = {}
         self._policy = PolicyEngine()
@@ -100,6 +110,8 @@ class AuthorizationGate:
         self._session_store = SessionStore()
         self._audit = AuditLogger(backend=audit_backend or InMemoryAuditBackend())
         self._redaction_engines: dict[str, RedactionEngine] = {}
+        self._context_tracker = ContextTracker()
+        self._memory_gate = MemoryGate(store=memory_store)
         self._token_ttl = token_ttl
         self._session_duration = session_duration
 
@@ -240,11 +252,24 @@ class AuthorizationGate:
         if session and data_boundary is None:
             data_boundary = session.data_boundary
 
+        # Resolve context state for v1.1
+        resolved_session_id = session.session_id if session else ""
+        context_state = None
+        if permissions.version >= "1.1" and resolved_session_id:
+            context_state = self._context_tracker.get(resolved_session_id)
+            # Apply restrict_scope effect
+            if (
+                context_state
+                and context_state.is_degraded
+                and DegradationEffect.RESTRICT_SCOPE in context_state.active_effects
+            ):
+                data_boundary = DataBoundary.AUTHENTICATED_USER_ONLY
+
         # Build request context
         ctx = RequestContext(
             user_id=user_id,
             role=role,
-            session_id=session.session_id if session else "",
+            session_id=resolved_session_id,
             data_boundary=data_boundary or DataBoundary.AUTHENTICATED_USER_ONLY,
             record_count=record_count,
             recipient=recipient,
@@ -253,10 +278,21 @@ class AuthorizationGate:
             is_financial=is_financial,
             amount=amount,
             metadata=metadata or {},
+            context_state=context_state,
         )
 
         # Evaluate policy
         decision = self._policy.evaluate(permissions, ctx)
+
+        # v1.1: Elevate logging if trust is degraded
+        effective_log_level = permissions.audit.log_level
+        if (
+            context_state
+            and context_state.is_degraded
+            and DegradationEffect.ELEVATE_LOGGING in context_state.active_effects
+        ):
+            from agentlock.types import AuditLogLevel
+            effective_log_level = AuditLogLevel.FULL
 
         # Rate limiting (checked even if policy passed, before token issuance)
         if decision.allowed and permissions.rate_limit:
@@ -276,7 +312,7 @@ class AuthorizationGate:
                     action="denied",
                     reason="rate_limited",
                     risk_level=permissions.risk_level.value,
-                    log_level=permissions.audit.log_level,
+                    log_level=effective_log_level,
                     include_parameters=permissions.audit.include_parameters,
                     parameters=parameters,
                     duration_ms=duration_ms,
@@ -304,6 +340,16 @@ class AuthorizationGate:
                 ttl=self._token_ttl,
             )
 
+            # Build v1.1 audit metadata
+            audit_kwargs: dict[str, Any] = {}
+            if context_state:
+                audit_kwargs["trust_ceiling"] = context_state.trust_ceiling.value
+                audit_kwargs["is_trust_degraded"] = context_state.is_degraded
+                if context_state.active_effects:
+                    audit_kwargs["degradation_effects"] = [
+                        e.value for e in context_state.active_effects
+                    ]
+
             record = self._audit.log(
                 tool_name=tool_name,
                 user_id=user_id,
@@ -316,6 +362,7 @@ class AuthorizationGate:
                 token_id=token.token_id,
                 session_id=ctx.session_id,
                 duration_ms=duration_ms,
+                **audit_kwargs,
             )
 
             return AuthResult(
@@ -462,7 +509,234 @@ class AuthorizationGate:
             return RedactionResult(original=text, redacted=text, redactions=[])
         return engine.redact(text)
 
+    # -- Memory operations (v1.1) -------------------------------------------
+
+    def authorize_memory_write(
+        self,
+        tool_name: str,
+        *,
+        content: str,
+        content_hash: str,
+        user_id: str,
+        writer: MemoryWriter,
+        persistence: MemoryPersistence = MemoryPersistence.SESSION,
+        provenance: ContextProvenance | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> MemoryDecision:
+        """Authorize and execute a memory write for a tool.
+
+        Uses the tool's ``memory_policy`` to validate the write.
+
+        Args:
+            tool_name: The tool whose memory policy to use.
+            content: The content to persist.
+            content_hash: SHA-256 hash of the content.
+            user_id: Identity of the user whose memory this is.
+            writer: Who is writing (system, user, agent, tool).
+            persistence: Desired persistence level.
+            provenance: Provenance of the content being persisted.
+            metadata: Additional context.
+
+        Returns:
+            MemoryDecision with the result.
+        """
+        permissions = self._tools.get(tool_name)
+        if permissions is None or permissions.memory_policy is None:
+            decision = MemoryDecision(
+                allowed=False,
+                reason=DenialReason.MEMORY_WRITE_DENIED,
+                detail=f"No memory policy configured for tool '{tool_name}'.",
+                suggestion="Add memory_policy to the tool's agentlock permissions.",
+            )
+            self._audit.log(
+                tool_name=tool_name,
+                user_id=user_id,
+                action="memory_write_denied",
+                reason="memory_write_denied",
+                memory_operation="write",
+            )
+            return decision
+
+        mp = permissions.memory_policy
+        decision = self._memory_gate.authorize_write(
+            content=content,
+            content_hash=content_hash,
+            user_id=user_id,
+            tool_name=tool_name,
+            writer=writer,
+            persistence=persistence,
+            allowed_writers=mp.allowed_writers,
+            allowed_persistence=mp.persistence,
+            prohibited_content=mp.prohibited_content,
+            max_entries=mp.retention.max_entries,
+            require_write_confirmation=mp.require_write_confirmation,
+            provenance=provenance,
+            metadata=metadata,
+        )
+
+        if decision.allowed:
+            self._audit.log(
+                tool_name=tool_name,
+                user_id=user_id,
+                action="memory_write",
+                memory_operation="write",
+                memory_entry_id=decision.entry.entry_id if decision.entry else "",
+            )
+        else:
+            action = "memory_write_denied"
+            self._audit.log(
+                tool_name=tool_name,
+                user_id=user_id,
+                action=action,
+                reason=decision.reason.value if decision.reason else "",
+                memory_operation="write",
+            )
+
+        return decision
+
+    def authorize_memory_read(
+        self,
+        tool_name: str,
+        *,
+        user_id: str,
+        reader: MemoryWriter,
+    ) -> MemoryDecision:
+        """Authorize a memory read for a tool.
+
+        Uses the tool's ``memory_policy`` to validate the read and
+        performs lazy retention cleanup.
+
+        Args:
+            tool_name: The tool whose memory policy to use.
+            user_id: Identity of the user whose memory to read.
+            reader: Who is reading (system, user, agent, tool).
+
+        Returns:
+            MemoryDecision with the result.
+        """
+        permissions = self._tools.get(tool_name)
+        if permissions is None or permissions.memory_policy is None:
+            decision = MemoryDecision(
+                allowed=False,
+                reason=DenialReason.MEMORY_READ_DENIED,
+                detail=f"No memory policy configured for tool '{tool_name}'.",
+                suggestion="Add memory_policy to the tool's agentlock permissions.",
+            )
+            self._audit.log(
+                tool_name=tool_name,
+                user_id=user_id,
+                action="memory_read_denied",
+                reason="memory_read_denied",
+                memory_operation="read",
+            )
+            return decision
+
+        mp = permissions.memory_policy
+        decision = self._memory_gate.authorize_read(
+            user_id=user_id,
+            reader=reader,
+            tool_name=tool_name,
+            allowed_readers=mp.allowed_readers,
+            max_age_seconds=mp.retention.max_age_seconds,
+        )
+
+        if decision.allowed:
+            self._audit.log(
+                tool_name=tool_name,
+                user_id=user_id,
+                action="memory_read",
+                memory_operation="read",
+            )
+        else:
+            self._audit.log(
+                tool_name=tool_name,
+                user_id=user_id,
+                action="memory_read_denied",
+                reason=decision.reason.value if decision.reason else "",
+                memory_operation="read",
+            )
+
+        return decision
+
+    # -- Context tracking (v1.1) --------------------------------------------
+
+    def notify_context_write(
+        self,
+        session_id: str,
+        source: ContextSource,
+        content_hash: str,
+        *,
+        writer_id: str = "",
+        tool_name: str | None = None,
+        token_id: str | None = None,
+        parent_provenance_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> ContextProvenance:
+        """Report that content has entered the agent's context window.
+
+        Framework integrations MUST call this automatically after every
+        tool execution, document retrieval, web fetch, or peer agent
+        message reception.
+
+        Args:
+            session_id: Session this write belongs to.
+            source: What produced this content.
+            content_hash: SHA-256 hash of the content.
+            writer_id: Identity of the writer.
+            tool_name: Tool that produced the content, if any.
+            token_id: Execution token, if from an authorized call.
+            parent_provenance_id: Parent provenance, if derived.
+            metadata: Additional context (URL, filename, etc.).
+
+        Returns:
+            The created provenance record.
+        """
+        # Find the strongest context_policy across registered tools
+        # (use the first registered tool's policy that has context_policy set,
+        # or None if no tools have context_policy)
+        policy = None
+        for perms in self._tools.values():
+            if perms.context_policy is not None:
+                policy = perms.context_policy
+                break
+
+        provenance = self._context_tracker.record_write(
+            session_id=session_id,
+            source=source,
+            content_hash=content_hash,
+            writer_id=writer_id,
+            tool_name=tool_name,
+            token_id=token_id,
+            parent_provenance_id=parent_provenance_id,
+            metadata=metadata,
+            policy=policy,
+        )
+
+        # Audit the trust degradation if it just happened
+        state = self._context_tracker.get(session_id)
+        if state and state.is_degraded:
+            self._audit.log(
+                tool_name=tool_name or "",
+                user_id=writer_id,
+                action="trust_degraded",
+                risk_level="",
+                trust_ceiling=state.trust_ceiling.value,
+                is_trust_degraded=True,
+                degradation_effects=[e.value for e in state.active_effects],
+                metadata={"source": source.value, "content_hash": content_hash},
+            )
+
+        return provenance
+
     # -- Introspection ------------------------------------------------------
+
+    @property
+    def context_tracker(self) -> ContextTracker:
+        return self._context_tracker
+
+    @property
+    def memory_gate(self) -> MemoryGate:
+        return self._memory_gate
 
     @property
     def audit_logger(self) -> AuditLogger:

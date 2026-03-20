@@ -16,8 +16,13 @@ from agentlock.types import (
     ApprovalThreshold,
     AuditLogLevel,
     AuthMethod,
+    ContextAuthority,
+    ContextSource,
     DataBoundary,
     DataClassification,
+    DegradationEffect,
+    MemoryPersistence,
+    MemoryWriter,
     RecipientPolicy,
     RedactionMode,
     RiskLevel,
@@ -32,10 +37,16 @@ __all__ = [
     "SessionConfig",
     "AuditConfig",
     "HumanApprovalConfig",
+    "SourceAuthorityConfig",
+    "DegradationTrigger",
+    "TrustDegradationConfig",
+    "ContextPolicyConfig",
+    "MemoryRetentionConfig",
+    "MemoryPolicyConfig",
     "ToolDefinition",
 ]
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
 
 
 class ScopeConfig(BaseModel):
@@ -105,6 +116,93 @@ class HumanApprovalConfig(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+class SourceAuthorityConfig(BaseModel):
+    """Maps a context source to an authority level."""
+
+    source: ContextSource
+    authority: ContextAuthority
+
+    model_config = {"extra": "forbid"}
+
+
+class DegradationTrigger(BaseModel):
+    """Defines when and how trust degrades."""
+
+    source: ContextSource
+    effect: DegradationEffect
+
+    model_config = {"extra": "forbid"}
+
+
+class TrustDegradationConfig(BaseModel):
+    """Controls dynamic trust degradation."""
+
+    enabled: bool = True
+    triggers: list[DegradationTrigger] = Field(default_factory=list)
+    minimum_authority: ContextAuthority = ContextAuthority.DERIVED
+    allow_cascade_to_untrusted: bool = False
+
+    model_config = {"extra": "forbid"}
+
+
+def _default_source_authorities() -> list[SourceAuthorityConfig]:
+    sa = SourceAuthorityConfig
+    cs = ContextSource
+    ca = ContextAuthority
+    return [
+        sa(source=cs.USER_MESSAGE, authority=ca.AUTHORITATIVE),
+        sa(source=cs.SYSTEM_PROMPT, authority=ca.AUTHORITATIVE),
+        sa(source=cs.TOOL_OUTPUT, authority=ca.DERIVED),
+        sa(source=cs.RETRIEVED_DOCUMENT, authority=ca.UNTRUSTED),
+        sa(source=cs.WEB_CONTENT, authority=ca.UNTRUSTED),
+        sa(source=cs.AGENT_MEMORY, authority=ca.DERIVED),
+        sa(source=cs.PEER_AGENT, authority=ca.UNTRUSTED),
+    ]
+
+
+class ContextPolicyConfig(BaseModel):
+    """Governs what enters context and with what authority."""
+
+    source_authorities: list[SourceAuthorityConfig] = Field(
+        default_factory=_default_source_authorities
+    )
+    trust_degradation: TrustDegradationConfig = Field(
+        default_factory=TrustDegradationConfig
+    )
+    reject_unattributed: bool = True
+
+    model_config = {"extra": "forbid"}
+
+
+class MemoryRetentionConfig(BaseModel):
+    """Retention limits for persistent memory."""
+
+    max_age_seconds: int = Field(default=86400, ge=0)
+    max_entries: int = Field(default=100, ge=1)
+
+    model_config = {"extra": "forbid"}
+
+
+class MemoryPolicyConfig(BaseModel):
+    """Governs what the agent can persist to memory."""
+
+    persistence: MemoryPersistence = MemoryPersistence.NONE
+    allowed_writers: list[MemoryWriter] = Field(
+        default_factory=lambda: [MemoryWriter.SYSTEM]
+    )
+    allowed_readers: list[MemoryWriter] = Field(
+        default_factory=lambda: [MemoryWriter.SYSTEM]
+    )
+    retention: MemoryRetentionConfig = Field(
+        default_factory=MemoryRetentionConfig
+    )
+    prohibited_content: list[str] = Field(default_factory=list)
+    require_write_confirmation: bool = True
+    confirmation_channel: ApprovalChannel = ApprovalChannel.IN_APP
+
+    model_config = {"extra": "forbid"}
+
+
 class AgentLockPermissions(BaseModel):
     """The ``agentlock`` permissions block attached to a tool definition.
 
@@ -135,6 +233,8 @@ class AgentLockPermissions(BaseModel):
     human_approval: HumanApprovalConfig = Field(
         default_factory=HumanApprovalConfig
     )
+    context_policy: ContextPolicyConfig | None = None
+    memory_policy: MemoryPolicyConfig | None = None
 
     model_config = {"extra": "forbid"}
 

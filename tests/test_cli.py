@@ -16,7 +16,7 @@ class TestVersion:
             main(["--version"])
         captured = capsys.readouterr()
         assert "agentlock" in captured.out
-        assert "1.0.0" in captured.out
+        assert "1.1.0" in captured.out
 
 
 class TestInit:
@@ -28,7 +28,7 @@ class TestInit:
         data = json.loads(output.read_text())
         assert data["name"] == "my_tool"
         assert "agentlock" in data
-        assert data["agentlock"]["version"] == "1.0"
+        assert data["agentlock"]["version"] == "1.1"
 
     def test_default_output_name(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -75,6 +75,15 @@ def _validate(args: argparse.Namespace) -> int:
         thr = perms.human_approval.threshold.value
         ch = perms.human_approval.channel.value
         print(f"  Approval:    {thr} via {ch}")
+    if perms.context_policy is not None:
+        cp = perms.context_policy
+        td_status = "enabled" if cp.trust_degradation.enabled else "disabled"
+        print(f"  Context:     trust_degradation={td_status}")
+        print(f"  Reject unattributed: {cp.reject_unattributed}")
+    if perms.memory_policy is not None:
+        mp = perms.memory_policy
+        print(f"  Memory:      persistence={mp.persistence.value}")
+        print(f"  Writers:     {', '.join(w.value for w in mp.allowed_writers)}")
     return 0
 
 
@@ -97,7 +106,7 @@ def _init(args: argparse.Namespace) -> int:
             "param2": "integer",
         },
         "agentlock": {
-            "version": "1.0",
+            "version": "1.1",
             "risk_level": "medium",
             "requires_auth": True,
             "auth_methods": ["oauth2"],
@@ -202,6 +211,31 @@ def _inspect(args: argparse.Namespace) -> int:
         print(f"  Approval:      {thr} via {ch}")
     else:
         print("  Approval:      not required")
+    # v1.1 fields
+    if perms.context_policy is not None:
+        cp = perms.context_policy
+        td = cp.trust_degradation
+        print("  Context policy:")
+        print(f"    Degradation: {'enabled' if td.enabled else 'disabled'}")
+        if td.triggers:
+            for t in td.triggers:
+                print(f"    Trigger:     {t.source.value} → {t.effect.value}")
+        print(f"    Reject unattributed: {cp.reject_unattributed}")
+    if perms.memory_policy is not None:
+        mp = perms.memory_policy
+        print("  Memory policy:")
+        print(f"    Persistence: {mp.persistence.value}")
+        writers = ", ".join(w.value for w in mp.allowed_writers)
+        readers = ", ".join(r.value for r in mp.allowed_readers)
+        print(f"    Writers:     {writers}")
+        print(f"    Readers:     {readers}")
+        print(f"    Max entries: {mp.retention.max_entries}")
+        print(f"    Max age:     {mp.retention.max_age_seconds}s")
+        if mp.prohibited_content:
+            prohibited = ", ".join(mp.prohibited_content)
+            print(f"    Prohibited:  {prohibited}")
+        conf = "required" if mp.require_write_confirmation else "not required"
+        print(f"    Confirmation: {conf}")
     print()
     return 0
 

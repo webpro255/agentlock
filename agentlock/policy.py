@@ -9,10 +9,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from agentlock.context import ContextState
 from agentlock.schema import AgentLockPermissions
 from agentlock.types import (
     ApprovalThreshold,
     DataBoundary,
+    DegradationEffect,
     DenialReason,
     RiskLevel,
 )
@@ -47,6 +49,7 @@ class RequestContext:
     is_financial: bool = False
     amount: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
+    context_state: ContextState | None = None
 
     @property
     def is_authenticated(self) -> bool:
@@ -191,6 +194,61 @@ class PolicyEngine:
                         f"Approval request sent via "
                         f"{permissions.human_approval.channel.value}."
                     ),
+                )
+
+        # v1.1 checks — only when version is "1.1" and context_state provided
+        if permissions.version >= "1.1" and context.context_state is not None:
+            cs = context.context_state
+
+            # 8. Trust degradation
+            if cs.is_degraded and cs.active_effects:
+                if DegradationEffect.REQUIRE_APPROVAL in cs.active_effects:
+                    return PolicyDecision(
+                        allowed=False,
+                        reason=DenialReason.TRUST_DEGRADED,
+                        detail=(
+                            f"Session trust degraded after "
+                            f"{cs.degradation_reason} entered context."
+                        ),
+                        needs_approval=True,
+                        suggestion=(
+                            "Human approval required because untrusted content "
+                            "is in the session context. Start a new session to "
+                            "restore full trust."
+                        ),
+                    )
+                if (
+                    DegradationEffect.DENY_WRITES in cs.active_effects
+                    and permissions.risk_level in (
+                        RiskLevel.MEDIUM,
+                        RiskLevel.HIGH,
+                        RiskLevel.CRITICAL,
+                    )
+                ):
+                        return PolicyDecision(
+                            allowed=False,
+                            reason=DenialReason.TRUST_DEGRADED,
+                            detail=(
+                                "Write operations denied — session trust degraded "
+                                f"after {cs.degradation_reason} entered context."
+                            ),
+                            suggestion="Only read operations are allowed in this session.",
+                        )
+
+            # 9. Unattributed context
+            ctx_policy = permissions.context_policy
+            reject_unattributed = True
+            if ctx_policy is not None:
+                reject_unattributed = ctx_policy.reject_unattributed
+
+            if reject_unattributed and cs.unattributed_count > 0:
+                return PolicyDecision(
+                    allowed=False,
+                    reason=DenialReason.UNATTRIBUTED_CONTEXT,
+                    detail=(
+                        f"{cs.unattributed_count} context entries lack provenance."
+                    ),
+                    suggestion="All context entries must have provenance attribution.",
                 )
 
         return PolicyDecision(allowed=True)

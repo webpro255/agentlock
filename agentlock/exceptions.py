@@ -118,6 +118,55 @@ class ApprovalRequiredError(DeniedError):
         super().__init__(reason="approval_required", **kwargs)
 
 
+class TrustDegradedError(DeniedError):
+    """Session trust has been degraded by untrusted content in context."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(reason="trust_degraded", **kwargs)
+
+
+class UnattributedContextError(DeniedError):
+    """Context contains entries without provenance attribution."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(reason="unattributed_context", **kwargs)
+
+
+class MemoryWriteDeniedError(DeniedError):
+    """Memory write blocked by policy."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(reason="memory_write_denied", **kwargs)
+
+
+class MemoryReadDeniedError(DeniedError):
+    """Memory read blocked by policy."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(reason="memory_read_denied", **kwargs)
+
+
+class MemoryRetentionExceededError(DeniedError):
+    """Memory entry count exceeds retention limits."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(reason="memory_retention_exceeded", **kwargs)
+
+
+class MemoryProhibitedContentError(DeniedError):
+    """Memory content matches prohibited patterns."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(reason="memory_prohibited_content", **kwargs)
+
+
+class MemoryConfirmationRequiredError(DeniedError):
+    """User confirmation required for memory write."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(reason="memory_confirmation_required", **kwargs)
+
+
 class TokenError(AgentLockError):
     """Base for token-related errors."""
 

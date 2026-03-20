@@ -46,11 +46,25 @@ class AuditRecord:
     session_id: str = ""
     duration_ms: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
+    # v1.1 additions
+    trust_ceiling: str | None = None
+    is_trust_degraded: bool = False
+    degradation_effects: list[str] | None = None
+    context_provenance_ids: list[str] | None = None
+    memory_operation: str | None = None
+    memory_entry_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         if d["parameters"] is None:
             del d["parameters"]
+        # Omit None v1.1 fields for backward compat
+        for key in ("trust_ceiling", "degradation_effects", "context_provenance_ids",
+                     "memory_operation", "memory_entry_id"):
+            if d.get(key) is None:
+                d.pop(key, None)
+        if not d.get("is_trust_degraded"):
+            d.pop("is_trust_degraded", None)
         return d
 
 
@@ -180,6 +194,13 @@ class AuditLogger:
         log_level: AuditLogLevel = AuditLogLevel.STANDARD,
         include_parameters: bool = True,
         metadata: dict[str, Any] | None = None,
+        # v1.1 fields
+        trust_ceiling: str | None = None,
+        is_trust_degraded: bool = False,
+        degradation_effects: list[str] | None = None,
+        context_provenance_ids: list[str] | None = None,
+        memory_operation: str | None = None,
+        memory_entry_id: str | None = None,
     ) -> AuditRecord:
         """Create and persist an audit record.
 
@@ -213,6 +234,12 @@ class AuditLogger:
             session_id=session_id,
             duration_ms=duration_ms,
             metadata=metadata or {},
+            trust_ceiling=trust_ceiling,
+            is_trust_degraded=is_trust_degraded,
+            degradation_effects=degradation_effects,
+            context_provenance_ids=context_provenance_ids,
+            memory_operation=memory_operation,
+            memory_entry_id=memory_entry_id,
         )
 
         # Filter fields based on log level

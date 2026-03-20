@@ -243,6 +243,65 @@ Based on empirical research: **187 multi-turn adversarial attack tests** across 
 
 **The central finding:** adversarial and legitimate tool requests are semantically identical — content-based detection cannot reliably distinguish them. The correct defense is **architectural access control**, not smarter AI-based detection.
 
+## v1.1: Memory & Context Permissions
+
+AgentLock v1.1 extends tool-level permissions to cover the agent's **context window** and **memory**. Not all context is created equal — a system prompt and a web search result should not have the same authority over agent behavior.
+
+### Context Authority
+
+Every context entry is classified by source and assigned an authority level:
+
+```python
+from agentlock import (
+    AuthorizationGate, AgentLockPermissions,
+    ContextPolicyConfig, TrustDegradationConfig, DegradationTrigger,
+    ContextSource, DegradationEffect,
+)
+
+gate = AuthorizationGate()
+
+gate.register_tool("web_search", AgentLockPermissions(
+    risk_level="low",
+    requires_auth=True,
+    allowed_roles=["analyst"],
+    context_policy=ContextPolicyConfig(
+        trust_degradation=TrustDegradationConfig(
+            enabled=True,
+            triggers=[
+                DegradationTrigger(
+                    source=ContextSource.WEB_CONTENT,
+                    effect=DegradationEffect.REQUIRE_APPROVAL,
+                ),
+            ],
+        ),
+    ),
+))
+```
+
+Once web search results enter context, all subsequent tool calls require human approval. Trust degrades per-session and never escalates — only a new session restores full trust.
+
+### Memory Access Control
+
+```python
+from agentlock import MemoryPolicyConfig, MemoryWriter, MemoryPersistence
+
+gate.register_tool("assistant", AgentLockPermissions(
+    risk_level="medium",
+    requires_auth=True,
+    allowed_roles=["user"],
+    memory_policy=MemoryPolicyConfig(
+        persistence=MemoryPersistence.SESSION,
+        allowed_writers=[MemoryWriter.SYSTEM, MemoryWriter.USER],
+        prohibited_content=["credentials", "pii"],
+        require_write_confirmation=True,
+    ),
+))
+```
+
+### Provenance Tracking
+
+Every write to context generates a `ContextProvenance` record with source, authority, writer identity, timestamp, and content hash. Audit records now include `trust_ceiling`, `context_provenance_ids`, and `memory_operation` fields.
+
 ## Standards Alignment
 
 | Standard | Coverage |
@@ -259,7 +318,7 @@ Based on empirical research: **187 multi-turn adversarial attack tests** across 
 | Version | Focus |
 |---------|-------|
 | **v1.0** | Core schema, tool permissions, enforcement architecture |
-| **v1.1** | Memory/context permissions, conditional permissions, tool chains |
+| **v1.1** | Memory/context permissions, trust degradation, provenance tracking ✅ |
 | **v1.2** | Multi-agent permissions, cross-agent identity delegation |
 | **v1.3** | Output destination control, data flow policies |
 | **v2.0** | Execution scope, behavioral policy, anomaly detection, compliance templates |

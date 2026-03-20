@@ -34,9 +34,10 @@ Copyright 2026 David Grice
 SPDX-License-Identifier: Apache-2.0
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 from agentlock.audit import AuditLogger, AuditRecord, FileAuditBackend, InMemoryAuditBackend
+from agentlock.context import ContextProvenance, ContextState, ContextTracker
 from agentlock.decorators import agentlock
 from agentlock.exceptions import (
     AgentLockError,
@@ -45,6 +46,11 @@ from agentlock.exceptions import (
     ConfigurationError,
     DeniedError,
     InsufficientRoleError,
+    MemoryConfirmationRequiredError,
+    MemoryProhibitedContentError,
+    MemoryReadDeniedError,
+    MemoryRetentionExceededError,
+    MemoryWriteDeniedError,
     RateLimitedError,
     SchemaValidationError,
     ScopeViolationError,
@@ -53,8 +59,11 @@ from agentlock.exceptions import (
     TokenExpiredError,
     TokenInvalidError,
     TokenReplayedError,
+    TrustDegradedError,
+    UnattributedContextError,
 )
 from agentlock.gate import AuthorizationGate, AuthResult
+from agentlock.memory_gate import InMemoryMemoryStore, MemoryDecision, MemoryEntry, MemoryGate
 from agentlock.policy import PolicyDecision, PolicyEngine, RequestContext
 from agentlock.rate_limit import RateLimiter
 from agentlock.redaction import RedactionEngine, RedactionResult
@@ -62,12 +71,18 @@ from agentlock.schema import (
     SCHEMA_VERSION,
     AgentLockPermissions,
     AuditConfig,
+    ContextPolicyConfig,
     DataPolicyConfig,
+    DegradationTrigger,
     HumanApprovalConfig,
+    MemoryPolicyConfig,
+    MemoryRetentionConfig,
     RateLimitConfig,
     ScopeConfig,
     SessionConfig,
+    SourceAuthorityConfig,
     ToolDefinition,
+    TrustDegradationConfig,
 )
 from agentlock.session import Session, SessionStore
 from agentlock.token import ExecutionToken, TokenStore
@@ -76,9 +91,14 @@ from agentlock.types import (
     ApprovalThreshold,
     AuditLogLevel,
     AuthMethod,
+    ContextAuthority,
+    ContextSource,
     DataBoundary,
     DataClassification,
+    DegradationEffect,
     DenialReason,
+    MemoryPersistence,
+    MemoryWriter,
     RecipientPolicy,
     RedactionMode,
     RiskLevel,
@@ -100,6 +120,22 @@ __all__ = [
     "AuditConfig",
     "HumanApprovalConfig",
     "SCHEMA_VERSION",
+    # v1.1 schema components
+    "ContextPolicyConfig",
+    "SourceAuthorityConfig",
+    "DegradationTrigger",
+    "TrustDegradationConfig",
+    "MemoryPolicyConfig",
+    "MemoryRetentionConfig",
+    # Context tracking (v1.1)
+    "ContextProvenance",
+    "ContextState",
+    "ContextTracker",
+    # Memory (v1.1)
+    "MemoryGate",
+    "MemoryEntry",
+    "MemoryDecision",
+    "InMemoryMemoryStore",
     # Policy
     "PolicyEngine",
     "PolicyDecision",
@@ -130,6 +166,11 @@ __all__ = [
     "AuditLogLevel",
     "ApprovalThreshold",
     "ApprovalChannel",
+    "ContextSource",
+    "ContextAuthority",
+    "DegradationEffect",
+    "MemoryPersistence",
+    "MemoryWriter",
     "DenialReason",
     "TokenStatus",
     # Exceptions
@@ -141,6 +182,13 @@ __all__ = [
     "RateLimitedError",
     "SessionExpiredError",
     "ApprovalRequiredError",
+    "TrustDegradedError",
+    "UnattributedContextError",
+    "MemoryWriteDeniedError",
+    "MemoryReadDeniedError",
+    "MemoryRetentionExceededError",
+    "MemoryProhibitedContentError",
+    "MemoryConfirmationRequiredError",
     "TokenError",
     "TokenInvalidError",
     "TokenExpiredError",
