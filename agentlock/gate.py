@@ -272,6 +272,11 @@ class AuthorizationGate:
         if max_output_classification is not None:
             resolved_classification = DataClassification(max_output_classification)
 
+        # Build request metadata — include parameters for injection filter
+        request_metadata = dict(metadata or {})
+        if parameters:
+            request_metadata["parameters"] = parameters
+
         # Build request context
         ctx = RequestContext(
             user_id=user_id,
@@ -285,7 +290,7 @@ class AuthorizationGate:
             is_financial=is_financial,
             amount=amount,
             max_output_classification=resolved_classification,
-            metadata=metadata or {},
+            metadata=request_metadata,
             context_state=context_state,
         )
 

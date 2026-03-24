@@ -34,7 +34,7 @@ Copyright 2026 David Grice
 SPDX-License-Identifier: Apache-2.0
 """
 
-__version__ = "1.1.1"
+__version__ = "1.1.2"
 
 from agentlock.audit import AuditLogger, AuditRecord, FileAuditBackend, InMemoryAuditBackend
 from agentlock.context import ContextProvenance, ContextState, ContextTracker
@@ -64,7 +64,13 @@ from agentlock.exceptions import (
 )
 from agentlock.gate import AuthorizationGate, AuthResult
 from agentlock.memory_gate import InMemoryMemoryStore, MemoryDecision, MemoryEntry, MemoryGate
-from agentlock.policy import PolicyDecision, PolicyEngine, RequestContext
+from agentlock.policy import (
+    InjectionFilter,
+    PiiFilter,
+    PolicyDecision,
+    PolicyEngine,
+    RequestContext,
+)
 from agentlock.rate_limit import RateLimiter
 from agentlock.redaction import RedactionEngine, RedactionResult
 from agentlock.schema import (
@@ -140,6 +146,8 @@ __all__ = [
     "PolicyEngine",
     "PolicyDecision",
     "RequestContext",
+    "InjectionFilter",
+    "PiiFilter",
     # Tokens
     "ExecutionToken",
     "TokenStore",

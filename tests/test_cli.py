@@ -16,7 +16,7 @@ class TestVersion:
             main(["--version"])
         captured = capsys.readouterr()
         assert "agentlock" in captured.out
-        assert "1.1.0" in captured.out
+        assert "1.1.2" in captured.out
 
 
 class TestInit:
