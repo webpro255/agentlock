@@ -34,7 +34,7 @@ Copyright 2026 David Grice
 SPDX-License-Identifier: Apache-2.0
 """
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 
 from agentlock.audit import AuditLogger, AuditRecord, FileAuditBackend, InMemoryAuditBackend
 from agentlock.context import ContextProvenance, ContextState, ContextTracker
