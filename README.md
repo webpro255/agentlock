@@ -177,6 +177,20 @@ An AgentLock-compliant tool extends the standard definition with a `agentlock` b
 
 **Key constraint:** The agent never receives execution tokens. Layer 2 passes directly to Layer 3. The agent gets only the result.
 
+## Security Note
+
+AgentLock authorizes tool calls. It does not authenticate users. The web framework integrations (FastAPI, Flask) trust upstream headers for identity. Deploy behind an authenticated API gateway or reverse proxy.
+
+## Security Hardening
+
+AgentLock assumes the authorization gate runs in a trusted compute environment. These recommendations strengthen the enforcement boundary in production deployments:
+
+- Deploy the gate on a separate machine or container from the agent. A compromised agent cannot tamper with a gate it cannot reach.
+- The agent should communicate with the gate over an authenticated API, not shared memory or local function calls.
+- The gate host should run only the gate service with minimal attack surface.
+- Apply standard infrastructure security: encrypted transport, restricted network access, audit logging at the OS level.
+
+
 ## Framework Integrations
 
 AgentLock is framework-agnostic. Optional integrations for popular frameworks:

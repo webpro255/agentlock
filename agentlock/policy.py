@@ -14,6 +14,7 @@ from agentlock.schema import AgentLockPermissions
 from agentlock.types import (
     ApprovalThreshold,
     DataBoundary,
+    DataClassification,
     DegradationEffect,
     DenialReason,
     RiskLevel,
@@ -48,6 +49,7 @@ class RequestContext:
     is_external: bool = False
     is_financial: bool = False
     amount: float = 0.0
+    max_output_classification: DataClassification | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     context_state: ContextState | None = None
 
@@ -158,7 +160,45 @@ class PolicyEngine:
                 suggestion=f"Reduce your request to {scope.max_records} records or fewer.",
             )
 
-        # 6. Recipient policy (only if recipient is provided)
+        # 6. Data policy — block if tool output classification exceeds
+        #    the caller's clearance level.  This is the gate-level block
+        #    (Layer 2); output redaction in execute() is the defense-in-depth
+        #    second layer (Layer 3).
+        if context.max_output_classification is not None:
+            tool_output_class = permissions.data_policy.output_classification
+            classification_order = [
+                DataClassification.PUBLIC,
+                DataClassification.INTERNAL,
+                DataClassification.CONFIDENTIAL,
+                DataClassification.MAY_CONTAIN_PII,
+                DataClassification.CONTAINS_PII,
+                DataClassification.CONTAINS_PHI,
+                DataClassification.CONTAINS_FINANCIAL,
+            ]
+            if (
+                tool_output_class in classification_order
+                and context.max_output_classification in classification_order
+            ):
+                tool_idx = classification_order.index(tool_output_class)
+                caller_idx = classification_order.index(
+                    context.max_output_classification
+                )
+                if tool_idx > caller_idx:
+                    return PolicyDecision(
+                        allowed=False,
+                        reason=DenialReason.DATA_POLICY_VIOLATION,
+                        detail=(
+                            f"Tool output classification "
+                            f"'{tool_output_class.value}' exceeds caller's "
+                            f"clearance '{context.max_output_classification.value}'."
+                        ),
+                        suggestion=(
+                            "Request access to a higher data classification, "
+                            "or use a tool with a lower output classification."
+                        ),
+                    )
+
+        # 7. Recipient policy (only if recipient is provided)
         # Detailed validation delegated to the tool or deployer;
         # here we enforce "known_contacts_only" as a marker.
         # Real-world enforcement uses a contacts backend.

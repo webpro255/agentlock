@@ -48,6 +48,7 @@ from agentlock.token import ExecutionToken, TokenStore
 from agentlock.types import (
     ContextSource,
     DataBoundary,
+    DataClassification,
     DegradationEffect,
     DenialReason,
     MemoryPersistence,
@@ -195,6 +196,7 @@ class AuthorizationGate:
         record_count: int = 1,
         recipient: str = "",
         data_boundary: DataBoundary | None = None,
+        max_output_classification: str | None = None,
         is_bulk: bool = False,
         is_external: bool = False,
         is_financial: bool = False,
@@ -265,6 +267,11 @@ class AuthorizationGate:
             ):
                 data_boundary = DataBoundary.AUTHENTICATED_USER_ONLY
 
+        # Resolve max_output_classification
+        resolved_classification = None
+        if max_output_classification is not None:
+            resolved_classification = DataClassification(max_output_classification)
+
         # Build request context
         ctx = RequestContext(
             user_id=user_id,
@@ -277,6 +284,7 @@ class AuthorizationGate:
             is_external=is_external,
             is_financial=is_financial,
             amount=amount,
+            max_output_classification=resolved_classification,
             metadata=metadata or {},
             context_state=context_state,
         )
