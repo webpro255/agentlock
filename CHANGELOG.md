@@ -5,6 +5,41 @@ All notable changes to AgentLock will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.2] - 2026-03-24
+
+### Added
+
+- **Independent filter pipeline** — Decoupled InjectionFilter and PiiFilter into separate classes on PolicyEngine. Each runs independently with no shared logic or state.
+- **InjectionFilter** — Scans tool call parameters for reconnaissance/enumeration, prompt extraction, social engineering, and command injection patterns. Recursively inspects nested dicts and lists.
+- **PiiFilter** — Checks caller's max_output_classification against tool's output_classification using 7-level classification hierarchy. Independent from injection filtering.
+- 44 new tests (test_filter_pipeline.py)
+
+### Changed
+
+- PolicyEngine.evaluate() refactored into three independent stages: base auth, injection filter, PII filter
+- Trust degradation now runs independently of both filters
+- Package version updated to 1.1.2
+
+### Fixed
+
+- Injection pass rate recovered from 88.6% (v1.1.1) to 93.4% by restoring behavioral filters without PII interference
+
+## [1.1.1] - 2026-03-24
+
+### Added
+
+- **Gate-level PII classification check** — max_output_classification parameter on authorize() blocks tool execution before data is retrieved when caller clearance is below tool's output classification
+- 7-level classification hierarchy: PUBLIC, INTERNAL, CONFIDENTIAL, MAY_CONTAIN_PII, CONTAINS_PII, CONTAINS_PHI, CONTAINS_FINANCIAL
+- 16 new tests (test_pii_defense.py)
+
+### Fixed
+
+- PII regression from v1.1: restored input-layer query blocking (100/A) while maintaining output-layer redaction as backup
+
+### Backward Compatibility
+
+- max_output_classification defaults to None. When not provided, check is skipped entirely. No existing callers affected.
+
 ## [1.1.0] - 2026-03-20
 
 ### Added
