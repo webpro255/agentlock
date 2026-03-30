@@ -242,7 +242,7 @@ agentlock audit --tool send_email   # Query audit logs
 
 ## What AgentLock Prevents
 
-Based on empirical research: **187 multi-turn adversarial attack tests** across 35 categories, tested against 6 frontier AI models.
+Based on empirical research: multi-turn adversarial attack testing across 35 categories, tested against multiple frontier AI models.
 
 | Attack Category | Prevention |
 |----------------|-----------|
@@ -316,6 +316,55 @@ gate.register_tool("assistant", AgentLockPermissions(
 
 Every write to context generates a `ContextProvenance` record with source, authority, writer identity, timestamp, and content hash. Audit records now include `trust_ceiling`, `context_provenance_ids`, and `memory_operation` fields.
 
+## v1.2: Adaptive Hardening & New Decision Types
+
+AgentLock v1.2 adds four capabilities that close the gap between authorization and runtime defense.
+
+### Adaptive Prompt Hardening
+
+When the gate detects suspicious activity, it generates defensive instructions for the agent's system prompt. A pre-LLM prompt scanner analyzes user messages before the model processes them, enabling hardening on the first turn of an attack. Four signal detectors (velocity, tool combination, response echo, prompt scan) feed into a monotonic session risk score.
+
+### Five Decision Types
+
+v1.0/v1.1 supported ALLOW and DENY. v1.2 adds three more:
+
+| Decision | When | Effect |
+|----------|------|--------|
+| **ALLOW** | Call is authorized | Token issued, tool executes normally |
+| **DENY** | Call is not authorized | No token, structured denial returned |
+| **MODIFY** | Call is authorized but output must be transformed | Token issued, PII redacted from output before LLM sees it |
+| **DEFER** | Context is ambiguous, gate cannot decide | Action suspended, resolves via human review or timeout |
+| **STEP_UP** | Session state indicates elevated risk | Action paused, human approval required |
+
+### MODIFY: Output Transformation
+
+```python
+gate.register_tool("query_database", AgentLockPermissions(
+    risk_level="high",
+    requires_auth=True,
+    allowed_roles=["admin", "support"],
+    modify_policy=ModifyPolicyConfig(
+        enabled=True,
+        transformations=[
+            TransformationConfig(field="output", action="redact_pii"),
+            TransformationConfig(
+                field="to", action="restrict_domain",
+                config={"allowed_domains": ["company.com"]},
+            ),
+        ],
+    ),
+))
+
+result = gate.authorize("query_database", user_id="alice", role="admin")
+# result.decision == DecisionType.MODIFY
+# result.modify_output_fn strips PII from tool output before the LLM sees it
+output = gate.execute("query_database", db_func, token=result.token,
+                      modify_output_fn=result.modify_output_fn)
+# output: {'name': 'Jane Doe', 'email': '[REDACTED:email]', 'ssn': '[REDACTED:ssn]'}
+```
+
+The tool still executes. The admin still gets the answer. But PII never enters the LLM context where it can be weaponized by injection attacks.
+
 ## Standards Alignment
 
 | Standard | Coverage |
@@ -332,8 +381,8 @@ Every write to context generates a `ContextProvenance` record with source, autho
 | Version | Focus |
 |---------|-------|
 | **v1.0** | Core schema, tool permissions, enforcement architecture |
-| **v1.1** | Memory/context permissions, trust degradation, provenance tracking ✅ |
-| **v1.2** | Multi-agent permissions, cross-agent identity delegation |
+| **v1.1** | Memory/context permissions, trust degradation, provenance tracking |
+| **v1.2** | Adaptive hardening, MODIFY/DEFER/STEP_UP decisions, multi-signal detection (745 tests) |
 | **v1.3** | Output destination control, data flow policies |
 | **v2.0** | Execution scope, behavioral policy, anomaly detection, compliance templates |
 

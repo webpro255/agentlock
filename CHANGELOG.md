@@ -5,6 +5,44 @@ All notable changes to AgentLock will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-03-30
+
+### Added
+
+- **Adaptive prompt hardening** -- When the gate detects suspicious activity (injection attempts, trust degradation, rate limiting), it generates defensive system prompt instructions for the agent framework to inject before the LLM processes the next turn. Session risk scores are monotonic and session-scoped. Three severity levels: warning, elevated, critical.
+- **MODIFY decision type** -- Authorized tool calls can have their outputs transformed before the LLM sees them. Built-in actions: `redact_pii` (strips SSN, email, phone, credit card, API keys from output), `restrict_domain` (blocks external email recipients), `whitelist_path` (restricts file access to allowed directories), `cap_records` (limits output record count). Configured per-tool via `modify_policy`.
+- **DEFER decision type** -- Suspends authorization when context is ambiguous. Triggers: first tool call in session is HIGH/CRITICAL risk with no history, prompt scanner fired and tool call attempted in the same turn, trust degraded below threshold. Defaults to DENY on timeout (60s).
+- **STEP_UP decision type** -- Dynamically requires human approval based on session state. Triggers: hardening severity at elevated or above with HIGH/CRITICAL risk tool, multiple PII-returning tools already called in session, tool denied earlier and user retrying with a different high-risk tool. Pluggable notification via `StepUpNotifier` protocol.
+- **DecisionType enum** -- Five authorization outcomes: `ALLOW`, `DENY`, `DEFER`, `STEP_UP`, `MODIFY`. `AuthResult.decision` field added alongside backward-compatible `AuthResult.allowed`.
+- **Gate enforcement at critical severity** -- When session risk score exceeds the critical threshold (10+) and `enforce_at_critical` is enabled, the gate blocks HIGH/CRITICAL risk tools regardless of role authorization. MEDIUM/LOW tools remain allowed.
+- **Prompt scanner** (`PromptScanner`) -- Pre-LLM analysis of user messages. Detects injection phrases, authority claims, instruction planting, encoding indicators, agent/system impersonation, format forcing, retrieval exploitation, and cross-turn repetition. Runs before the LLM processes the message, enabling hardening directives on the same turn.
+- **Behavioral velocity detector** (`VelocityDetector`) -- Tracks tool call frequency and topic shifts per session. Fires on rapid calls (3+ in 60s), topic escalation (risk jump from low/medium to high/critical), and burst patterns (same tool 3+ in 30s).
+- **Tool combination detector** (`ComboDetector`) -- Detects suspicious tool call sequences within a session. Configurable suspicion map with 13 default suspicious pairs and 5 default suspicious sequences covering data exfiltration, account takeover, and tool chain attack patterns.
+- **Response echo detector** (`EchoDetector`) -- Framework-side signal that checks LLM responses for attack prompt echoing, tool name disclosure, system prompt leakage, credential-format strings, and compliance language in suspicious contexts.
+- **Compound scoring** -- When multiple signal types co-occur, compound rules add bonus weight. `rapid_exfil` (velocity + combo, +2), `probing_attack` (echo + injection, +3).
+- **Signal-aware targeted instructions** -- Hardening directives contain instructions specific to the detected signal types instead of generic severity-level text. Format forcing attacks get format-specific instructions, not irrelevant tool-blocking language.
+- New schema models: `ModifyPolicyConfig`, `TransformationConfig`, `DeferPolicyConfig`, `StepUpPolicyConfig`
+- New exceptions: `DeferredError`, `StepUpRequiredError`, `ModifyAppliedError`
+- 276 new tests (745 total, 0 failures)
+
+### Changed
+
+- Schema version updated from `"1.1"` to `"1.2"`
+- Package version updated to `1.2.0`
+- Phone number redaction pattern expanded to cover 7-digit, US 10-digit, international (+44, +91, +1), and UK local (0-prefixed) formats
+- `AuthorizationGate.__init__()` accepts optional `hardening_config`, `velocity_config`, `combo_config`
+- `AuthorizationGate.execute()` accepts optional `modify_output_fn` for MODIFY output transformation
+- `AuthorizationGate.authorize()` pipeline extended: velocity/combo signals recorded before policy evaluation, DEFER checked before STEP_UP, STEP_UP checked before MODIFY, MODIFY checked before token issuance
+
+### Backward Compatibility
+
+- All v1.0 and v1.1.x `agentlock` permission blocks remain valid
+- `AuthResult.allowed` continues to work unchanged for existing callers
+- New fields (`decision`, `modify_output_fn`, `deferral_id`, `stepup_request_id`) default to neutral values
+- `execute()` works identically without the `modify_output_fn` parameter
+- Hardening, velocity, combo, DEFER, STEP_UP, and MODIFY are all disabled by default when their respective config/policy objects are not provided
+- All 469 original v1.1.2 tests pass without modification
+
 ## [1.1.2] - 2026-03-24
 
 ### Added

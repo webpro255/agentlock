@@ -65,9 +65,9 @@ class TestV10Parsing:
 class TestV11Defaults:
     def test_schema_version_default_is_1_1(self):
         """Schema version defaults to '1.1'."""
-        assert SCHEMA_VERSION == "1.1"
+        assert SCHEMA_VERSION == "1.2"
         perms = AgentLockPermissions(allowed_roles=["user"])
-        assert perms.version == "1.1"
+        assert perms.version == "1.2"
 
     def test_v11_permissions_no_context_policy_defaults_none(self):
         """v1.1 permissions without explicit context_policy default to None."""
@@ -75,7 +75,7 @@ class TestV11Defaults:
             risk_level="low",
             allowed_roles=["viewer"],
         )
-        assert perms.version == "1.1"
+        assert perms.version == "1.2"
         assert perms.context_policy is None
 
     def test_v11_permissions_no_memory_policy_defaults_none(self):
@@ -262,4 +262,4 @@ class TestToolDefinitionV11:
     def test_tool_definition_default_agentlock(self):
         """ToolDefinition with default agentlock uses v1.1."""
         tool = ToolDefinition(name="default_tool")
-        assert tool.agentlock.version == "1.1"
+        assert tool.agentlock.version == "1.2"

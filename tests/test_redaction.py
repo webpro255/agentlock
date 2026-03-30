@@ -128,3 +128,56 @@ class TestRedactionEngine:
         result = engine.redact("SSN: 123-45-6789")
         assert result.was_redacted is False
         assert result.redacted == result.original
+
+
+class TestPhoneRedaction:
+    """Test phone number detection across formats."""
+
+    def _redact(self, text: str) -> str:
+        engine = RedactionEngine(prohibited=["phone"])
+        return engine.redact(text).redacted
+
+    def test_us_with_dashes(self):
+        assert "555-123-4567" not in self._redact("Phone: 555-123-4567")
+
+    def test_us_with_parens(self):
+        assert "(555) 123-4567" not in self._redact("Call (555) 123-4567")
+
+    def test_us_ten_digits(self):
+        assert "5551234567" not in self._redact("Phone: 5551234567")
+
+    def test_us_with_dots(self):
+        assert "555.123.4567" not in self._redact("Phone: 555.123.4567")
+
+    def test_seven_digit(self):
+        assert "555-0199" not in self._redact("Phone: 555-0199")
+
+    def test_seven_digit_with_dot(self):
+        assert "555.0199" not in self._redact("Phone: 555.0199")
+
+    def test_international_uk(self):
+        assert "+44 7700 900000" not in self._redact("UK: +44 7700 900000")
+
+    def test_international_india(self):
+        assert "+91-9876543210" not in self._redact("India: +91-9876543210")
+
+    def test_international_india_spaced(self):
+        assert "+91 98765 43210" not in self._redact("India: +91 98765 43210")
+
+    def test_international_us(self):
+        assert "+1-555-123-4567" not in self._redact("US: +1-555-123-4567")
+
+    def test_local_uk(self):
+        assert "07700 900000" not in self._redact("UK local: 07700 900000")
+
+    def test_no_false_positive_short_number(self):
+        result = RedactionEngine(prohibited=["phone"]).redact("Order #12345")
+        assert not result.was_redacted
+
+    def test_no_false_positive_word(self):
+        result = RedactionEngine(prohibited=["phone"]).redact("Hello world")
+        assert not result.was_redacted
+
+    def test_redaction_marker_present(self):
+        result = RedactionEngine(prohibited=["phone"]).redact("Call 555-0199")
+        assert "[REDACTED:phone]" in result.redacted

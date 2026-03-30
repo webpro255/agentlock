@@ -167,6 +167,70 @@ class MemoryConfirmationRequiredError(DeniedError):
         super().__init__(reason="memory_confirmation_required", **kwargs)
 
 
+class DeferredError(AgentLockError):
+    """Tool call was deferred — suspended pending resolution.
+
+    Attributes:
+        deferral_id: Identifier for the deferred decision.
+        reason: Why the call was deferred.
+        timeout_seconds: How long before timeout resolves to deny.
+    """
+
+    def __init__(
+        self,
+        deferral_id: str = "",
+        reason: str = "",
+        timeout_seconds: int = 60,
+        **kwargs: Any,
+    ) -> None:
+        self.deferral_id = deferral_id
+        self.reason = reason
+        self.timeout_seconds = timeout_seconds
+        super().__init__(
+            f"deferred: {reason} (id={deferral_id}, timeout={timeout_seconds}s)"
+        )
+
+
+class StepUpRequiredError(AgentLockError):
+    """Tool call requires human approval via step-up authentication.
+
+    Attributes:
+        request_id: Identifier for the step-up request.
+        reason: Why step-up was triggered.
+        timeout_seconds: How long before timeout resolves to deny.
+    """
+
+    def __init__(
+        self,
+        request_id: str = "",
+        reason: str = "",
+        timeout_seconds: int = 120,
+        **kwargs: Any,
+    ) -> None:
+        self.request_id = request_id
+        self.reason = reason
+        self.timeout_seconds = timeout_seconds
+        super().__init__(
+            f"step_up_required: {reason} (id={request_id}, timeout={timeout_seconds}s)"
+        )
+
+
+class ModifyAppliedError(AgentLockError):
+    """Tool output was modified by a MODIFY policy.
+
+    This is informational, not an error — raised only when callers
+    need to detect that modification occurred.
+    """
+
+    def __init__(self, transformations: list[str] | None = None, **kwargs: Any) -> None:
+        self.transformations = transformations or []
+        super().__init__(
+            f"Output modified: {', '.join(self.transformations)}"
+            if self.transformations
+            else "Output modified by MODIFY policy"
+        )
+
+
 class TokenError(AgentLockError):
     """Base for token-related errors."""
 

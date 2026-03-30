@@ -6,6 +6,7 @@ from enum import Enum
 from typing import Any
 
 __all__ = [
+    "DecisionType",
     "RiskLevel",
     "AuthMethod",
     "DataClassification",
@@ -30,6 +31,16 @@ __all__ = [
     "AuditId",
     "Permissions",
 ]
+
+
+class DecisionType(str, Enum):
+    """Authorization decision types (v1.2)."""
+
+    ALLOW = "allow"
+    DENY = "deny"
+    DEFER = "defer"
+    STEP_UP = "step_up"
+    MODIFY = "modify"
 
 
 class RiskLevel(str, Enum):

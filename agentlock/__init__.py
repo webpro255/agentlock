@@ -34,13 +34,16 @@ Copyright 2026 David Grice
 SPDX-License-Identifier: Apache-2.0
 """
 
-__version__ = "1.1.2"
+__version__ = "1.2.0"
 
 from agentlock.audit import AuditLogger, AuditRecord, FileAuditBackend, InMemoryAuditBackend
 from agentlock.context import ContextProvenance, ContextState, ContextTracker
 from agentlock.decorators import agentlock
 from agentlock.exceptions import (
     AgentLockError,
+    DeferredError,
+    ModifyAppliedError,
+    StepUpRequiredError,
     ApprovalRequiredError,
     AuthenticationRequiredError,
     ConfigurationError,
@@ -62,7 +65,26 @@ from agentlock.exceptions import (
     TrustDegradedError,
     UnattributedContextError,
 )
+from agentlock.defer import DeferralManager, DeferralRecord
 from agentlock.gate import AuthorizationGate, AuthResult
+from agentlock.stepup import StepUpManager, StepUpNotifier, StepUpRequest
+from agentlock.modify import ModifyEngine, ModifyResult
+from agentlock.hardening import (
+    HardeningConfig,
+    HardeningDirective,
+    HardeningEngine,
+    HardeningSignal,
+)
+from agentlock.signals import (
+    ComboDetector,
+    ComboSignal,
+    EchoDetector,
+    EchoSignal,
+    PromptScanConfig,
+    PromptScanner,
+    VelocityDetector,
+    VelocitySignal,
+)
 from agentlock.memory_gate import InMemoryMemoryStore, MemoryDecision, MemoryEntry, MemoryGate
 from agentlock.policy import (
     InjectionFilter,
@@ -76,6 +98,10 @@ from agentlock.redaction import RedactionEngine, RedactionResult
 from agentlock.schema import (
     SCHEMA_VERSION,
     AgentLockPermissions,
+    DeferPolicyConfig,
+    ModifyPolicyConfig,
+    StepUpPolicyConfig,
+    TransformationConfig,
     AuditConfig,
     ContextPolicyConfig,
     DataPolicyConfig,
@@ -94,6 +120,7 @@ from agentlock.session import Session, SessionStore
 from agentlock.token import ExecutionToken, TokenStore
 from agentlock.types import (
     ApprovalChannel,
+    DecisionType,
     ApprovalThreshold,
     AuditLogLevel,
     AuthMethod,
@@ -125,6 +152,10 @@ __all__ = [
     "SessionConfig",
     "AuditConfig",
     "HumanApprovalConfig",
+    "DeferPolicyConfig",
+    "ModifyPolicyConfig",
+    "StepUpPolicyConfig",
+    "TransformationConfig",
     "SCHEMA_VERSION",
     # v1.1 schema components
     "ContextPolicyConfig",
@@ -164,7 +195,18 @@ __all__ = [
     # Redaction
     "RedactionEngine",
     "RedactionResult",
+    # DEFER (v1.2)
+    "DeferralManager",
+    "DeferralRecord",
+    # STEP_UP (v1.2)
+    "StepUpManager",
+    "StepUpRequest",
+    "StepUpNotifier",
+    # MODIFY (v1.2)
+    "ModifyEngine",
+    "ModifyResult",
     # Enums
+    "DecisionType",
     "RiskLevel",
     "AuthMethod",
     "DataClassification",
@@ -181,8 +223,23 @@ __all__ = [
     "MemoryWriter",
     "DenialReason",
     "TokenStatus",
+    # Hardening
+    "HardeningEngine",
+    "HardeningDirective",
+    "HardeningSignal",
+    "HardeningConfig",
+    # Signals
+    "VelocityDetector",
+    "VelocitySignal",
+    "ComboDetector",
+    "ComboSignal",
+    "EchoDetector",
+    "EchoSignal",
+    "PromptScanner",
+    "PromptScanConfig",
     # Exceptions
     "AgentLockError",
+    "ModifyAppliedError",
     "DeniedError",
     "AuthenticationRequiredError",
     "InsufficientRoleError",

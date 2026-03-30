@@ -29,8 +29,8 @@ Example::
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Callable
 
 from agentlock.audit import AuditBackend, AuditLogger, InMemoryAuditBackend
 from agentlock.context import ContextProvenance, ContextTracker
@@ -38,21 +38,34 @@ from agentlock.exceptions import (
     DeniedError,
     RateLimitedError,
 )
+from agentlock.hardening import (
+    HardeningConfig,
+    HardeningDirective,
+    HardeningEngine,
+    HardeningSignal,
+)
+from agentlock.defer import DeferralManager, DeferralRecord
 from agentlock.memory_gate import MemoryDecision, MemoryGate, MemoryStore
+from agentlock.modify import ModifyEngine
 from agentlock.policy import PolicyEngine, RequestContext
+from agentlock.stepup import StepUpManager, StepUpNotifier, StepUpRequest
 from agentlock.rate_limit import RateLimiter
 from agentlock.redaction import RedactionEngine, RedactionResult
 from agentlock.schema import AgentLockPermissions
 from agentlock.session import Session, SessionStore
+from agentlock.signals.combos import ComboConfig, ComboDetector
+from agentlock.signals.velocity import VelocityConfig, VelocityDetector
 from agentlock.token import ExecutionToken, TokenStore
 from agentlock.types import (
     ContextSource,
     DataBoundary,
     DataClassification,
+    DecisionType,
     DegradationEffect,
     DenialReason,
     MemoryPersistence,
     MemoryWriter,
+    RiskLevel,
 )
 
 
@@ -61,16 +74,26 @@ class AuthResult:
     """Result of an authorization check.
 
     Attributes:
-        allowed: Whether the call is permitted.
-        token: Execution token (only when allowed).
+        allowed: Whether the call is permitted (backward compat).
+        decision: The v1.2 decision type (ALLOW, DENY, MODIFY, etc.).
+        token: Execution token (only when allowed/modify).
         denial: Denial details (only when denied).
         audit_id: Audit record ID for this decision.
+        hardening: Hardening directive for the session.
+        modify_output_fn: Callable to transform tool output (MODIFY only).
+        transformations_applied: List of transformations applied (MODIFY only).
     """
 
     allowed: bool
+    decision: DecisionType = DecisionType.ALLOW
     token: ExecutionToken | None = None
     denial: dict[str, Any] | None = None
     audit_id: str = ""
+    hardening: HardeningDirective | None = None
+    modify_output_fn: Callable[[str], str] | None = None
+    transformations_applied: list[str] = field(default_factory=list)
+    deferral_id: str = ""
+    stepup_request_id: str = ""
 
     def raise_if_denied(self) -> None:
         """Raise DeniedError if the call was denied."""
@@ -103,6 +126,9 @@ class AuthorizationGate:
         token_ttl: int = 60,
         session_duration: int = 900,
         memory_store: MemoryStore | None = None,
+        hardening_config: HardeningConfig | None = None,
+        velocity_config: VelocityConfig | None = None,
+        combo_config: ComboConfig | None = None,
     ) -> None:
         self._tools: dict[str, AgentLockPermissions] = {}
         self._policy = PolicyEngine()
@@ -115,6 +141,15 @@ class AuthorizationGate:
         self._memory_gate = MemoryGate(store=memory_store)
         self._token_ttl = token_ttl
         self._session_duration = session_duration
+        # Adaptive prompt hardening (off by default — pass HardeningConfig to enable)
+        self._hardening_engine = HardeningEngine(config=hardening_config)
+        self._velocity_detector = VelocityDetector(config=velocity_config)
+        self._combo_detector = ComboDetector(config=combo_config)
+        # MODIFY engine (v1.2)
+        self._modify_engine = ModifyEngine()
+        # DEFER and STEP_UP managers (v1.2)
+        self._deferral_manager = DeferralManager()
+        self._stepup_manager = StepUpManager()
 
     # -- Registration -------------------------------------------------------
 
@@ -227,6 +262,26 @@ class AuthorizationGate:
         start = time.time()
         permissions = self._tools.get(tool_name)
 
+        # Resolve session ID for hardening signal tracking
+        _session = self._session_store.get_by_user(user_id) if user_id else None
+        hardening_session_id = _session.session_id if _session else (
+            metadata.get("session_id", "") if metadata else ""
+        )
+
+        # Record velocity and combo signals (both allowed and denied calls)
+        if hardening_session_id and permissions is not None:
+            risk = permissions.risk_level.value if permissions else "medium"
+            vel_signals = self._velocity_detector.record_call(
+                hardening_session_id, tool_name, risk_level=risk,
+            )
+            for sig in vel_signals:
+                self._hardening_engine.record_signal(hardening_session_id, sig)
+            combo_signals = self._combo_detector.record_call(
+                hardening_session_id, tool_name,
+            )
+            for sig in combo_signals:
+                self._hardening_engine.record_signal(hardening_session_id, sig)
+
         # No permissions registered = denied (deny by default)
         if permissions is None:
             record = self._audit.log(
@@ -238,6 +293,7 @@ class AuthorizationGate:
             )
             return AuthResult(
                 allowed=False,
+                decision=DecisionType.DENY,
                 denial={
                     "status": "denied",
                     "reason": DenialReason.NO_PERMISSIONS.value,
@@ -297,6 +353,40 @@ class AuthorizationGate:
         # Evaluate policy
         decision = self._policy.evaluate(permissions, ctx)
 
+        # Record hardening signals from policy decision
+        if hardening_session_id and not decision.allowed and decision.reason:
+            reason = decision.reason.value if hasattr(decision.reason, "value") else str(decision.reason)
+            signal_map = {
+                "data_policy_violation": "injection_blocked",
+                "trust_degraded": "trust_degraded",
+                "unattributed_context": "unattributed_context",
+                "approval_required": "approval_required",
+            }
+            signal_type = signal_map.get(reason)
+            if signal_type:
+                self._hardening_engine.record_signal(
+                    hardening_session_id,
+                    HardeningSignal(
+                        signal_type=signal_type,
+                        weight=0,  # resolved from config
+                        details=decision.detail,
+                        source="gate_policy",
+                    ),
+                )
+
+        # Record trust degradation signals from context state
+        if hardening_session_id and context_state:
+            if context_state.is_degraded:
+                self._hardening_engine.record_signal(
+                    hardening_session_id,
+                    HardeningSignal(
+                        signal_type="trust_degraded",
+                        weight=0,
+                        details=f"Trust ceiling: {context_state.trust_ceiling.value}",
+                        source="context_tracker",
+                    ),
+                )
+
         # v1.1: Elevate logging if trust is degraded
         effective_log_level = permissions.audit.log_level
         if (
@@ -317,6 +407,17 @@ class AuthorizationGate:
                     permissions.rate_limit.window_seconds,
                 )
             except RateLimitedError as e:
+                # Record rate limit signal for hardening
+                if hardening_session_id:
+                    self._hardening_engine.record_signal(
+                        hardening_session_id,
+                        HardeningSignal(
+                            signal_type="rate_limit_hit",
+                            weight=0,
+                            details=f"Rate limited: {tool_name}",
+                            source="rate_limiter",
+                        ),
+                    )
                 duration_ms = (time.time() - start) * 1000
                 record = self._audit.log(
                     tool_name=tool_name,
@@ -331,13 +432,251 @@ class AuthorizationGate:
                     duration_ms=duration_ms,
                     session_id=ctx.session_id,
                 )
+                directive = self._hardening_engine.evaluate(hardening_session_id) if hardening_session_id else None
                 return AuthResult(
                     allowed=False,
+                    decision=DecisionType.DENY,
                     denial=e.to_dict(),
                     audit_id=record.audit_id,
+                    hardening=directive,
                 )
 
         duration_ms = (time.time() - start) * 1000
+
+        # Evaluate hardening directive for the session
+        directive = self._hardening_engine.evaluate(hardening_session_id) if hardening_session_id else None
+
+        # Gate-level hardening enforcement: block high/critical risk tools
+        # when the session risk score exceeds the critical threshold.
+        if (
+            decision.allowed
+            and self._hardening_engine.config.enforce_at_critical
+            and directive
+            and directive.active
+            and directive.severity == "critical"
+            and permissions.risk_level
+            in (RiskLevel.HIGH, RiskLevel.CRITICAL)
+        ):
+            # Record enforcement signal
+            if hardening_session_id:
+                self._hardening_engine.record_signal(
+                    hardening_session_id,
+                    HardeningSignal(
+                        signal_type="hardening_enforced",
+                        weight=0,
+                        details=(
+                            f"Blocked {tool_name} "
+                            f"(risk={permissions.risk_level.value}) "
+                            f"at critical hardening severity"
+                        ),
+                        source="gate_enforcement",
+                    ),
+                )
+                # Re-evaluate directive after enforcement signal
+                directive = self._hardening_engine.evaluate(hardening_session_id)
+
+            record = self._audit.log(
+                tool_name=tool_name,
+                user_id=user_id,
+                role=role,
+                action="denied",
+                reason="hardening_enforced",
+                risk_level=permissions.risk_level.value,
+                log_level=effective_log_level,
+                include_parameters=permissions.audit.include_parameters,
+                parameters=parameters,
+                duration_ms=duration_ms,
+                session_id=ctx.session_id,
+            )
+            return AuthResult(
+                allowed=False,
+                decision=DecisionType.DENY,
+                denial={
+                    "status": "denied",
+                    "reason": "hardening_enforced",
+                    "detail": (
+                        "Session risk score exceeded critical threshold. "
+                        "High-risk tool calls are blocked for this session."
+                    ),
+                    "suggestion": "Start a new session to reset the risk score.",
+                },
+                audit_id=record.audit_id,
+                hardening=directive,
+            )
+
+        # -- DEFER evaluation (v1.2) -------------------------------------------
+        # Check DEFER triggers before issuing the token.  DEFER fires when
+        # the gate cannot confidently allow or deny.
+        if decision.allowed:
+            defer_policy = permissions.defer_policy
+            if defer_policy and defer_policy.enabled:
+                deferral: DeferralRecord | None = None
+
+                # Trigger 1: first call in session is HIGH/CRITICAL risk
+                if defer_policy.first_call_high_risk and hardening_session_id:
+                    deferral = self._deferral_manager.check_first_call_high_risk(
+                        hardening_session_id,
+                        tool_name,
+                        permissions.risk_level.value,
+                    )
+
+                # Trigger 2: prompt scanner fired AND tool call attempted
+                if (
+                    deferral is None
+                    and defer_policy.scan_plus_tool
+                    and hardening_session_id
+                ):
+                    scan_signals = [
+                        s for s in self._hardening_engine.get_session_signals(
+                            hardening_session_id
+                        )
+                        if s.source == "prompt_scanner"
+                        and s.signal_type.startswith("prompt_scan:")
+                    ]
+                    if scan_signals:
+                        deferral = self._deferral_manager.check_scan_plus_tool(
+                            hardening_session_id, tool_name, scan_signals,
+                        )
+
+                # Trigger 3: trust degraded below DERIVED
+                if (
+                    deferral is None
+                    and defer_policy.trust_below_threshold
+                    and context_state
+                ):
+                    deferral = self._deferral_manager.check_trust_below_threshold(
+                        resolved_session_id,
+                        tool_name,
+                        permissions.risk_level.value,
+                        context_state.trust_ceiling.value,
+                    )
+
+                if deferral is not None:
+                    deferral.user_id = user_id
+                    deferral.role = role
+                    deferral.parameters = parameters
+                    deferral.timeout_seconds = defer_policy.timeout_seconds
+                    record = self._audit.log(
+                        tool_name=tool_name,
+                        user_id=user_id,
+                        role=role,
+                        action="deferred",
+                        reason=deferral.trigger,
+                        risk_level=permissions.risk_level.value,
+                        log_level=effective_log_level,
+                        session_id=ctx.session_id,
+                        duration_ms=duration_ms,
+                    )
+                    return AuthResult(
+                        allowed=False,
+                        decision=DecisionType.DEFER,
+                        denial={
+                            "status": "deferred",
+                            "reason": deferral.trigger,
+                            "detail": deferral.reason,
+                            "deferral_id": deferral.deferral_id,
+                            "timeout_seconds": deferral.timeout_seconds,
+                            "suggestion": (
+                                "Action suspended. Resolve via human review "
+                                "or wait for timeout."
+                            ),
+                        },
+                        audit_id=record.audit_id,
+                        hardening=directive,
+                        deferral_id=deferral.deferral_id,
+                    )
+
+            # Record successful call for DEFER tracking
+            if hardening_session_id:
+                self._deferral_manager.record_call(hardening_session_id)
+
+        # -- STEP_UP evaluation (v1.2) -----------------------------------------
+        # Check STEP_UP triggers after DEFER (DEFER has priority).
+        if decision.allowed:
+            stepup_policy = permissions.stepup_policy
+            if stepup_policy and stepup_policy.enabled:
+                stepup_req: StepUpRequest | None = None
+
+                # Trigger 1: hardening >= elevated AND tool is HIGH/CRITICAL
+                if stepup_policy.hardening_elevated_high_risk:
+                    h_sev = directive.severity if directive else "none"
+                    stepup_req = self._stepup_manager.check_hardening_elevated_high_risk(
+                        hardening_session_id or resolved_session_id,
+                        tool_name,
+                        permissions.risk_level.value,
+                        h_sev,
+                    )
+
+                # Trigger 2: 2+ PII tools already called
+                if (
+                    stepup_req is None
+                    and stepup_policy.multi_pii_tool_session
+                    and hardening_session_id
+                ):
+                    stepup_req = self._stepup_manager.check_multi_pii_tool_session(
+                        hardening_session_id,
+                        tool_name,
+                        stepup_policy.pii_tool_names,
+                        stepup_policy.multi_pii_tool_threshold,
+                    )
+
+                # Trigger 3: post-denial retry
+                if (
+                    stepup_req is None
+                    and stepup_policy.post_denial_retry
+                    and hardening_session_id
+                ):
+                    stepup_req = self._stepup_manager.check_post_denial_retry(
+                        hardening_session_id,
+                        tool_name,
+                        permissions.risk_level.value,
+                    )
+
+                if stepup_req is not None:
+                    stepup_req.user_id = user_id
+                    stepup_req.role = role
+                    stepup_req.timeout_seconds = stepup_policy.timeout_seconds
+                    record = self._audit.log(
+                        tool_name=tool_name,
+                        user_id=user_id,
+                        role=role,
+                        action="step_up_required",
+                        reason=stepup_req.trigger,
+                        risk_level=permissions.risk_level.value,
+                        log_level=effective_log_level,
+                        session_id=ctx.session_id,
+                        duration_ms=duration_ms,
+                    )
+                    return AuthResult(
+                        allowed=False,
+                        decision=DecisionType.STEP_UP,
+                        denial={
+                            "status": "step_up_required",
+                            "reason": stepup_req.trigger,
+                            "detail": stepup_req.reason,
+                            "request_id": stepup_req.request_id,
+                            "timeout_seconds": stepup_req.timeout_seconds,
+                            "suggestion": (
+                                "Human approval required. Approve or deny "
+                                "via the configured notification channel."
+                            ),
+                        },
+                        audit_id=record.audit_id,
+                        hardening=directive,
+                        stepup_request_id=stepup_req.request_id,
+                    )
+
+            # Record PII tool calls and denials for STEP_UP tracking
+            if hardening_session_id:
+                sp = permissions.stepup_policy
+                pii_names = sp.pii_tool_names if sp else []
+                self._stepup_manager.record_pii_call(
+                    hardening_session_id, tool_name, pii_names,
+                )
+
+        # Record denials for STEP_UP post_denial_retry tracking
+        if not decision.allowed and hardening_session_id:
+            self._stepup_manager.record_denial(hardening_session_id, tool_name)
 
         if decision.allowed:
             # Issue execution token
@@ -363,11 +702,38 @@ class AuthorizationGate:
                         e.value for e in context_state.active_effects
                     ]
 
+            # MODIFY evaluation (v1.2): when modify_policy is configured
+            # and hardening signals are active, build an output modifier
+            modify_output_fn = None
+            modify_decision = DecisionType.ALLOW
+            transformations_applied: list[str] = []
+            mp = permissions.modify_policy
+            if mp and mp.enabled and mp.transformations:
+                should_modify = not mp.apply_when_hardening_active or (
+                    directive and directive.active
+                )
+                if should_modify:
+                    modify_output_fn = self._modify_engine.build_output_modifier(
+                        tool_name, mp.transformations,
+                    )
+                    # Apply parameter transformations
+                    if parameters:
+                        param_result = self._modify_engine.apply_params(
+                            tool_name, parameters, mp.transformations,
+                        )
+                        if param_result.modified:
+                            transformations_applied.extend(
+                                param_result.transformations_applied
+                            )
+
+                    if modify_output_fn or transformations_applied:
+                        modify_decision = DecisionType.MODIFY
+
             record = self._audit.log(
                 tool_name=tool_name,
                 user_id=user_id,
                 role=role,
-                action="allowed",
+                action="allowed" if modify_decision == DecisionType.ALLOW else "modify",
                 risk_level=permissions.risk_level.value,
                 log_level=permissions.audit.log_level,
                 include_parameters=permissions.audit.include_parameters,
@@ -380,8 +746,12 @@ class AuthorizationGate:
 
             return AuthResult(
                 allowed=True,
+                decision=modify_decision,
                 token=token,
                 audit_id=record.audit_id,
+                hardening=directive,
+                modify_output_fn=modify_output_fn,
+                transformations_applied=transformations_applied,
             )
         else:
             record = self._audit.log(
@@ -400,6 +770,7 @@ class AuthorizationGate:
 
             return AuthResult(
                 allowed=False,
+                decision=DecisionType.DENY,
                 denial={
                     "status": "denied",
                     "reason": decision.reason.value if decision.reason else "unknown",
@@ -409,6 +780,7 @@ class AuthorizationGate:
                     "suggestion": decision.suggestion,
                 },
                 audit_id=record.audit_id,
+                hardening=directive,
             )
 
     # -- Execution ----------------------------------------------------------
@@ -420,20 +792,24 @@ class AuthorizationGate:
         *,
         token: ExecutionToken,
         parameters: dict[str, Any] | None = None,
+        modify_output_fn: Callable[[str], str] | None = None,
     ) -> Any:
         """Execute a tool via its token (Layer 3).
 
         Validates and consumes the token, executes the function, applies
-        redaction if configured, and returns the result.
+        MODIFY transformations and redaction if configured, and returns
+        the result.
 
         Args:
             tool_name: Tool to execute.
             func: The callable to invoke.
             token: Execution token from authorize().
             parameters: Keyword arguments for the function.
+            modify_output_fn: Optional output transformer from
+                ``AuthResult.modify_output_fn`` (v1.2 MODIFY).
 
         Returns:
-            The (possibly redacted) tool output.
+            The (possibly modified and redacted) tool output.
         """
         # Validate and consume token (single-use)
         self._token_store.validate_and_consume(
@@ -444,7 +820,21 @@ class AuthorizationGate:
         params = parameters or {}
         result = func(**params)
 
-        # Redact output if configured
+        # Apply MODIFY output transformation (v1.2) — runs before redaction
+        if modify_output_fn and isinstance(result, str):
+            modified = modify_output_fn(result)
+            if modified != result:
+                self._audit.log(
+                    tool_name=tool_name,
+                    user_id=token.user_id,
+                    role=token.role,
+                    action="modified",
+                    risk_level=self._tools[tool_name].risk_level.value,
+                    metadata={"modify_action": "output_transformation"},
+                )
+                result = modified
+
+        # Redact output if configured (defense-in-depth, runs after MODIFY)
         engine = self._redaction_engines.get(tool_name)
         if engine and isinstance(result, str):
             redaction = engine.redact(result)
@@ -742,6 +1132,30 @@ class AuthorizationGate:
         return provenance
 
     # -- Introspection ------------------------------------------------------
+
+    @property
+    def modify_engine(self) -> ModifyEngine:
+        return self._modify_engine
+
+    @property
+    def deferral_manager(self) -> DeferralManager:
+        return self._deferral_manager
+
+    @property
+    def stepup_manager(self) -> StepUpManager:
+        return self._stepup_manager
+
+    @property
+    def hardening_engine(self) -> HardeningEngine:
+        return self._hardening_engine
+
+    @property
+    def velocity_detector(self) -> VelocityDetector:
+        return self._velocity_detector
+
+    @property
+    def combo_detector(self) -> ComboDetector:
+        return self._combo_detector
 
     @property
     def context_tracker(self) -> ContextTracker:

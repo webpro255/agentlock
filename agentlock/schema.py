@@ -43,10 +43,14 @@ __all__ = [
     "ContextPolicyConfig",
     "MemoryRetentionConfig",
     "MemoryPolicyConfig",
+    "DeferPolicyConfig",
+    "StepUpPolicyConfig",
+    "TransformationConfig",
+    "ModifyPolicyConfig",
     "ToolDefinition",
 ]
 
-SCHEMA_VERSION = "1.1"
+SCHEMA_VERSION = "1.2"
 
 
 class ScopeConfig(BaseModel):
@@ -203,6 +207,71 @@ class MemoryPolicyConfig(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+class DeferPolicyConfig(BaseModel):
+    """Governs when authorization is suspended pending resolution (v1.2).
+
+    DEFER acknowledges uncertainty: the gate cannot confidently allow or
+    deny.  The action is suspended until resolved by human review,
+    additional context, or timeout.
+    """
+
+    enabled: bool = False
+    first_call_high_risk: bool = True
+    scan_plus_tool: bool = True
+    trust_below_threshold: bool = True
+    timeout_seconds: int = Field(default=60, ge=1)
+    timeout_action: str = "deny"  # "deny" or "escalate"
+
+    model_config = {"extra": "forbid"}
+
+
+class StepUpPolicyConfig(BaseModel):
+    """Governs when human approval is dynamically required (v1.2).
+
+    STEP_UP pauses execution and notifies a human reviewer.  Unlike the
+    static ``human_approval`` config, STEP_UP is triggered by session
+    state (hardening signals, PII tool count, prior denials).
+    """
+
+    enabled: bool = False
+    hardening_elevated_high_risk: bool = True
+    multi_pii_tool_session: bool = True
+    multi_pii_tool_threshold: int = Field(default=2, ge=1)
+    post_denial_retry: bool = True
+    timeout_seconds: int = Field(default=120, ge=1)
+    timeout_action: str = "deny"
+    pii_tool_names: list[str] = Field(default_factory=lambda: [
+        "query_database", "search_contacts", "check_balance",
+    ])
+
+    model_config = {"extra": "forbid"}
+
+
+class TransformationConfig(BaseModel):
+    """A single parameter or output transformation rule (v1.2)."""
+
+    field: str  # parameter field name or "output"
+    action: str  # redact_pii, restrict_domain, whitelist_path, cap_records, custom
+    config: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = {"extra": "forbid"}
+
+
+class ModifyPolicyConfig(BaseModel):
+    """Governs parameter and output transformations (v1.2).
+
+    When enabled, the gate applies transformations to tool parameters
+    or outputs before/after execution.  The tool still runs, but its
+    inputs or outputs are sanitized.
+    """
+
+    enabled: bool = False
+    transformations: list[TransformationConfig] = Field(default_factory=list)
+    apply_when_hardening_active: bool = True
+
+    model_config = {"extra": "forbid"}
+
+
 class AgentLockPermissions(BaseModel):
     """The ``agentlock`` permissions block attached to a tool definition.
 
@@ -235,6 +304,9 @@ class AgentLockPermissions(BaseModel):
     )
     context_policy: ContextPolicyConfig | None = None
     memory_policy: MemoryPolicyConfig | None = None
+    modify_policy: ModifyPolicyConfig | None = None
+    defer_policy: DeferPolicyConfig | None = None
+    stepup_policy: StepUpPolicyConfig | None = None
 
     model_config = {"extra": "forbid"}
 
