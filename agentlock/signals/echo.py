@@ -18,9 +18,7 @@ and feed the resulting signals into the HardeningEngine::
 from __future__ import annotations
 
 import re
-import time
 from dataclasses import dataclass, field
-from typing import Any
 
 from agentlock.hardening import HardeningSignal
 

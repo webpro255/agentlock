@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-import time
-
-import pytest
-
 from agentlock.hardening import (
     HardeningConfig,
     HardeningDirective,
@@ -275,7 +271,9 @@ class TestTargetedInstructions:
 
     def test_format_forcing_gets_format_instructions(self):
         engine = HardeningEngine()
-        engine.record_signal("s1", HardeningSignal(signal_type="prompt_scan:format_forcing", weight=2))
+        engine.record_signal(
+            "s1", HardeningSignal(signal_type="prompt_scan:format_forcing", weight=2),
+        )
         engine.record_signal("s1", HardeningSignal(signal_type="prompt_scan:injection", weight=4))
         d = engine.evaluate("s1")
         assert d.active
@@ -312,8 +310,14 @@ class TestTargetedInstructions:
         d = engine.evaluate("s1")
         assert d.active
         # Should have instructions from both injection AND echo
-        has_injection = any("injection" in i.lower() or "override" in i.lower() for i in d.instructions)
-        has_echo = any("disclosed" in i.lower() or "configuration" in i.lower() for i in d.instructions)
+        has_injection = any(
+            "injection" in i.lower() or "override" in i.lower()
+            for i in d.instructions
+        )
+        has_echo = any(
+            "disclosed" in i.lower() or "configuration" in i.lower()
+            for i in d.instructions
+        )
         assert has_injection
         assert has_echo
 
@@ -330,7 +334,7 @@ class TestHardeningGateIntegration:
     """Test that the gate records hardening signals and returns directives."""
 
     def test_gate_returns_hardening_directive(self):
-        from agentlock import AuthorizationGate, AgentLockPermissions
+        from agentlock import AgentLockPermissions, AuthorizationGate
         from agentlock.hardening import HardeningConfig
 
         gate = AuthorizationGate(
@@ -341,7 +345,7 @@ class TestHardeningGateIntegration:
             requires_auth=True,
             allowed_roles=["admin"],
         ))
-        session = gate.create_session(user_id="alice", role="admin")
+        gate.create_session(user_id="alice", role="admin")
 
         result = gate.authorize("send_email", user_id="alice", role="admin")
         # No signals yet — directive should be inactive or None
@@ -349,7 +353,7 @@ class TestHardeningGateIntegration:
             assert not result.hardening.active
 
     def test_gate_injection_denial_records_signal(self):
-        from agentlock import AuthorizationGate, AgentLockPermissions
+        from agentlock import AgentLockPermissions, AuthorizationGate
         from agentlock.hardening import HardeningConfig
 
         gate = AuthorizationGate(
@@ -375,7 +379,7 @@ class TestHardeningGateIntegration:
         assert risk >= 3  # injection_blocked weight
 
     def test_gate_rate_limit_records_signal(self):
-        from agentlock import AuthorizationGate, AgentLockPermissions, RateLimitConfig
+        from agentlock import AgentLockPermissions, AuthorizationGate, RateLimitConfig
         from agentlock.hardening import HardeningConfig
 
         gate = AuthorizationGate(
@@ -398,7 +402,7 @@ class TestHardeningGateIntegration:
         assert risk >= 1  # rate_limit_hit weight
 
     def test_gate_velocity_signal_recorded(self):
-        from agentlock import AuthorizationGate, AgentLockPermissions
+        from agentlock import AgentLockPermissions, AuthorizationGate
         from agentlock.hardening import HardeningConfig
 
         gate = AuthorizationGate(
@@ -419,7 +423,7 @@ class TestHardeningGateIntegration:
         assert risk >= 2  # rapid_calls weight
 
     def test_gate_combo_signal_recorded(self):
-        from agentlock import AuthorizationGate, AgentLockPermissions
+        from agentlock import AgentLockPermissions, AuthorizationGate
         from agentlock.hardening import HardeningConfig
 
         gate = AuthorizationGate(
@@ -444,7 +448,7 @@ class TestHardeningGateIntegration:
         assert risk >= 4  # suspicious_combo weight for query_database+send_email
 
     def test_hardening_directive_returned_after_signals(self):
-        from agentlock import AuthorizationGate, AgentLockPermissions
+        from agentlock import AgentLockPermissions, AuthorizationGate
         from agentlock.hardening import HardeningConfig
 
         gate = AuthorizationGate(
@@ -460,7 +464,7 @@ class TestHardeningGateIntegration:
             requires_auth=True,
             allowed_roles=["admin"],
         ))
-        session = gate.create_session(user_id="alice", role="admin")
+        gate.create_session(user_id="alice", role="admin")
 
         # Build up signals: query_database + send_email = combo(4) + velocity may fire
         gate.authorize("query_database", user_id="alice", role="admin")
@@ -472,7 +476,7 @@ class TestHardeningGateIntegration:
         assert result.hardening.severity in ("warning", "elevated", "critical")
 
     def test_no_hardening_when_disabled(self):
-        from agentlock import AuthorizationGate, AgentLockPermissions
+        from agentlock import AgentLockPermissions, AuthorizationGate
         from agentlock.hardening import HardeningConfig
 
         gate = AuthorizationGate(
@@ -496,7 +500,7 @@ class TestGateEnforcement:
     """Test gate-level hardening enforcement (Change 3)."""
 
     def _build_gate(self, enforce: bool = True):
-        from agentlock import AuthorizationGate, AgentLockPermissions
+        from agentlock import AgentLockPermissions, AuthorizationGate
         from agentlock.hardening import HardeningConfig
 
         gate = AuthorizationGate(

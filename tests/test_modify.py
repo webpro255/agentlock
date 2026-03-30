@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from agentlock.modify import ModifyEngine, ModifyResult
 from agentlock.schema import ModifyPolicyConfig, TransformationConfig
 

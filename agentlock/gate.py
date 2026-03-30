@@ -29,11 +29,13 @@ Example::
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from agentlock.audit import AuditBackend, AuditLogger, InMemoryAuditBackend
 from agentlock.context import ContextProvenance, ContextTracker
+from agentlock.defer import DeferralManager, DeferralRecord
 from agentlock.exceptions import (
     DeniedError,
     RateLimitedError,
@@ -44,17 +46,16 @@ from agentlock.hardening import (
     HardeningEngine,
     HardeningSignal,
 )
-from agentlock.defer import DeferralManager, DeferralRecord
 from agentlock.memory_gate import MemoryDecision, MemoryGate, MemoryStore
 from agentlock.modify import ModifyEngine
 from agentlock.policy import PolicyEngine, RequestContext
-from agentlock.stepup import StepUpManager, StepUpNotifier, StepUpRequest
 from agentlock.rate_limit import RateLimiter
 from agentlock.redaction import RedactionEngine, RedactionResult
 from agentlock.schema import AgentLockPermissions
 from agentlock.session import Session, SessionStore
 from agentlock.signals.combos import ComboConfig, ComboDetector
 from agentlock.signals.velocity import VelocityConfig, VelocityDetector
+from agentlock.stepup import StepUpManager, StepUpRequest
 from agentlock.token import ExecutionToken, TokenStore
 from agentlock.types import (
     ContextSource,
@@ -355,7 +356,8 @@ class AuthorizationGate:
 
         # Record hardening signals from policy decision
         if hardening_session_id and not decision.allowed and decision.reason:
-            reason = decision.reason.value if hasattr(decision.reason, "value") else str(decision.reason)
+            r = decision.reason
+            reason = r.value if hasattr(r, "value") else str(r)
             signal_map = {
                 "data_policy_violation": "injection_blocked",
                 "trust_degraded": "trust_degraded",
@@ -375,8 +377,7 @@ class AuthorizationGate:
                 )
 
         # Record trust degradation signals from context state
-        if hardening_session_id and context_state:
-            if context_state.is_degraded:
+        if hardening_session_id and context_state and context_state.is_degraded:
                 self._hardening_engine.record_signal(
                     hardening_session_id,
                     HardeningSignal(
@@ -432,7 +433,10 @@ class AuthorizationGate:
                     duration_ms=duration_ms,
                     session_id=ctx.session_id,
                 )
-                directive = self._hardening_engine.evaluate(hardening_session_id) if hardening_session_id else None
+                directive = (
+                    self._hardening_engine.evaluate(hardening_session_id)
+                    if hardening_session_id else None
+                )
                 return AuthResult(
                     allowed=False,
                     decision=DecisionType.DENY,
@@ -444,7 +448,10 @@ class AuthorizationGate:
         duration_ms = (time.time() - start) * 1000
 
         # Evaluate hardening directive for the session
-        directive = self._hardening_engine.evaluate(hardening_session_id) if hardening_session_id else None
+        directive = (
+            self._hardening_engine.evaluate(hardening_session_id)
+            if hardening_session_id else None
+        )
 
         # Gate-level hardening enforcement: block high/critical risk tools
         # when the session risk score exceeds the critical threshold.

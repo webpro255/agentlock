@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from agentlock.signals.echo import EchoConfig, EchoDetector
 
 
@@ -89,7 +87,6 @@ class TestToolNameEcho:
             "I can use send_email and query_database to help.",
         )
         # User was not probing for tools, just asking to send email
-        echo = [s for s in signals if "tool_enumeration" in s.details or "Tool name echo" in s.details]
         # tool_enumeration pattern should not match, but "I can use...tools" might
         # The key is that tool name echo specifically requires probing patterns
         # and the user message doesn't match probing patterns

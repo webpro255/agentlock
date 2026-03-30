@@ -61,7 +61,7 @@ for i in range(1, 6):
         print(f"    OK: {output}")
     except RateLimitedError as exc:
         # RateLimitedError is a subclass of DeniedError with extra fields
-        print(f"    RATE LIMITED!")
+        print("    RATE LIMITED!")
         print(f"    reason            = {exc.reason}")
         print(f"    detail            = {exc.detail}")
         print(f"    retry_after_secs  = {exc.retry_after_seconds}")

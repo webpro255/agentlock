@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import time
 
-import pytest
-
 from agentlock.exceptions import StepUpRequiredError
-from agentlock.stepup import StepUpManager, StepUpNotifier, StepUpRequest
+from agentlock.stepup import StepUpManager, StepUpRequest
 
 
 class TestStepUpRequest:
@@ -215,8 +213,8 @@ class TestStepUpInGate:
     """Test STEP_UP integration in the gate pipeline."""
 
     def _make_gate(self):
-        from agentlock import AuthorizationGate, AgentLockPermissions
-        from agentlock.hardening import HardeningConfig, HardeningSignal
+        from agentlock import AgentLockPermissions, AuthorizationGate
+        from agentlock.hardening import HardeningConfig
         from agentlock.schema import StepUpPolicyConfig
 
         gate = AuthorizationGate(
@@ -273,7 +271,7 @@ class TestStepUpInGate:
     def test_multi_pii_triggers_stepup(self):
         from agentlock import DecisionType
         gate = self._make_gate()
-        session = gate.create_session(user_id="alice", role="admin")
+        gate.create_session(user_id="alice", role="admin")
         # Call PII tools twice — third should trigger step_up
         gate.authorize("query_database", user_id="alice", role="admin")
         gate.authorize("query_database", user_id="alice", role="admin")
@@ -299,7 +297,7 @@ class TestStepUpInGate:
         assert result.decision == DecisionType.STEP_UP
 
     def test_no_stepup_when_disabled(self):
-        from agentlock import AuthorizationGate, AgentLockPermissions
+        from agentlock import AgentLockPermissions, AuthorizationGate
         gate = AuthorizationGate()
         gate.register_tool("query_database", AgentLockPermissions(
             risk_level="high",

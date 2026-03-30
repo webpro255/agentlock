@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import pytest
-
 from agentlock import (
     AgentLockPermissions,
     AuthorizationGate,
     DecisionType,
-    RateLimitConfig,
 )
 from agentlock.hardening import HardeningConfig, HardeningSignal
 from agentlock.schema import ModifyPolicyConfig, TransformationConfig

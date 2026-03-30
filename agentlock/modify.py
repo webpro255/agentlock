@@ -32,8 +32,9 @@ Usage::
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from agentlock.redaction import RedactionEngine
 
@@ -237,6 +238,7 @@ class ModifyEngine:
         entries = re.findall(r"\{[^{}]*\}", value)
         if len(entries) > max_records:
             truncated = ", ".join(entries[:max_records])
-            return f"[{truncated}] ... ({len(entries) - max_records} records redacted, {max_records} shown)"
+            hidden = len(entries) - max_records
+            return f"[{truncated}] ... ({hidden} records redacted, {max_records} shown)"
 
         return value

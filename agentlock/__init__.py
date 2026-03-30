@@ -39,14 +39,13 @@ __version__ = "1.2.0"
 from agentlock.audit import AuditLogger, AuditRecord, FileAuditBackend, InMemoryAuditBackend
 from agentlock.context import ContextProvenance, ContextState, ContextTracker
 from agentlock.decorators import agentlock
+from agentlock.defer import DeferralManager, DeferralRecord
 from agentlock.exceptions import (
     AgentLockError,
-    DeferredError,
-    ModifyAppliedError,
-    StepUpRequiredError,
     ApprovalRequiredError,
     AuthenticationRequiredError,
     ConfigurationError,
+    DeferredError,
     DeniedError,
     InsufficientRoleError,
     MemoryConfirmationRequiredError,
@@ -54,10 +53,12 @@ from agentlock.exceptions import (
     MemoryReadDeniedError,
     MemoryRetentionExceededError,
     MemoryWriteDeniedError,
+    ModifyAppliedError,
     RateLimitedError,
     SchemaValidationError,
     ScopeViolationError,
     SessionExpiredError,
+    StepUpRequiredError,
     TokenError,
     TokenExpiredError,
     TokenInvalidError,
@@ -65,27 +66,15 @@ from agentlock.exceptions import (
     TrustDegradedError,
     UnattributedContextError,
 )
-from agentlock.defer import DeferralManager, DeferralRecord
 from agentlock.gate import AuthorizationGate, AuthResult
-from agentlock.stepup import StepUpManager, StepUpNotifier, StepUpRequest
-from agentlock.modify import ModifyEngine, ModifyResult
 from agentlock.hardening import (
     HardeningConfig,
     HardeningDirective,
     HardeningEngine,
     HardeningSignal,
 )
-from agentlock.signals import (
-    ComboDetector,
-    ComboSignal,
-    EchoDetector,
-    EchoSignal,
-    PromptScanConfig,
-    PromptScanner,
-    VelocityDetector,
-    VelocitySignal,
-)
 from agentlock.memory_gate import InMemoryMemoryStore, MemoryDecision, MemoryEntry, MemoryGate
+from agentlock.modify import ModifyEngine, ModifyResult
 from agentlock.policy import (
     InjectionFilter,
     PiiFilter,
@@ -98,29 +87,39 @@ from agentlock.redaction import RedactionEngine, RedactionResult
 from agentlock.schema import (
     SCHEMA_VERSION,
     AgentLockPermissions,
-    DeferPolicyConfig,
-    ModifyPolicyConfig,
-    StepUpPolicyConfig,
-    TransformationConfig,
     AuditConfig,
     ContextPolicyConfig,
     DataPolicyConfig,
+    DeferPolicyConfig,
     DegradationTrigger,
     HumanApprovalConfig,
     MemoryPolicyConfig,
     MemoryRetentionConfig,
+    ModifyPolicyConfig,
     RateLimitConfig,
     ScopeConfig,
     SessionConfig,
     SourceAuthorityConfig,
+    StepUpPolicyConfig,
     ToolDefinition,
+    TransformationConfig,
     TrustDegradationConfig,
 )
 from agentlock.session import Session, SessionStore
+from agentlock.signals import (
+    ComboDetector,
+    ComboSignal,
+    EchoDetector,
+    EchoSignal,
+    PromptScanConfig,
+    PromptScanner,
+    VelocityDetector,
+    VelocitySignal,
+)
+from agentlock.stepup import StepUpManager, StepUpNotifier, StepUpRequest
 from agentlock.token import ExecutionToken, TokenStore
 from agentlock.types import (
     ApprovalChannel,
-    DecisionType,
     ApprovalThreshold,
     AuditLogLevel,
     AuthMethod,
@@ -128,6 +127,7 @@ from agentlock.types import (
     ContextSource,
     DataBoundary,
     DataClassification,
+    DecisionType,
     DegradationEffect,
     DenialReason,
     MemoryPersistence,
@@ -198,10 +198,12 @@ __all__ = [
     # DEFER (v1.2)
     "DeferralManager",
     "DeferralRecord",
+    "DeferredError",
     # STEP_UP (v1.2)
     "StepUpManager",
     "StepUpRequest",
     "StepUpNotifier",
+    "StepUpRequiredError",
     # MODIFY (v1.2)
     "ModifyEngine",
     "ModifyResult",

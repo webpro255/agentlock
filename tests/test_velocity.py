@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import time
 
-import pytest
-
 from agentlock.signals.velocity import VelocityConfig, VelocityDetector
 
 

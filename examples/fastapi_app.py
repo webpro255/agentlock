@@ -44,7 +44,6 @@ from pydantic import BaseModel
 from agentlock import (
     AgentLockPermissions,
     AuthorizationGate,
-    DeniedError,
     InMemoryAuditBackend,
 )
 
@@ -112,7 +111,9 @@ def get_auth_context(request: Request) -> AuthContext:
     return AuthContext(user_id=user_id, role=role)
 
 
-def agentlock_authorize(tool_name: str, auth: AuthContext, parameters: dict[str, Any] | None = None) -> None:
+def agentlock_authorize(
+    tool_name: str, auth: AuthContext, parameters: dict[str, Any] | None = None,
+) -> None:
     """Helper that authorizes via the gate and raises HTTPException on denial."""
     result = gate.authorize(
         tool_name,

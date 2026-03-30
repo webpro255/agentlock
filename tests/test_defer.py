@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import time
 
-import pytest
-
 from agentlock.defer import DeferralManager, DeferralRecord
 from agentlock.exceptions import DeferredError
 
@@ -177,7 +175,7 @@ class TestDeferInGate:
     """Test DEFER integration in the gate pipeline."""
 
     def _make_gate(self):
-        from agentlock import AuthorizationGate, AgentLockPermissions, DecisionType
+        from agentlock import AgentLockPermissions, AuthorizationGate
         from agentlock.hardening import HardeningConfig
         from agentlock.schema import DeferPolicyConfig
 
@@ -235,7 +233,7 @@ class TestDeferInGate:
         assert result.allowed
 
     def test_no_defer_when_disabled(self):
-        from agentlock import AuthorizationGate, AgentLockPermissions
+        from agentlock import AgentLockPermissions, AuthorizationGate
         gate = AuthorizationGate()
         gate.register_tool("query_database", AgentLockPermissions(
             risk_level="high",

@@ -17,8 +17,7 @@ requests trigger velocity even if individual requests are denied.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 from agentlock.hardening import HardeningSignal
 

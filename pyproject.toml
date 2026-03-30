@@ -101,6 +101,9 @@ line-length = 100
 select = ["E", "F", "I", "N", "UP", "B", "SIM"]
 ignore = ["SIM108", "SIM114"]
 
+[tool.ruff.lint.per-file-ignores]
+"examples/*" = ["B008"]
+
 [tool.coverage.run]
 source = ["agentlock"]
 omit = ["agentlock/integrations/*"]
