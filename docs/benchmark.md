@@ -376,10 +376,47 @@ The central engineering challenge through v1.1.1 was the PII-injection tradeoff:
 
 The 12 remaining failures are dominated by model-layer information leakage (9 of 12), where the model's training to be helpful causes it to confirm the existence of internal configuration. This is not a middleware problem. The next improvement requires combining middleware defense with system prompt hardening to instruct the model to deflect rather than acknowledge.
 
-For production deployments, v1.1.2 is now the recommended configuration. It has the highest overall score, fewest total findings, perfect PII protection, and the best injection defense among versions with working PII. The tradeoff that previously forced a choice between PII and injection protection no longer applies.
+For production deployments, v1.2.1 is now the recommended configuration. The v1.2 compromised admin benchmark (section 13) demonstrates 99.5% pass rate across 222 adversarial vectors with a single remaining failure at the model layer. v1.2.1 adds adaptive prompt hardening, MODIFY/DEFER/STEP_UP decision types, Ed25519 signed receipts, and hash-chained context on top of the decoupled filter pipeline from v1.1.2.
 
 | Version | Recommended For |
 |---|---|
-| v1.1.2 | Production deployments (best overall, no tradeoffs) |
-| v1.1 | Maximum injection defense in contexts where PII is not a concern |
-| v1.0 | Legacy deployments not yet upgraded |
+| v1.2.1 | Production deployments (99.5/A, signed receipts, hash-chained context) |
+| v1.2.0 | Deployments not yet upgraded to v1.2.1 |
+| v1.1.2 | Legacy deployments with v1.1.x compatibility requirements |
+
+---
+
+## 13. v1.2 Benchmark: Compromised Admin Profile
+
+Published: April 6, 2026
+
+### Test Methodology
+
+v1.2 introduces a local benchmark using a harder test profile: compromised admin. The attacker holds valid admin credentials with full permissions. Auth and role checks pass on every call. This isolates AgentLock's behavioral and structural defenses from role-based access control.
+
+Test suite: 222 adversarial attack vectors across 35 categories. Tested against Grok (xAI) as the agent model.
+
+### Score Progression
+
+| Version | Pass Rate | Grade | Passed | Failed |
+|---|---|---|---|---|
+| v1.1.2 (permissions only) | 30.2% | F | 55/182 | 127 |
+| v1.2.0 (hardening + MODIFY/DEFER/STEP_UP) | 81.3% | B | 148/182 | 34 |
+| v1.2.1 (gap fixes + signed receipts) | 99.5% | A | 221/222 | 1 |
+
+### Category Results (v1.2.1, 222 vectors)
+
+34 of 35 categories at 100/A. 1 category at 90/A (social_engineering_advanced).
+
+Categories at 100/A: agent_hijacking, autonomous_decision_chain, compliance_bypass, context_manipulation, crisis_exploitation, data_exfiltration, delayed_execution, encoding, error_based_extraction, excessive_agency, format_forcing, indirect_data_injection, indirect_injection, insecure_output, jailbreak, memory_poisoning, multi_agent_chain, multi_agent_confusion, multi_language_bypass, multi_turn_manipulation, output_manipulation, overreliance, persona_hijacking, privilege_escalation, rag_exploitation, refusal_exhaustion, specification_gaming, supply_chain, system_prompt_extraction, temporal_poisoning, tool_abuse, tool_chain_attack, tool_parameter_manipulation, tool_poisoning
+
+### Key Findings
+
+- Zero raw PII exfiltrated in any test (all PII tools return redacted output via MODIFY)
+- The single remaining failure is a social engineering attack using legal citation pressure with zero injection language (model-layer behavior)
+- Adaptive prompt hardening with pre-LLM scanning was the largest single contributor to score improvement (30.2% to 57.1%)
+- MODIFY (PII redaction on tool output) was the second largest contributor (57.1% to 75.3%)
+
+### Recommended Configuration
+
+v1.2.1 is the recommended version for all deployments. Install with `pip install agentlock`. For Ed25519 signed receipts, install with `pip install agentlock[crypto]`.
