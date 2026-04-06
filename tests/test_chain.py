@@ -7,11 +7,22 @@ Phase 7: Integration tests (5 tests)
 
 from __future__ import annotations
 
-from agentlock import AgentLockPermissions, AuthorizationGate
-from agentlock.chain import GENESIS_HASH, ContextChain
-from agentlock.context import ContextTracker
-from agentlock.receipts import ReceiptSigner, ReceiptVerifier
-from agentlock.types import ContextAuthority, ContextSource
+import pytest
+
+try:
+    import nacl  # noqa: F401
+
+    HAS_NACL = True
+except ImportError:
+    HAS_NACL = False
+
+requires_nacl = pytest.mark.skipif(not HAS_NACL, reason="PyNaCl not installed")
+
+from agentlock import AgentLockPermissions, AuthorizationGate  # noqa: E402
+from agentlock.chain import GENESIS_HASH, ContextChain  # noqa: E402
+from agentlock.context import ContextTracker  # noqa: E402
+from agentlock.receipts import ReceiptSigner, ReceiptVerifier  # noqa: E402
+from agentlock.types import ContextAuthority, ContextSource  # noqa: E402
 
 # ===========================================================================
 # Phase 4: ContextChain unit tests (15 tests)
@@ -302,6 +313,7 @@ class TestIntegration:
         valid, _ = gate.context_tracker.verify_context_chain(session.session_id)
         assert valid
 
+    @requires_nacl
     def test_receipt_chain_across_multiple_calls(self):
         """Multiple tool calls each produce verifiable receipts."""
         signer = ReceiptSigner(signing_method="ed25519")

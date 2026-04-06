@@ -8,12 +8,21 @@ from __future__ import annotations
 
 import pytest
 
-from agentlock import (
+try:
+    import nacl  # noqa: F401
+
+    HAS_NACL = True
+except ImportError:
+    HAS_NACL = False
+
+requires_nacl = pytest.mark.skipif(not HAS_NACL, reason="PyNaCl not installed")
+
+from agentlock import (  # noqa: E402
     AgentLockPermissions,
     AuthorizationGate,
 )
-from agentlock.hardening import HardeningConfig
-from agentlock.receipts import ReceiptSigner, ReceiptVerifier, SignedReceipt
+from agentlock.hardening import HardeningConfig  # noqa: E402
+from agentlock.receipts import ReceiptSigner, ReceiptVerifier, SignedReceipt  # noqa: E402
 
 # ===========================================================================
 # Phase 3: SignedReceipt unit tests (20 tests)
@@ -87,6 +96,7 @@ class TestSignedReceipt:
         assert b"\x00" in r.canonical_bytes()
 
 
+@requires_nacl
 class TestReceiptSignerEd25519:
     """Test Ed25519 signing."""
 
@@ -231,6 +241,7 @@ class TestReceiptSignerHMAC:
             signer.generate_key_pair()
 
 
+@requires_nacl
 class TestReceiptDecisionTypes:
     """Test receipts for each decision type."""
 
@@ -343,6 +354,7 @@ class TestReceiptsInGate:
         assert result.receipt is not None
         assert result.receipt.parameters_hash != ""
 
+    @requires_nacl
     def test_ed25519_receipts_in_gate(self):
         gate, signer = _make_gate_with_signer(method="ed25519")
         gate.create_session(user_id="alice", role="admin")
