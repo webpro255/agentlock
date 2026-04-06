@@ -1,0 +1,744 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentlock.dev/schema/v1.2",
+  "title": "AgentLock Tool Definition Schema v1.2",
+  "description": "Authorization schema for AI agent tool calls. Defines the agentlock permissions block that extends standard tool definitions with access control, rate limiting, data policies, audit requirements, adaptive hardening, DEFER/STEP_UP/MODIFY decision types, signed receipts, and hash-chained context.",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Tool identifier"
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable tool description"
+    },
+    "parameters": {
+      "type": "object",
+      "description": "Tool parameter schema"
+    },
+    "agentlock": {
+      "$ref": "#/$defs/AgentLockPermissions"
+    }
+  },
+  "required": [
+    "name",
+    "agentlock"
+  ],
+  "$defs": {
+    "ApprovalChannel": {
+      "description": "Out-of-band approval delivery channel.",
+      "enum": [
+        "push_notification",
+        "email",
+        "sms",
+        "in_app"
+      ],
+      "title": "ApprovalChannel",
+      "type": "string"
+    },
+    "ApprovalThreshold": {
+      "description": "When human approval is triggered.",
+      "enum": [
+        "always",
+        "bulk_operations",
+        "external_communication",
+        "financial_above_limit",
+        "first_invocation_per_session"
+      ],
+      "title": "ApprovalThreshold",
+      "type": "string"
+    },
+    "AuditConfig": {
+      "additionalProperties": false,
+      "description": "Audit logging requirements.  Audit is never optional.",
+      "properties": {
+        "log_level": {
+          "$ref": "#/$defs/AuditLogLevel",
+          "default": "standard"
+        },
+        "include_parameters": {
+          "default": true,
+          "title": "Include Parameters",
+          "type": "boolean"
+        },
+        "retention_days": {
+          "default": 90,
+          "minimum": 1,
+          "title": "Retention Days",
+          "type": "integer"
+        }
+      },
+      "title": "AuditConfig",
+      "type": "object"
+    },
+    "AuditLogLevel": {
+      "description": "Audit detail level.",
+      "enum": [
+        "minimal",
+        "standard",
+        "full"
+      ],
+      "title": "AuditLogLevel",
+      "type": "string"
+    },
+    "AuthMethod": {
+      "description": "Supported authentication mechanisms.",
+      "enum": [
+        "oauth2",
+        "magic_link",
+        "mfa",
+        "api_key"
+      ],
+      "title": "AuthMethod",
+      "type": "string"
+    },
+    "ContextAuthority": {
+      "description": "Trust level of a context source.",
+      "enum": [
+        "authoritative",
+        "derived",
+        "untrusted"
+      ],
+      "title": "ContextAuthority",
+      "type": "string"
+    },
+    "ContextPolicyConfig": {
+      "additionalProperties": false,
+      "description": "Governs what enters context and with what authority.",
+      "properties": {
+        "source_authorities": {
+          "items": {
+            "$ref": "#/$defs/SourceAuthorityConfig"
+          },
+          "title": "Source Authorities",
+          "type": "array"
+        },
+        "trust_degradation": {
+          "$ref": "#/$defs/TrustDegradationConfig"
+        },
+        "reject_unattributed": {
+          "default": true,
+          "title": "Reject Unattributed",
+          "type": "boolean"
+        }
+      },
+      "title": "ContextPolicyConfig",
+      "type": "object"
+    },
+    "ContextSource": {
+      "description": "Sources of context entries in the agent's context window.",
+      "enum": [
+        "user_message",
+        "system_prompt",
+        "tool_output",
+        "retrieved_document",
+        "web_content",
+        "agent_memory",
+        "peer_agent"
+      ],
+      "title": "ContextSource",
+      "type": "string"
+    },
+    "DataBoundary": {
+      "description": "Scope of data access.",
+      "enum": [
+        "authenticated_user_only",
+        "team",
+        "organization"
+      ],
+      "title": "DataBoundary",
+      "type": "string"
+    },
+    "DataClassification": {
+      "description": "Data sensitivity classification.",
+      "enum": [
+        "public",
+        "internal",
+        "confidential",
+        "may_contain_pii",
+        "contains_pii",
+        "contains_phi",
+        "contains_financial"
+      ],
+      "title": "DataClassification",
+      "type": "string"
+    },
+    "DataPolicyConfig": {
+      "additionalProperties": false,
+      "description": "Data classification and redaction rules.",
+      "properties": {
+        "input_classification": {
+          "$ref": "#/$defs/DataClassification",
+          "default": "public"
+        },
+        "output_classification": {
+          "$ref": "#/$defs/DataClassification",
+          "default": "public"
+        },
+        "prohibited_in_output": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Prohibited In Output",
+          "type": "array"
+        },
+        "redaction": {
+          "$ref": "#/$defs/RedactionMode",
+          "default": "none"
+        }
+      },
+      "title": "DataPolicyConfig",
+      "type": "object"
+    },
+    "DeferPolicyConfig": {
+      "additionalProperties": false,
+      "description": "Governs when authorization is suspended pending resolution (v1.2).\n\nDEFER acknowledges uncertainty: the gate cannot confidently allow or\ndeny.  The action is suspended until resolved by human review,\nadditional context, or timeout.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "first_call_any_risk": {
+          "default": false,
+          "title": "First Call Any Risk",
+          "type": "boolean"
+        },
+        "first_call_high_risk": {
+          "default": true,
+          "title": "First Call High Risk",
+          "type": "boolean"
+        },
+        "scan_plus_tool": {
+          "default": true,
+          "title": "Scan Plus Tool",
+          "type": "boolean"
+        },
+        "trust_below_threshold": {
+          "default": true,
+          "title": "Trust Below Threshold",
+          "type": "boolean"
+        },
+        "timeout_seconds": {
+          "default": 60,
+          "minimum": 1,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        },
+        "timeout_action": {
+          "default": "deny",
+          "title": "Timeout Action",
+          "type": "string"
+        }
+      },
+      "title": "DeferPolicyConfig",
+      "type": "object"
+    },
+    "DegradationEffect": {
+      "description": "Effect applied when trust degrades.",
+      "enum": [
+        "require_approval",
+        "elevate_logging",
+        "restrict_scope",
+        "deny_writes"
+      ],
+      "title": "DegradationEffect",
+      "type": "string"
+    },
+    "DegradationTrigger": {
+      "additionalProperties": false,
+      "description": "Defines when and how trust degrades.",
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/ContextSource"
+        },
+        "effect": {
+          "$ref": "#/$defs/DegradationEffect"
+        }
+      },
+      "required": [
+        "source",
+        "effect"
+      ],
+      "title": "DegradationTrigger",
+      "type": "object"
+    },
+    "HumanApprovalConfig": {
+      "additionalProperties": false,
+      "description": "Human-in-the-loop approval gate.",
+      "properties": {
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "threshold": {
+          "$ref": "#/$defs/ApprovalThreshold",
+          "default": "always"
+        },
+        "channel": {
+          "$ref": "#/$defs/ApprovalChannel",
+          "default": "push_notification"
+        }
+      },
+      "title": "HumanApprovalConfig",
+      "type": "object"
+    },
+    "MemoryPersistence": {
+      "description": "Memory persistence scope.",
+      "enum": [
+        "none",
+        "session",
+        "cross_session"
+      ],
+      "title": "MemoryPersistence",
+      "type": "string"
+    },
+    "MemoryPolicyConfig": {
+      "additionalProperties": false,
+      "description": "Governs what the agent can persist to memory.",
+      "properties": {
+        "persistence": {
+          "$ref": "#/$defs/MemoryPersistence",
+          "default": "none"
+        },
+        "allowed_writers": {
+          "items": {
+            "$ref": "#/$defs/MemoryWriter"
+          },
+          "title": "Allowed Writers",
+          "type": "array"
+        },
+        "allowed_readers": {
+          "items": {
+            "$ref": "#/$defs/MemoryWriter"
+          },
+          "title": "Allowed Readers",
+          "type": "array"
+        },
+        "retention": {
+          "$ref": "#/$defs/MemoryRetentionConfig"
+        },
+        "prohibited_content": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Prohibited Content",
+          "type": "array"
+        },
+        "require_write_confirmation": {
+          "default": true,
+          "title": "Require Write Confirmation",
+          "type": "boolean"
+        },
+        "confirmation_channel": {
+          "$ref": "#/$defs/ApprovalChannel",
+          "default": "in_app"
+        }
+      },
+      "title": "MemoryPolicyConfig",
+      "type": "object"
+    },
+    "MemoryRetentionConfig": {
+      "additionalProperties": false,
+      "description": "Retention limits for persistent memory.",
+      "properties": {
+        "max_age_seconds": {
+          "default": 86400,
+          "minimum": 0,
+          "title": "Max Age Seconds",
+          "type": "integer"
+        },
+        "max_entries": {
+          "default": 100,
+          "minimum": 1,
+          "title": "Max Entries",
+          "type": "integer"
+        }
+      },
+      "title": "MemoryRetentionConfig",
+      "type": "object"
+    },
+    "MemoryWriter": {
+      "description": "Entities that can write to or read from agent memory.",
+      "enum": [
+        "system",
+        "user",
+        "agent",
+        "tool"
+      ],
+      "title": "MemoryWriter",
+      "type": "string"
+    },
+    "ModifyPolicyConfig": {
+      "additionalProperties": false,
+      "description": "Governs parameter and output transformations (v1.2).\n\nWhen enabled, the gate applies transformations to tool parameters\nor outputs before/after execution.  The tool still runs, but its\ninputs or outputs are sanitized.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "transformations": {
+          "items": {
+            "$ref": "#/$defs/TransformationConfig"
+          },
+          "title": "Transformations",
+          "type": "array"
+        },
+        "apply_when_hardening_active": {
+          "default": true,
+          "title": "Apply When Hardening Active",
+          "type": "boolean"
+        }
+      },
+      "title": "ModifyPolicyConfig",
+      "type": "object"
+    },
+    "RateLimitConfig": {
+      "additionalProperties": false,
+      "description": "Per-user, per-session rate limiting.",
+      "properties": {
+        "max_calls": {
+          "minimum": 1,
+          "title": "Max Calls",
+          "type": "integer"
+        },
+        "window_seconds": {
+          "minimum": 1,
+          "title": "Window Seconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "max_calls",
+        "window_seconds"
+      ],
+      "title": "RateLimitConfig",
+      "type": "object"
+    },
+    "RecipientPolicy": {
+      "description": "Allowed recipient scope for outbound communication tools.",
+      "enum": [
+        "known_contacts_only",
+        "same_domain",
+        "allowlist",
+        "any"
+      ],
+      "title": "RecipientPolicy",
+      "type": "string"
+    },
+    "RedactionMode": {
+      "description": "How prohibited data types are handled.",
+      "enum": [
+        "auto",
+        "manual",
+        "none"
+      ],
+      "title": "RedactionMode",
+      "type": "string"
+    },
+    "RiskLevel": {
+      "description": "Tool risk classification.",
+      "enum": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "title": "RiskLevel",
+      "type": "string"
+    },
+    "ScopeConfig": {
+      "additionalProperties": false,
+      "description": "Constrains what data a tool invocation can access.",
+      "properties": {
+        "data_boundary": {
+          "$ref": "#/$defs/DataBoundary",
+          "default": "authenticated_user_only"
+        },
+        "max_records": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Records"
+        },
+        "allowed_recipients": {
+          "$ref": "#/$defs/RecipientPolicy",
+          "default": "known_contacts_only"
+        }
+      },
+      "title": "ScopeConfig",
+      "type": "object"
+    },
+    "SessionConfig": {
+      "additionalProperties": false,
+      "description": "Session lifetime and re-authentication rules.",
+      "properties": {
+        "max_duration_seconds": {
+          "default": 900,
+          "minimum": 1,
+          "title": "Max Duration Seconds",
+          "type": "integer"
+        },
+        "require_reauth_on_scope_change": {
+          "default": true,
+          "title": "Require Reauth On Scope Change",
+          "type": "boolean"
+        }
+      },
+      "title": "SessionConfig",
+      "type": "object"
+    },
+    "SourceAuthorityConfig": {
+      "additionalProperties": false,
+      "description": "Maps a context source to an authority level.",
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/ContextSource"
+        },
+        "authority": {
+          "$ref": "#/$defs/ContextAuthority"
+        }
+      },
+      "required": [
+        "source",
+        "authority"
+      ],
+      "title": "SourceAuthorityConfig",
+      "type": "object"
+    },
+    "StepUpPolicyConfig": {
+      "additionalProperties": false,
+      "description": "Governs when human approval is dynamically required (v1.2).\n\nSTEP_UP pauses execution and notifies a human reviewer.  Unlike the\nstatic ``human_approval`` config, STEP_UP is triggered by session\nstate (hardening signals, PII tool count, prior denials).",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "hardening_elevated_high_risk": {
+          "default": true,
+          "title": "Hardening Elevated High Risk",
+          "type": "boolean"
+        },
+        "multi_pii_tool_session": {
+          "default": true,
+          "title": "Multi Pii Tool Session",
+          "type": "boolean"
+        },
+        "multi_pii_tool_threshold": {
+          "default": 2,
+          "minimum": 1,
+          "title": "Multi Pii Tool Threshold",
+          "type": "integer"
+        },
+        "post_denial_retry": {
+          "default": true,
+          "title": "Post Denial Retry",
+          "type": "boolean"
+        },
+        "timeout_seconds": {
+          "default": 120,
+          "minimum": 1,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        },
+        "timeout_action": {
+          "default": "deny",
+          "title": "Timeout Action",
+          "type": "string"
+        },
+        "pii_tool_names": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Pii Tool Names",
+          "type": "array"
+        }
+      },
+      "title": "StepUpPolicyConfig",
+      "type": "object"
+    },
+    "TransformationConfig": {
+      "additionalProperties": false,
+      "description": "A single parameter or output transformation rule (v1.2).",
+      "properties": {
+        "field": {
+          "title": "Field",
+          "type": "string"
+        },
+        "action": {
+          "title": "Action",
+          "type": "string"
+        },
+        "config": {
+          "additionalProperties": true,
+          "title": "Config",
+          "type": "object"
+        }
+      },
+      "required": [
+        "field",
+        "action"
+      ],
+      "title": "TransformationConfig",
+      "type": "object"
+    },
+    "TrustDegradationConfig": {
+      "additionalProperties": false,
+      "description": "Controls dynamic trust degradation.",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "triggers": {
+          "items": {
+            "$ref": "#/$defs/DegradationTrigger"
+          },
+          "title": "Triggers",
+          "type": "array"
+        },
+        "minimum_authority": {
+          "$ref": "#/$defs/ContextAuthority",
+          "default": "derived"
+        },
+        "allow_cascade_to_untrusted": {
+          "default": false,
+          "title": "Allow Cascade To Untrusted",
+          "type": "boolean"
+        }
+      },
+      "title": "TrustDegradationConfig",
+      "type": "object"
+    },
+    "AgentLockPermissions": {
+      "additionalProperties": false,
+      "description": "The ``agentlock`` permissions block attached to a tool definition.\n\nThis is the core of the specification.  Every field has a secure default\nso that an empty permissions block denies by default.\n\nExample::\n\n    perms = AgentLockPermissions(\n        risk_level=\"high\",\n        requires_auth=True,\n        allowed_roles=[\"admin\"],\n    )",
+      "properties": {
+        "version": {
+          "default": "1.2",
+          "title": "Version",
+          "type": "string"
+        },
+        "risk_level": {
+          "$ref": "#/$defs/RiskLevel",
+          "default": "high"
+        },
+        "requires_auth": {
+          "default": true,
+          "title": "Requires Auth",
+          "type": "boolean"
+        },
+        "auth_methods": {
+          "items": {
+            "$ref": "#/$defs/AuthMethod"
+          },
+          "title": "Auth Methods",
+          "type": "array"
+        },
+        "allowed_roles": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Roles",
+          "type": "array"
+        },
+        "scope": {
+          "$ref": "#/$defs/ScopeConfig"
+        },
+        "rate_limit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RateLimitConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "data_policy": {
+          "$ref": "#/$defs/DataPolicyConfig"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionConfig"
+        },
+        "audit": {
+          "$ref": "#/$defs/AuditConfig"
+        },
+        "human_approval": {
+          "$ref": "#/$defs/HumanApprovalConfig"
+        },
+        "context_policy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ContextPolicyConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "memory_policy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MemoryPolicyConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "modify_policy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModifyPolicyConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "defer_policy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeferPolicyConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "stepup_policy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StepUpPolicyConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "AgentLockPermissions",
+      "type": "object"
+    }
+  }
+}

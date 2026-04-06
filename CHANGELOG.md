@@ -5,6 +5,45 @@ All notable changes to AgentLock will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-04-06
+
+### Added
+
+- **Ed25519 signed receipts (AARM R5)** -- Every authorization decision can produce a cryptographically signed receipt verifiable offline. `ReceiptSigner` supports Ed25519 (via PyNaCl) with HMAC-SHA256 fallback for environments without asymmetric key infrastructure. `ReceiptVerifier` detects tampered receipts. Receipts include decision, tool name, user identity, parameters hash, and policy version hash. Optional dependency: `pip install agentlock[crypto]`.
+- **Hash-chained tamper-evident context (AARM R2)** -- `ContextChain` creates an append-only hash chain of context entries. Each entry links to the previous entry's hash, forming a tamper-evident log. `verify_chain()` detects modification of any historical entry. `ContextProvenance` gains a `previous_hash` field. `ContextTracker.verify_context_chain()` validates chain integrity per session.
+- **`first_call_any_risk` DEFER trigger** -- Defers the first tool call in a session regardless of risk level. Configured via `DeferPolicyConfig(first_call_any_risk=True)`. Unlike `first_call_high_risk`, this catches MEDIUM and LOW risk tools used as attack footholds.
+- **`deny_on_block` whitelist escalation** -- When a `whitelist_path` transformation blocks a parameter (replacing it with `[BLOCKED: ...]`), the gate escalates from MODIFY to DENY. The tool does not execute. `ModifyResult` gains a `blocked_fields` list.
+- **Sibling deferral** -- When one tool call is DEFERRED in a turn, subsequent tool calls in the same turn (within a 5-second window) are automatically deferred. Prevents attackers from falling through to lower-friction tools after a DEFER fires.
+- **Prompt scan carry-forward** -- When a `prompt_scan` signal fires in a session, ALL subsequent tool calls are deferred regardless of whether the tool has its own `defer_policy`. Previously, tools without `defer_policy` (like `lookup_order`) bypassed scan-triggered deferral.
+- **`enforce_all_at_critical` hardening** -- When `HardeningConfig(enforce_all_at_critical=True)`, the gate blocks ALL tool calls at critical hardening severity (risk score >= 10), regardless of tool risk level. Previously, `enforce_at_critical` only blocked HIGH/CRITICAL risk tools.
+- **3 new `lookup_order` combo pairs** -- `(lookup_order, query_database)` weight 4, `(lookup_order, check_balance)` weight 3, `(lookup_order, search_contacts)` weight 3. Detects reconnaissance-to-data-access patterns.
+- New modules: `agentlock/receipts.py`, `agentlock/chain.py`
+- New exports: `SignedReceipt`, `ReceiptSigner`, `ReceiptVerifier`, `ChainedContextEntry`, `ContextChain`, `GENESIS_HASH`
+- Optional dependency group: `agentlock[crypto]` for PyNaCl >= 1.5.0
+- 102 new tests (847 total, 0 failures)
+
+### Changed
+
+- `AuthResult` gains `receipt: SignedReceipt | None` field
+- `AuthorizationGate.__init__()` accepts optional `receipt_signer` parameter
+- `DeferPolicyConfig` gains `first_call_any_risk: bool` field (default False)
+- `DeferralManager` gains `check_first_call_any_risk()`, `check_sibling_deferral()`, `record_deferral()` methods
+- `ModifyResult` gains `blocked_fields: list[str]` field
+- `ContextProvenance` gains `previous_hash: str` field
+- `ContextState` gains `context_chain: ContextChain` field
+- `ContextTracker` gains `verify_context_chain()` method
+- Package version updated to 1.2.1
+
+### Backward Compatibility
+
+- All 778 v1.2.0 tests pass without modification
+- `receipt` field defaults to None when no signer is configured
+- `first_call_any_risk` defaults to False
+- `enforce_all_at_critical` defaults to False
+- `blocked_fields` defaults to empty list
+- `previous_hash` defaults to empty string
+- Hash chain is populated transparently; existing `record_write()` callers require no changes
+
 ## [1.2.0] - 2026-03-30
 
 ### Added

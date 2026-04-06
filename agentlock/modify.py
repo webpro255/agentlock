@@ -57,6 +57,7 @@ class ModifyResult:
     original_output: str | None = None
     modified_output: str | None = None
     transformations_applied: list[str] = field(default_factory=list)
+    blocked_fields: list[str] = field(default_factory=list)
 
 
 class ModifyEngine:
@@ -159,6 +160,9 @@ class ModifyEngine:
                     result.modified = True
                     result.transformations_applied.append(f"{t_action}:{t_field}")
                     current[t_field] = new_value
+                    # Track fields that were blocked (not just modified)
+                    if new_value.startswith("[BLOCKED:"):
+                        result.blocked_fields.append(t_field)
 
         result.modified_params = current
         return result

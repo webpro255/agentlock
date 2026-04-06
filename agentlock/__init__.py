@@ -34,9 +34,10 @@ Copyright 2026 David Grice
 SPDX-License-Identifier: Apache-2.0
 """
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 
 from agentlock.audit import AuditLogger, AuditRecord, FileAuditBackend, InMemoryAuditBackend
+from agentlock.chain import GENESIS_HASH, ChainedContextEntry, ContextChain
 from agentlock.context import ContextProvenance, ContextState, ContextTracker
 from agentlock.decorators import agentlock
 from agentlock.defer import DeferralManager, DeferralRecord
@@ -83,6 +84,7 @@ from agentlock.policy import (
     RequestContext,
 )
 from agentlock.rate_limit import RateLimiter
+from agentlock.receipts import ReceiptSigner, ReceiptVerifier, SignedReceipt
 from agentlock.redaction import RedactionEngine, RedactionResult
 from agentlock.schema import (
     SCHEMA_VERSION,
@@ -207,6 +209,14 @@ __all__ = [
     # MODIFY (v1.2)
     "ModifyEngine",
     "ModifyResult",
+    # Signed receipts (AARM R5)
+    "SignedReceipt",
+    "ReceiptSigner",
+    "ReceiptVerifier",
+    # Hash-chained context (AARM R2)
+    "ChainedContextEntry",
+    "ContextChain",
+    "GENESIS_HASH",
     # Enums
     "DecisionType",
     "RiskLevel",

@@ -202,6 +202,7 @@ pip install agentlock[autogen]      # AutoGen
 pip install agentlock[mcp]          # Model Context Protocol
 pip install agentlock[fastapi]      # FastAPI
 pip install agentlock[flask]        # Flask
+pip install agentlock[crypto]       # Ed25519 signed receipts
 pip install agentlock[all]          # Everything
 ```
 
@@ -365,6 +366,37 @@ output = gate.execute("query_database", db_func, token=result.token,
 
 The tool still executes. The admin still gets the answer. But PII never enters the LLM context where it can be weaponized by injection attacks.
 
+### Signed Receipts (AARM R5)
+
+Every authorization decision can produce a cryptographically signed receipt, verifiable offline without access to the gate. Tampered receipts fail signature verification.
+
+```python
+from agentlock import AuthorizationGate, ReceiptSigner, ReceiptVerifier
+
+signer = ReceiptSigner(signing_method="ed25519")
+gate = AuthorizationGate(receipt_signer=signer)
+
+result = gate.authorize("query_database", user_id="alice", role="admin")
+# result.receipt is a SignedReceipt with Ed25519 signature
+
+verifier = ReceiptVerifier(signing_method="ed25519", verify_key=signer.verify_key_bytes)
+assert verifier.verify(result.receipt)  # True
+```
+
+HMAC-SHA256 is available as a fallback when PyNaCl is not installed. Install Ed25519 support with `pip install agentlock[crypto]`.
+
+### Hash-Chained Context (AARM R2)
+
+Context entries form a tamper-evident append-only chain. Each entry includes the hash of the previous entry. Modifying any entry invalidates all subsequent entries.
+
+```python
+gate.notify_context_write(session_id, source=ContextSource.TOOL_OUTPUT,
+                          content_hash="abc123...")
+
+valid, broken_at = gate.context_tracker.verify_context_chain(session_id)
+# (True, None) if intact, (False, index) if tampered
+```
+
 ## Standards Alignment
 
 | Standard | Coverage |
@@ -382,7 +414,7 @@ The tool still executes. The admin still gets the answer. But PII never enters t
 |---------|-------|
 | **v1.0** | Core schema, tool permissions, enforcement architecture |
 | **v1.1** | Memory/context permissions, trust degradation, provenance tracking |
-| **v1.2** | Adaptive hardening, MODIFY/DEFER/STEP_UP decisions, multi-signal detection (745 tests) |
+| **v1.2** | Adaptive hardening, MODIFY/DEFER/STEP_UP decisions, signed receipts, hash-chained context (847 tests) |
 | **v1.3** | Output destination control, data flow policies |
 | **v2.0** | Execution scope, behavioral policy, anomaly detection, compliance templates |
 

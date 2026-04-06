@@ -63,9 +63,40 @@ class DeferralManager:
     context, or timeout).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, sibling_window_seconds: float = 5.0) -> None:
         self._deferrals: dict[str, DeferralRecord] = {}
         self._session_call_counts: dict[str, int] = {}
+        self._sibling_window = sibling_window_seconds
+        # Tracks (session_id -> timestamp) of the most recent deferral
+        self._session_last_deferral: dict[str, float] = {}
+
+    def check_first_call_any_risk(
+        self,
+        session_id: str,
+        tool_name: str,
+    ) -> DeferralRecord | None:
+        """Trigger: first tool call in session, ANY risk level.
+
+        Unlike ``check_first_call_high_risk``, this fires regardless of
+        the tool's risk level.  Use when all first-call tool executions
+        should be deferred for additional context.
+
+        Returns a DeferralRecord if triggered, None otherwise.
+        """
+        count = self._session_call_counts.get(session_id, 0)
+        if count > 0:
+            return None
+
+        record = DeferralRecord(
+            tool_name=tool_name,
+            reason=(
+                f"First tool call in session. "
+                f"Deferring '{tool_name}' for additional context."
+            ),
+            trigger="first_call_any_risk",
+        )
+        self._deferrals[record.deferral_id] = record
+        return record
 
     def check_first_call_high_risk(
         self,
@@ -151,11 +182,50 @@ class DeferralManager:
         self._deferrals[record.deferral_id] = record
         return record
 
+    def check_sibling_deferral(
+        self,
+        session_id: str,
+        tool_name: str,
+    ) -> DeferralRecord | None:
+        """Trigger: another tool was DEFERRED in the same turn.
+
+        If a deferral was recorded for this session within the sibling
+        window (default 5 seconds), defer this tool call too.
+
+        Returns a DeferralRecord if triggered, None otherwise.
+        """
+        last_ts = self._session_last_deferral.get(session_id)
+        if last_ts is None:
+            return None
+        if time.time() - last_ts > self._sibling_window:
+            return None
+
+        record = DeferralRecord(
+            tool_name=tool_name,
+            reason=(
+                f"Another tool was deferred in this turn. "
+                f"Deferring '{tool_name}' as sibling."
+            ),
+            trigger="sibling_deferral",
+        )
+        self._deferrals[record.deferral_id] = record
+        return record
+
+    def record_deferral(self, session_id: str) -> None:
+        """Record that a deferral just happened in this session/turn."""
+        self._session_last_deferral[session_id] = time.time()
+
     def record_call(self, session_id: str) -> None:
-        """Record that a tool call was attempted in the session."""
+        """Record that a tool call was attempted in the session.
+
+        Also clears the sibling deferral window, since a successful call
+        means the turn has progressed past the deferral point.
+        """
         self._session_call_counts[session_id] = (
             self._session_call_counts.get(session_id, 0) + 1
         )
+        # A successful call closes the sibling window
+        self._session_last_deferral.pop(session_id, None)
 
     def get_call_count(self, session_id: str) -> int:
         """Get the number of tool calls recorded for a session."""
@@ -206,6 +276,7 @@ class DeferralManager:
     def reset_session(self, session_id: str) -> None:
         """Clear call count tracking for a session."""
         self._session_call_counts.pop(session_id, None)
+        self._session_last_deferral.pop(session_id, None)
 
     def __len__(self) -> int:
         return len(self._deferrals)

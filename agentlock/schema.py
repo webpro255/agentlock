@@ -216,6 +216,7 @@ class DeferPolicyConfig(BaseModel):
     """
 
     enabled: bool = False
+    first_call_any_risk: bool = False
     first_call_high_risk: bool = True
     scan_plus_tool: bool = True
     trust_below_threshold: bool = True

@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from agentlock.chain import ContextChain
 from agentlock.schema import ContextPolicyConfig, TrustDegradationConfig
 from agentlock.types import ContextAuthority, ContextSource, DegradationEffect
 
@@ -36,6 +37,7 @@ class ContextProvenance:
     token_id: str | None = None
     session_id: str = ""
     content_hash: str = ""
+    previous_hash: str = ""
     parent_provenance_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -56,6 +58,7 @@ class ContextState:
     degraded_at: float | None = None
     active_effects: list[DegradationEffect] = field(default_factory=list)
     provenance_log: list[ContextProvenance] = field(default_factory=list)
+    context_chain: ContextChain = field(default_factory=ContextChain)
     unattributed_count: int = 0
 
 
@@ -131,6 +134,14 @@ class ContextTracker:
             }
             authority = defaults.get(source, ContextAuthority.UNTRUSTED)
 
+        # Append to the hash chain and capture previous_hash
+        chain_entry = state.context_chain.append(
+            source=source.value,
+            authority=authority.value,
+            content_hash=content_hash,
+            writer_id=writer_id,
+        )
+
         provenance = ContextProvenance(
             source=source,
             authority=authority,
@@ -139,6 +150,7 @@ class ContextTracker:
             token_id=token_id,
             session_id=session_id,
             content_hash=content_hash,
+            previous_hash=chain_entry.previous_hash,
             parent_provenance_id=parent_provenance_id,
             metadata=metadata or {},
         )
@@ -150,6 +162,18 @@ class ContextTracker:
             self._evaluate_degradation(state, source, policy.trust_degradation)
 
         return provenance
+
+    def verify_context_chain(self, session_id: str) -> tuple[bool, int | None]:
+        """Verify the hash chain integrity for a session.
+
+        Returns:
+            ``(True, None)`` if valid or session not found.
+            ``(False, index)`` if tampered at the given index.
+        """
+        state = self._states.get(session_id)
+        if state is None:
+            return True, None
+        return state.context_chain.verify_chain()
 
     def record_unattributed(self, session_id: str) -> None:
         """Record that unattributed content entered context."""

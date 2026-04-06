@@ -34,6 +34,9 @@ DEFAULT_SUSPICIOUS_PAIRS: dict[tuple[str, str], int] = {
     ("lookup_order", "update_account"): 3,      # reconnaissance -> mutation
     ("check_balance", "update_account"): 3,     # financial recon -> mutation
     ("lookup_order", "send_email"): 3,          # order recon -> exfil
+    ("lookup_order", "query_database"): 4,      # reconnaissance -> data access
+    ("lookup_order", "check_balance"): 3,       # reconnaissance -> financial data
+    ("lookup_order", "search_contacts"): 3,     # reconnaissance -> contact harvesting
     # search_database is an alias used by some test vectors
     ("search_database", "send_email"): 4,       # data exfil (alias)
     ("search_database", "update_account"): 4,   # data recon -> mutation (alias)

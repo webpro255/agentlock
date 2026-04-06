@@ -50,6 +50,7 @@ from agentlock.memory_gate import MemoryDecision, MemoryGate, MemoryStore
 from agentlock.modify import ModifyEngine
 from agentlock.policy import PolicyEngine, RequestContext
 from agentlock.rate_limit import RateLimiter
+from agentlock.receipts import ReceiptSigner, SignedReceipt
 from agentlock.redaction import RedactionEngine, RedactionResult
 from agentlock.schema import AgentLockPermissions
 from agentlock.session import Session, SessionStore
@@ -95,6 +96,7 @@ class AuthResult:
     transformations_applied: list[str] = field(default_factory=list)
     deferral_id: str = ""
     stepup_request_id: str = ""
+    receipt: SignedReceipt | None = None
 
     def raise_if_denied(self) -> None:
         """Raise DeniedError if the call was denied."""
@@ -130,6 +132,7 @@ class AuthorizationGate:
         hardening_config: HardeningConfig | None = None,
         velocity_config: VelocityConfig | None = None,
         combo_config: ComboConfig | None = None,
+        receipt_signer: ReceiptSigner | None = None,
     ) -> None:
         self._tools: dict[str, AgentLockPermissions] = {}
         self._policy = PolicyEngine()
@@ -151,6 +154,8 @@ class AuthorizationGate:
         # DEFER and STEP_UP managers (v1.2)
         self._deferral_manager = DeferralManager()
         self._stepup_manager = StepUpManager()
+        # Signed receipts (AARM R5)
+        self._receipt_signer = receipt_signer
 
     # -- Registration -------------------------------------------------------
 
@@ -511,6 +516,62 @@ class AuthorizationGate:
                 hardening=directive,
             )
 
+        # Gate-level hardening enforcement (enforce_all_at_critical):
+        # When enabled, block ALL tool calls at critical severity, regardless
+        # of risk level.  This closes the gap where MEDIUM/LOW risk tools
+        # (e.g. lookup_order, read_file) execute freely during active attacks.
+        if (
+            decision.allowed
+            and self._hardening_engine.config.enforce_all_at_critical
+            and directive
+            and directive.active
+            and directive.severity == "critical"
+        ):
+            if hardening_session_id:
+                self._hardening_engine.record_signal(
+                    hardening_session_id,
+                    HardeningSignal(
+                        signal_type="hardening_enforced",
+                        weight=0,
+                        details=(
+                            f"Blocked {tool_name} "
+                            f"(risk={permissions.risk_level.value}) "
+                            f"at critical hardening — enforce_all_at_critical"
+                        ),
+                        source="gate_enforcement",
+                    ),
+                )
+                directive = self._hardening_engine.evaluate(hardening_session_id)
+
+            record = self._audit.log(
+                tool_name=tool_name,
+                user_id=user_id,
+                role=role,
+                action="denied",
+                reason="hardening_enforced_global",
+                risk_level=permissions.risk_level.value,
+                log_level=effective_log_level,
+                include_parameters=permissions.audit.include_parameters,
+                parameters=parameters,
+                duration_ms=duration_ms,
+                session_id=ctx.session_id,
+            )
+            return AuthResult(
+                allowed=False,
+                decision=DecisionType.DENY,
+                denial={
+                    "status": "denied",
+                    "reason": "hardening_enforced_global",
+                    "detail": (
+                        "Session risk score exceeded critical threshold. "
+                        "All tool calls are blocked for this session."
+                    ),
+                    "suggestion": "Start a new session to reset the risk score.",
+                },
+                audit_id=record.audit_id,
+                hardening=directive,
+            )
+
         # -- DEFER evaluation (v1.2) -------------------------------------------
         # Check DEFER triggers before issuing the token.  DEFER fires when
         # the gate cannot confidently allow or deny.
@@ -519,8 +580,15 @@ class AuthorizationGate:
             if defer_policy and defer_policy.enabled:
                 deferral: DeferralRecord | None = None
 
+                # Trigger 0: first call in session, ANY risk level
+                if defer_policy.first_call_any_risk and hardening_session_id:
+                    deferral = self._deferral_manager.check_first_call_any_risk(
+                        hardening_session_id,
+                        tool_name,
+                    )
+
                 # Trigger 1: first call in session is HIGH/CRITICAL risk
-                if defer_policy.first_call_high_risk and hardening_session_id:
+                if deferral is None and defer_policy.first_call_high_risk and hardening_session_id:
                     deferral = self._deferral_manager.check_first_call_high_risk(
                         hardening_session_id,
                         tool_name,
@@ -563,6 +631,11 @@ class AuthorizationGate:
                     deferral.role = role
                     deferral.parameters = parameters
                     deferral.timeout_seconds = defer_policy.timeout_seconds
+                    # Record this deferral for sibling tracking
+                    if hardening_session_id:
+                        self._deferral_manager.record_deferral(
+                            hardening_session_id,
+                        )
                     record = self._audit.log(
                         tool_name=tool_name,
                         user_id=user_id,
@@ -592,6 +665,111 @@ class AuthorizationGate:
                         hardening=directive,
                         deferral_id=deferral.deferral_id,
                     )
+
+            # Sibling deferral: if another tool was deferred in this turn
+            # (within the sibling window), defer this tool too — even if
+            # it has no defer_policy configured.
+            if hardening_session_id:
+                sibling = self._deferral_manager.check_sibling_deferral(
+                    hardening_session_id, tool_name,
+                )
+                if sibling is not None:
+                    sibling.user_id = user_id
+                    sibling.role = role
+                    sibling.parameters = parameters
+                    self._deferral_manager.record_deferral(
+                        hardening_session_id,
+                    )
+                    record = self._audit.log(
+                        tool_name=tool_name,
+                        user_id=user_id,
+                        role=role,
+                        action="deferred",
+                        reason=sibling.trigger,
+                        risk_level=permissions.risk_level.value,
+                        log_level=effective_log_level,
+                        session_id=ctx.session_id,
+                        duration_ms=duration_ms,
+                    )
+                    return AuthResult(
+                        allowed=False,
+                        decision=DecisionType.DEFER,
+                        denial={
+                            "status": "deferred",
+                            "reason": sibling.trigger,
+                            "detail": sibling.reason,
+                            "deferral_id": sibling.deferral_id,
+                            "timeout_seconds": sibling.timeout_seconds,
+                            "suggestion": (
+                                "Action suspended. Another tool in this turn "
+                                "was deferred."
+                            ),
+                        },
+                        audit_id=record.audit_id,
+                        hardening=directive,
+                        deferral_id=sibling.deferral_id,
+                    )
+
+            # Prompt scan carry-forward: if a prompt_scan signal fired in
+            # this session, defer ANY tool call — even tools without a
+            # defer_policy.  This prevents attackers from falling through
+            # to lower-friction tools (e.g. lookup_order) after a scan
+            # fires on the same or previous turn.
+            if hardening_session_id and not (
+                defer_policy and defer_policy.enabled
+                and defer_policy.scan_plus_tool
+            ):
+                # Only check if the tool's own defer_policy didn't already
+                # handle scan_plus_tool (avoid double-deferral).
+                scan_signals = [
+                    s for s in self._hardening_engine.get_session_signals(
+                        hardening_session_id
+                    )
+                    if s.source == "prompt_scanner"
+                    and s.signal_type.startswith("prompt_scan:")
+                ]
+                if scan_signals:
+                    carry_forward = (
+                        self._deferral_manager.check_scan_plus_tool(
+                            hardening_session_id, tool_name, scan_signals,
+                        )
+                    )
+                    if carry_forward is not None:
+                        carry_forward.user_id = user_id
+                        carry_forward.role = role
+                        carry_forward.parameters = parameters
+                        self._deferral_manager.record_deferral(
+                            hardening_session_id,
+                        )
+                        record = self._audit.log(
+                            tool_name=tool_name,
+                            user_id=user_id,
+                            role=role,
+                            action="deferred",
+                            reason="scan_plus_tool_carry_forward",
+                            risk_level=permissions.risk_level.value,
+                            log_level=effective_log_level,
+                            session_id=ctx.session_id,
+                            duration_ms=duration_ms,
+                        )
+                        return AuthResult(
+                            allowed=False,
+                            decision=DecisionType.DEFER,
+                            denial={
+                                "status": "deferred",
+                                "reason": "scan_plus_tool",
+                                "detail": carry_forward.reason,
+                                "deferral_id": carry_forward.deferral_id,
+                                "timeout_seconds": carry_forward.timeout_seconds,
+                                "suggestion": (
+                                    "Prompt scan detected suspicious input. "
+                                    "All tool calls deferred pending review."
+                                ),
+                            },
+                            audit_id=record.audit_id,
+                            hardening=directive,
+                            deferral_id=carry_forward.deferral_id,
+                        )
 
             # Record successful call for DEFER tracking
             if hardening_session_id:
@@ -733,6 +911,52 @@ class AuthorizationGate:
                                 param_result.transformations_applied
                             )
 
+                        # deny_on_block: if a whitelist transform blocked a
+                        # parameter, escalate MODIFY → DENY.  The tool
+                        # should not execute with a blocked path.
+                        if param_result.blocked_fields:
+                            record = self._audit.log(
+                                tool_name=tool_name,
+                                user_id=user_id,
+                                role=role,
+                                action="denied",
+                                reason="parameter_blocked",
+                                risk_level=permissions.risk_level.value,
+                                log_level=effective_log_level,
+                                include_parameters=(
+                                    permissions.audit.include_parameters
+                                ),
+                                parameters=parameters,
+                                session_id=ctx.session_id,
+                                duration_ms=duration_ms,
+                            )
+                            blocked = ", ".join(param_result.blocked_fields)
+                            auth_result = AuthResult(
+                                allowed=False,
+                                decision=DecisionType.DENY,
+                                denial={
+                                    "status": "denied",
+                                    "reason": "parameter_blocked",
+                                    "detail": (
+                                        f"Parameter(s) blocked by policy: "
+                                        f"{blocked}"
+                                    ),
+                                    "blocked_fields": (
+                                        param_result.blocked_fields
+                                    ),
+                                    "suggestion": (
+                                        "Use an allowed value for the "
+                                        "blocked parameter(s)."
+                                    ),
+                                },
+                                audit_id=record.audit_id,
+                                hardening=directive,
+                            )
+                            return self._sign_result(
+                                auth_result, tool_name, user_id,
+                                role, parameters,
+                            )
+
                     if modify_output_fn or transformations_applied:
                         modify_decision = DecisionType.MODIFY
 
@@ -751,7 +975,7 @@ class AuthorizationGate:
                 **audit_kwargs,
             )
 
-            return AuthResult(
+            auth_result = AuthResult(
                 allowed=True,
                 decision=modify_decision,
                 token=token,
@@ -759,6 +983,9 @@ class AuthorizationGate:
                 hardening=directive,
                 modify_output_fn=modify_output_fn,
                 transformations_applied=transformations_applied,
+            )
+            return self._sign_result(
+                auth_result, tool_name, user_id, role, parameters,
             )
         else:
             record = self._audit.log(
@@ -775,7 +1002,7 @@ class AuthorizationGate:
                 duration_ms=duration_ms,
             )
 
-            return AuthResult(
+            auth_result = AuthResult(
                 allowed=False,
                 decision=DecisionType.DENY,
                 denial={
@@ -788,6 +1015,9 @@ class AuthorizationGate:
                 },
                 audit_id=record.audit_id,
                 hardening=directive,
+            )
+            return self._sign_result(
+                auth_result, tool_name, user_id, role, parameters,
             )
 
     # -- Execution ----------------------------------------------------------
@@ -1138,7 +1368,49 @@ class AuthorizationGate:
 
         return provenance
 
+    # -- Receipt signing (AARM R5) -----------------------------------------
+
+    def _sign_result(
+        self,
+        result: AuthResult,
+        tool_name: str,
+        user_id: str,
+        role: str,
+        parameters: dict[str, Any] | None,
+    ) -> AuthResult:
+        """Attach a signed receipt to an AuthResult if signer is configured."""
+        if self._receipt_signer is None:
+            return result
+
+        import hashlib as _hl
+
+        params_hash = (
+            _hl.sha256(str(sorted(parameters.items())).encode()).hexdigest()
+            if parameters
+            else ""
+        )
+
+        receipt = SignedReceipt(
+            decision=result.decision.value,
+            tool_name=tool_name,
+            user_id=user_id,
+            role=role,
+            parameters_hash=params_hash,
+            reason=(
+                result.denial.get("reason", "")
+                if result.denial
+                else ""
+            ),
+        )
+        self._receipt_signer.sign(receipt)
+        result.receipt = receipt
+        return result
+
     # -- Introspection ------------------------------------------------------
+
+    @property
+    def receipt_signer(self) -> ReceiptSigner | None:
+        return self._receipt_signer
 
     @property
     def modify_engine(self) -> ModifyEngine:

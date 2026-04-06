@@ -231,6 +231,7 @@ class HardeningConfig:
     elevated_threshold: int = 6
     critical_threshold: int = 10
     enforce_at_critical: bool = False
+    enforce_all_at_critical: bool = False
     use_targeted_instructions: bool = True
     signal_weights: dict[str, int] = field(
         default_factory=lambda: dict(DEFAULT_SIGNAL_WEIGHTS)
