@@ -1,7 +1,7 @@
 <p align="center">
   <h1 align="center">AgentLock</h1>
   <p align="center">
-    <strong>Authorization framework for AI agent tool calls</strong>
+    <strong>An adversarially benchmarked reference implementation for pre-action agent authorization</strong>
   </p>
   <p align="center">
     Your AI agent needs a login screen. AgentLock is that login screen.
@@ -247,16 +247,16 @@ Based on empirical research: multi-turn adversarial attack testing across 35 cat
 
 | Attack Category | Prevention |
 |----------------|-----------|
-| Prompt injection | Permissions enforced at infrastructure layer, not content layer |
+| Prompt injection | Deterministic permission enforcement at the gate, reinforced by content scanning |
 | Social engineering | Identity verified cryptographically, not conversationally |
 | Data exfiltration | max_records + rate_limit + data_boundary |
 | Privilege escalation | Role checked on every call |
 | Tool abuse | Scope constraints + rate limiting |
 | Token replay | Single-use, time-limited, operation-bound |
 | Agent impersonation | Out-of-band identity verification |
-| Memory poisoning | Infrastructure-enforced, not content-dependent |
+| Memory poisoning | Memory gate (allowed_writers + prohibited_content), enforced at the gate |
 
-**The central finding:** adversarial and legitimate tool requests are semantically identical — content-based detection cannot reliably distinguish them. The correct defense is **architectural access control**, not smarter AI-based detection.
+**Defense in depth.** Adversarial and legitimate tool requests can be semantically identical, so no scanner catches every attack. That is why the authorization gate comes first: it is the deterministic guarantee — a call outside an identity's declared permissions is denied regardless of how the request is phrased. Content scanning and adaptive prompt hardening are the accelerant, not the foundation: they raise the pass rate on attacks that fall *within* an agent's permitted scope, where the gate alone cannot rule. Both layers matter, and our own benchmark shows it: adaptive prompt hardening — a content-detection layer — was the single largest contributor to the v1.2 jump from 30.2% to 57.1% pass rate on the compromised-admin profile, layered on top of the gate. The gate makes unauthorized actions structurally impossible; scanning shrinks the residual attack surface the gate was never designed to cover.
 
 ## v1.1: Memory & Context Permissions
 
@@ -397,12 +397,105 @@ valid, broken_at = gate.context_tracker.verify_context_chain(session_id)
 # (True, None) if intact, (False, index) if tampered
 ```
 
+## Benchmark
+
+AgentLock is tested against a published adversarial suite, and the results — including the regressions — are public. That is the point: security claims should be falsifiable and versioned. Both campaigns are documented in full in [docs/benchmark.md](docs/benchmark.md).
+
+- **Five-way progression (v1.0 → v1.1.2)** against a LangChain agent on Gemini 2.5 Flash-Lite. Injection failures fell from 73 (no protection) to 12; PII leaks from 3 to 0. The report does not hide the setbacks: v1.1 broke PII protection (100/A → 0/F) chasing injection gains, and v1.1.1 regressed injection (6 → 21 failures) restoring PII. v1.1.2 decoupled the two filter pipelines and held both.
+- **Compromised-admin profile (v1.2.x)** against Grok, where valid admin credentials pass every auth and role check — isolating behavioral and structural defenses from RBAC. Pass rate: 30.2% (permissions only) → 81.3% (adaptive hardening + MODIFY/DEFER/STEP_UP) → 99.5% (v1.2.1).
+
+### Per-module scores (five-way, v1.0 → v1.1.2)
+
+| Module | No AgentLock | v1.0 | v1.1 | v1.1.1 | v1.1.2 |
+|--------|--------------|------|------|--------|--------|
+| PII Detection | 65/D | 100/A | 0/F | 100/A | 100/A |
+| Injection | 56% / F | 89% / B | 96.3% / A | 88.6% / B | 93.4% / B |
+| Data Flow | 97/A | 74/C | 97/A | 97/A | 97/A |
+| YARA Detection | 0/F | 40/F | 60/D | 0/F | 60/D |
+| Compliance | 7/F | 15/F | 7/F | 0/F | 0/F |
+| **Permission** | **45/F** | **60/D** | **45/F** | **45/F** | **45/F** |
+
+**About the 45/F Permission score (a known, scoped gap — not hidden).** The Permission module sits at 45/F across v1.1–v1.1.2, and it deserves an honest explanation. It does **not** measure whether the gate enforces permissions — the gate does that deterministically, which is exactly what the injection progression and every other row demonstrate. It measures whether the *agent's responses* resist permission and role reconnaissance: enumerating tool names, confirming that an account hierarchy exists, disclosing a table name when probed. Those are the same model-layer information-leakage behaviors (the SP, EBE, and RE categories) that account for 9 of v1.1.2's 12 remaining injection failures. Middleware can block a request or redact an output, but it cannot stop a helpful model from *acknowledging* that a system prompt or a restricted tier exists. The fix is not more filtering — it is system-prompt hardening that instructs the model to deflect rather than confirm. That is what v1.2's adaptive prompt hardening adds, and the v1.2.1 compromised-admin run — with system-prompt extraction, error-based extraction, and refusal exhaustion all at 100/A — is the evidence the approach works. The Compliance row is low for a related reason: it grades attestation and reporting artifacts the reference agent does not yet produce; compliance-report templates are on the v2.0 roadmap. Neither score is buried — both are on the roadmap with a named plan.
+
+## How AgentLock Compares
+
+The pre-action authorization space now has several serious entrants. This table is built from each project's primary sources (repos, specs, papers) as of July 2026. Where a capability could not be verified from a primary source, it is marked *unclear* (❓) rather than assumed absent.
+
+| Capability | AgentLock | Microsoft AGT | Open Agent Passport (OAP) | NeMo Guardrails | AgentMint (AERF) |
+|---|---|---|---|---|---|
+| Pre-action authorization gate | ✅ | ✅ | ✅ (PAA-2) | ❌ content/dialogue rails, not identity/scope | ⚠️ scopes in receipts; post-action focus |
+| Session-level compound behavioral scoring | ✅ call-sequence rules | ❓ not in specs | ❌ | ❌ | ❌ |
+| Decision types beyond allow/deny | ✅ ALLOW/DENY/MODIFY/DEFER/STEP_UP | ✅ allow/warn/deny/escalate/transform | ⚠️ allow/deny/escalate (escalate unimplemented) | ⚠️ reject/alter content only | ❌ binary in_policy |
+| Published adversarial benchmark **with regression data** | ✅ v1.0→v1.1.2 five-way + v1.2 profile | ❌ explicitly publishes none yet | ⚠️ Vault CTF (single-config, not versioned) | ❌ sample scans only | ❌ conformance vectors deferred |
+| Trust degradation within session | ✅ monotonic, per-session | ❓ 0–1000 score; decay claimed in blog, not spec | ❌ | ❌ | ❌ |
+| Ed25519 signed receipts | ✅ (+ HMAC fallback) | ✅ per-call, RFC 8785 JCS, did:mesh | ❓ verifiable passports; receipt signing unclear | ❌ | ✅ |
+| Hash-chained tamper-evident audit | ✅ context chain | ✅ Merkle / SHA-256 | ✅ tamper-evident log (PAA-4) | ❌ telemetry / OTel only | ✅ spec (verifier checks sigs only so far) |
+| Framework integrations | 6: LangChain, CrewAI, AutoGen, MCP, FastAPI, Flask | ~19: Semantic Kernel, AutoGen, LangGraph, CrewAI, OpenAI Agents SDK, MCP… | ~7: LangChain, CrewAI, Cursor, Claude Code, n8n… | LangChain | 5: LangChain, CrewAI, OpenAI Agents SDK, MCP, Google ADK |
+| OWASP mapping coverage | LLM Top 10 + Agentic/MCP (below) | Claims 10/10 Agentic Top 10 | ❓ no numbered mapping published | ❓ third-party mappings only | ⚠️ references Agentic catalog |
+| Language SDKs | Python | 5: Python, TS, .NET, Rust, Go | JS/TS (npm) | Python | Python producer + Go verifier |
+
+**Read this honestly.** Microsoft's Agent Governance Toolkit is ahead of AgentLock on distribution and cryptographic surface: roughly 19 framework integrations to our 6, five language SDKs to our one, an MCP security gateway, per-call Ed25519 receipts, and a Merkle-chained audit log. It also ships a five-verdict decision model (allow/warn/deny/escalate/transform) that is a direct peer to ours — our decision types are **parity with AGT, not an advantage over it**. Ed25519 signed receipts and hash-chained audit are likewise becoming table stakes, not differentiators: AGT and AgentMint both ship them.
+
+What is actually narrow and defensible about AgentLock is two things:
+
+1. **A published adversarial benchmark that includes its own regressions.** AGT's own docs state it does not publish an attack-success benchmark yet and caution against trusting third-party percentages attributed to it. OAP reports a single-configuration CTF, not a version-over-version comparison. AgentLock publishes the full v1.0→v1.1.2 progression *including* the v1.1 PII break and the v1.1.1 injection regression, plus the v1.2 compromised-admin run. Nobody else in this table shows their setbacks. We do.
+2. **Session-level compound behavioral scoring.** AgentLock scores *sequences* of calls within a session — e.g. a velocity spike combined with a suspicious tool combination fires a `rapid_exfil` compound rule that neither signal triggers alone. This is distinct from a single scalar trust score, and it is not documented in any of the other projects' primary sources.
+
+That is the honest position: a smaller, single-language reference implementation whose edge is rigor and behavioral analysis, not distribution.
+
 ## Standards Alignment
+
+AgentLock is positioned as a **reference implementation of the emerging pre-action authorization consensus — not a competing standard.** As independent specifications converge on the same idea (deterministic authorization *before* the tool call executes), AgentLock aims to be a concrete, testable instance of those controls.
+
+### Open Agent Passport (OAP) pre-action controls
+
+OAP (Uchibeke, arXiv:2603.20953) defines five pre-action authorization controls, PAA-1 through PAA-5. AgentLock implements all five:
+
+| OAP control | Requirement | AgentLock |
+|---|---|---|
+| **PAA-1** | Machine-readable policy for which tool calls are permitted, under what conditions, at what assurance level | `AgentLockPermissions` block per tool (risk_level, allowed_roles, scope, data_policy) |
+| **PAA-2** | Platform-level hook enforcing policy synchronously before each tool call, independent of the model | `AuthorizationGate.authorize()` runs before `execute()`; the agent never receives a token |
+| **PAA-3** | Verifiable credentials binding agents to authorized scopes | Single-use, SHA-256 parameter-bound execution tokens + Ed25519 signed receipts (capability binding; not W3C VC format) |
+| **PAA-4** | Tamper-evident audit log of all authorization decisions | Full audit records + hash-chained context (AARM R2) |
+| **PAA-5** | Deny by default in the absence of a valid decision | Deny-by-default is the core principle: no permissions = denied |
+
+### OWASP Top 10 for Agentic Applications (ASI, 2026)
+
+AgentLock does not claim full 10/10 coverage. It maps to the categories a tool-authorization layer can actually enforce:
+
+| ID | Category | AgentLock coverage |
+|---|---|---|
+| **ASI01** | Agent Goal Hijack | Injection filter + trust degradation once untrusted context enters |
+| **ASI02** | Tool Misuse & Exploitation | Per-tool permissions, scope limits, rate limiting |
+| **ASI03** | Identity & Privilege Abuse | Role checked on every call; the agent cannot self-elevate |
+| **ASI06** | Memory & Context Poisoning | Memory gate (allowed_writers, prohibited_content) + context authority |
+| **ASI09** | Human-Agent Trust Exploitation | STEP_UP / human-approval gates on elevated risk |
+| **ASI10** | Rogue Agents | Session-level compound scoring + monotonic trust degradation |
+
+Out of scope for an authorization layer: ASI04 (supply chain), ASI05 (unexpected code execution), ASI07 (inter-agent communication), ASI08 (cascading failures). Inter-agent authorization is on the v1.2+ roadmap.
+
+### OWASP MCP Top 10 (2025)
+
+AgentLock addresses 8 of the 10 MCP risks:
+
+| ID | Category | AgentLock coverage |
+|---|---|---|
+| **MCP01** | Token Mismanagement & Secret Exposure | Out-of-band auth; credentials never touch the conversation |
+| **MCP02** | Privilege Escalation via Scope Creep | Declared scope per tool, validated by the gate |
+| **MCP03** | Tool Poisoning | Injection filter recursively inspects nested parameters |
+| **MCP05** | Command Injection & Execution | Injection filter blocks command-injection payloads |
+| **MCP06** | Prompt Injection via Contextual Payloads | Context authority + injection filter |
+| **MCP07** | Insufficient Authentication & Authorization | The core function: deny-by-default authorization gate |
+| **MCP08** | Lack of Audit and Telemetry | Every call generates an audit record; hash-chained context |
+| **MCP10** | Context Injection & Over-Sharing | Trust degradation + data-policy output limits |
+
+Not addressed: MCP04 (supply-chain / dependency tampering) and MCP09 (shadow MCP servers) are deployment-infrastructure concerns outside the authorization layer.
+
+### Other frameworks
 
 | Standard | Coverage |
 |----------|----------|
 | **OWASP Top 10 for LLM (2025)** | LLM01 Prompt Injection, LLM05 Insecure Output, LLM06 Excessive Agency |
-| **OWASP Top 10 for Agentic Apps (2026)** | Goal hijacking, excessive agency, unauthorized tool use |
 | **NIST AI RMF (AI 100-1)** | Govern, Map, Measure, Manage functions |
 | **NIST SP 800-53 Rev. 5** | AC, AU, IA, SI control families |
 | **MITRE ATLAS** | AML.T0051 Prompt Injection, AML.T0054 Jailbreak |
