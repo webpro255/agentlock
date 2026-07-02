@@ -18,7 +18,7 @@
 
 ## The Problem
 
-Every major AI agent framework LangChain, CrewAI, AutoGen, and others treats tool calls as trusted function invocations with **no identity verification, no scope constraints, and no access control**.
+Every major AI agent framework — LangChain, CrewAI, AutoGen, and others — treats tool calls as trusted function invocations with **no identity verification, no scope constraints, and no access control**.
 
 ```json
 {
@@ -28,7 +28,7 @@ Every major AI agent framework LangChain, CrewAI, AutoGen, and others treats too
 }
 ```
 
-This tool will send an email to **anyone**, with **any content**, at **any time**, for **any reason**, initiated by **any user**  or attacker  who can communicate with the agent.
+This tool will send an email to **anyone**, with **any content**, at **any time**, for **any reason**, initiated by **any user** — or attacker — who can communicate with the agent.
 
 This is the equivalent of giving every application on a computer full root access and hoping it behaves.
 
@@ -38,12 +38,6 @@ AgentLock adds a `permissions` block to every tool. Two fields provide immediate
 
 ```bash
 pip install agentlock
-```
-
-Or install from source (before PyPI publish):
-
-```bash
-pip install git+https://github.com/webpro255/agentlock.git
 ```
 
 ### Protect your first tool in 5 minutes
@@ -415,7 +409,11 @@ AgentLock is tested against a published adversarial suite, and the results — i
 | Compliance | 7/F | 15/F | 7/F | 0/F | 0/F |
 | **Permission** | **45/F** | **60/D** | **45/F** | **45/F** | **45/F** |
 
-**About the 45/F Permission score (a known, scoped gap — not hidden).** The Permission module sits at 45/F across v1.1–v1.1.2, and it deserves an honest explanation. It does **not** measure whether the gate enforces permissions — the gate does that deterministically, which is exactly what the injection progression and every other row demonstrate. It measures whether the *agent's responses* resist permission and role reconnaissance: enumerating tool names, confirming that an account hierarchy exists, disclosing a table name when probed. Those are the same model-layer information-leakage behaviors (the SP, EBE, and RE categories) that account for 9 of v1.1.2's 12 remaining injection failures. Middleware can block a request or redact an output, but it cannot stop a helpful model from *acknowledging* that a system prompt or a restricted tier exists. The fix is not more filtering — it is system-prompt hardening that instructs the model to deflect rather than confirm. That is what v1.2's adaptive prompt hardening adds, and the v1.2.1 compromised-admin run — with system-prompt extraction, error-based extraction, and refusal exhaustion all at 100/A — is the evidence the approach works. The Compliance row is low for a related reason: it grades attestation and reporting artifacts the reference agent does not yet produce; compliance-report templates are on the v2.0 roadmap. Neither score is buried — both are on the roadmap with a named plan.
+**About the 45/F Permission score (a known, scoped gap — not hidden).** The Permission module sits at 45/F across v1.1–v1.1.2, and it deserves an honest explanation. It does **not** measure whether the gate enforces permissions — the gate does that deterministically, which is exactly what the injection progression and every other row demonstrate. It measures whether the *agent's responses* resist permission and role reconnaissance: enumerating tool names, confirming that an account hierarchy exists, disclosing a table name when probed. Those are the same model-layer information-leakage behaviors (the SP, EBE, and RE categories) that account for 9 of v1.1.2's 12 remaining injection failures. Middleware can block a request or redact an output, but it cannot stop a helpful model from *acknowledging* that a system prompt or a restricted tier exists. The fix is not more filtering — it is system-prompt hardening that instructs the model to deflect rather than confirm.
+
+That is what v1.2's adaptive prompt hardening adds, and the v1.2.1 compromised-admin run — with system-prompt extraction, error-based extraction, and refusal exhaustion all at 100/A — is the evidence the approach works. The Compliance row is low for a related reason: it grades attestation and reporting artifacts the reference agent does not yet produce; compliance-report templates are on the v2.0 roadmap. Neither score is buried — both are on the roadmap with a named plan.
+
+The v1.2 suite is authored and graded in this repo; a run against an external suite (AgentDojo or similar) is planned.
 
 ## How AgentLock Compares
 
@@ -546,5 +544,5 @@ Apache 2.0 — see [LICENSE](LICENSE).
 ---
 
 <p align="center">
-  <em>AI tools are the only category of programmable system access in modern computing with no permission model. AgentLock changes that.</em>
+  <em>AI tools were, until recently, the only category of programmable system access in modern computing with no permission model. AgentLock is part of fixing that.</em>
 </p>
