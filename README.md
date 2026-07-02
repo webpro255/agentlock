@@ -421,18 +421,31 @@ AgentLock is tested against a published adversarial suite, and the results — i
 
 The pre-action authorization space now has several serious entrants. This table is built from each project's primary sources (repos, specs, papers) as of July 2026. Where a capability could not be verified from a primary source, it is marked *unclear* (❓) rather than assumed absent.
 
-| Capability | AgentLock | Microsoft AGT | Open Agent Passport (OAP) | NeMo Guardrails | AgentMint (AERF) |
-|---|---|---|---|---|---|
-| Pre-action authorization gate | ✅ | ✅ | ✅ (PAA-2) | ❌ content/dialogue rails, not identity/scope | ⚠️ scopes in receipts; post-action focus |
-| Session-level compound behavioral scoring | ✅ call-sequence rules | ❓ not in specs | ❌ | ❌ | ❌ |
-| Decision types beyond allow/deny | ✅ ALLOW/DENY/MODIFY/DEFER/STEP_UP | ✅ allow/warn/deny/escalate/transform | ⚠️ allow/deny/escalate (escalate unimplemented) | ⚠️ reject/alter content only | ❌ binary in_policy |
-| Published adversarial benchmark **with regression data** | ✅ v1.0→v1.1.2 five-way + v1.2 profile | ❌ explicitly publishes none yet | ⚠️ Vault CTF (single-config, not versioned) | ❌ sample scans only | ❌ conformance vectors deferred |
-| Trust degradation within session | ✅ monotonic, per-session | ❓ 0–1000 score; decay claimed in blog, not spec | ❌ | ❌ | ❌ |
-| Ed25519 signed receipts | ✅ (+ HMAC fallback) | ✅ per-call, RFC 8785 JCS, did:mesh | ❓ verifiable passports; receipt signing unclear | ❌ | ✅ |
-| Hash-chained tamper-evident audit | ✅ context chain | ✅ Merkle / SHA-256 | ✅ tamper-evident log (PAA-4) | ❌ telemetry / OTel only | ✅ spec (verifier checks sigs only so far) |
-| Framework integrations | 6: LangChain, CrewAI, AutoGen, MCP, FastAPI, Flask | ~19: Semantic Kernel, AutoGen, LangGraph, CrewAI, OpenAI Agents SDK, MCP… | ~7: LangChain, CrewAI, Cursor, Claude Code, n8n… | LangChain | 5: LangChain, CrewAI, OpenAI Agents SDK, MCP, Google ADK |
-| OWASP mapping coverage | LLM Top 10 + Agentic/MCP (below) | Claims 10/10 Agentic Top 10 | ❓ no numbered mapping published | ❓ third-party mappings only | ⚠️ references Agentic catalog |
-| Language SDKs | Python | 5: Python, TS, .NET, Rust, Go | JS/TS (npm) | Python | Python producer + Go verifier |
+| Capability | AgentLock | MS AGT | OAP | NeMo | AgentMint |
+|---|:---:|:---:|:---:|:---:|:---:|
+| Pre-action authorization gate <sup>1</sup> | ✅ | ✅ | ✅ | ❌ | ⚠️ |
+| Session-level compound behavioral scoring <sup>2</sup> | ✅ | ❓ | ❌ | ❌ | ❌ |
+| Decision types beyond allow/deny <sup>3</sup> | ✅ | ✅ | ⚠️ | ⚠️ | ❌ |
+| Published adversarial benchmark with regression data <sup>4</sup> | ✅ | ❌ | ⚠️ | ❌ | ❌ |
+| Trust degradation within session <sup>5</sup> | ✅ | ❓ | ❌ | ❌ | ❌ |
+| Ed25519 signed receipts <sup>6</sup> | ✅ | ✅ | ❓ | ❌ | ✅ |
+| Hash-chained tamper-evident audit <sup>7</sup> | ✅ | ✅ | ✅ | ❌ | ✅ |
+| Framework integrations (count) <sup>8</sup> | 6 | ~19 | ~7 | 1 | 5 |
+| OWASP mapping coverage <sup>9</sup> | ✅ | ✅ | ❓ | ❓ | ⚠️ |
+| Language SDKs (count) <sup>10</sup> | 1 | 5 | 1 | 1 | 2 |
+
+Legend: ✅ present · ⚠️ partial · ❌ absent · ❓ unclear (not confirmable from a primary source).
+
+1. **Pre-action authorization gate.** OAP maps this to its PAA-2 control. NeMo has content/dialogue rails, not identity/scope authorization. AgentMint records scopes in receipts but is post-action (notarization) focused.
+2. **Session-level compound behavioral scoring.** AgentLock scores *sequences* of calls within a session (e.g. a velocity spike + suspicious tool combination fires a `rapid_exfil` compound rule). Not documented in MS AGT's specs; absent in the others.
+3. **Decision types beyond allow/deny.** AgentLock: ALLOW/DENY/MODIFY/DEFER/STEP_UP. MS AGT: allow/warn/deny/escalate/transform (a direct peer set). OAP: allow/deny/escalate (escalate is specified but unimplemented in the reference). NeMo: reject/alter content only, not authorization decisions. AgentMint: binary `in_policy`.
+4. **Published adversarial benchmark with regression data.** AgentLock: the v1.0→v1.1.2 five-way progression plus the v1.2 compromised-admin profile. MS AGT: its docs state it publishes none yet. OAP: the Vault CTF, a single configuration, not version-over-version. NeMo: sample garak scans only. AgentMint: conformance vectors deferred.
+5. **Trust degradation within session.** AgentLock: monotonic, per-session. MS AGT: a 0–1000 trust score whose decay is claimed in blog posts but not defined in the spec. Absent in the others.
+6. **Ed25519 signed receipts.** AgentLock: Ed25519 with an HMAC-SHA256 fallback. MS AGT: per-call Ed25519 over RFC 8785 (JCS), did:mesh identity. OAP: issues verifiable passports, but Ed25519 receipt signing was not confirmable. AgentMint: yes.
+7. **Hash-chained tamper-evident audit.** AgentLock: hash-chained context (AARM R2). MS AGT: Merkle / SHA-256 audit chain. OAP: tamper-evident log (PAA-4). NeMo: telemetry / OpenTelemetry only, not a cryptographic chain. AgentMint: defined in the spec, though the reference verifier checks signatures only so far.
+8. **Framework integrations.** AgentLock: LangChain, CrewAI, AutoGen, MCP, FastAPI, Flask. MS AGT (~19): Semantic Kernel, AutoGen, LangGraph, CrewAI, OpenAI Agents SDK, MCP, and more. OAP (~7): LangChain, CrewAI, Cursor, Claude Code, n8n, and others. NeMo: LangChain. AgentMint: LangChain, CrewAI, OpenAI Agents SDK, MCP, Google ADK.
+9. **OWASP mapping coverage.** AgentLock: OWASP LLM Top 10 plus the Agentic (ASI) and MCP mappings below. MS AGT: claims 10/10 Agentic Top 10 coverage (self-stated). OAP: no numbered mapping published. NeMo: third-party mappings only, none official. AgentMint: references the OWASP Agentic catalog but publishes no numbered mapping.
+10. **Language SDKs.** AgentLock: Python. MS AGT (5): Python, TypeScript, .NET, Rust, Go. OAP: JavaScript/TypeScript (npm). NeMo: Python. AgentMint (2): Python producer + Go verifier.
 
 **Read this honestly.** Microsoft's Agent Governance Toolkit is ahead of AgentLock on distribution and cryptographic surface: roughly 19 framework integrations to our 6, five language SDKs to our one, an MCP security gateway, per-call Ed25519 receipts, and a Merkle-chained audit log. It also ships a five-verdict decision model (allow/warn/deny/escalate/transform) that is a direct peer to ours — our decision types are **parity with AGT, not an advantage over it**. Ed25519 signed receipts and hash-chained audit are likewise becoming table stakes, not differentiators: AGT and AgentMint both ship them.
 
