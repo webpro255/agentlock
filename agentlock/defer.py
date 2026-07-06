@@ -39,10 +39,14 @@ class DeferralRecord:
     trigger: str = ""
     created_at: float = field(default_factory=time.time)
     timeout_seconds: int = 60
-    resolution: str | None = None  # "approved", "denied", "timeout"
+    resolution: str | None = None  # "approved", "denied", "timeout", "committed"
     resolved_at: float | None = None
     resolved_by: str | None = None
     parameters: dict[str, Any] | None = None
+    session_id: str = ""
+    # v1.3 Feature 1 (deferred commit): taint snapshots at call vs commit.
+    taint_at_call: dict[str, Any] | None = None
+    taint_at_commit: dict[str, Any] | None = None
 
     @property
     def is_resolved(self) -> bool:
@@ -69,6 +73,9 @@ class DeferralManager:
         self._sibling_window = sibling_window_seconds
         # Tracks (session_id -> timestamp) of the most recent deferral
         self._session_last_deferral: dict[str, float] = {}
+        # v1.3 Feature 1 — per-session queue of consequential actions deferred
+        # for end-of-turn commit-or-deny against the complete taint state.
+        self._commit_queue: dict[str, list[DeferralRecord]] = {}
 
     def check_first_call_any_risk(
         self,
@@ -210,6 +217,64 @@ class DeferralManager:
         )
         self._deferrals[record.deferral_id] = record
         return record
+
+    # -- v1.3 Feature 1: deferred-commit queue -----------------------------
+    def queue_commit(
+        self,
+        session_id: str,
+        tool_name: str,
+        parameters: dict[str, Any] | None,
+        *,
+        taint_at_call: dict[str, Any] | None = None,
+    ) -> DeferralRecord:
+        """Queue a consequential action for end-of-turn commit/deny.
+
+        Snapshots the taint state at call time; the resolution against the
+        COMPLETE episode taint happens later in :meth:`resolve_commit_queue`.
+        """
+        record = DeferralRecord(
+            tool_name=tool_name,
+            session_id=session_id,
+            parameters=parameters,
+            trigger="deferred_commit",
+            reason=f"'{tool_name}' deferred for end-of-turn commit review.",
+            taint_at_call=taint_at_call,
+        )
+        self._deferrals[record.deferral_id] = record
+        self._commit_queue.setdefault(session_id, []).append(record)
+        return record
+
+    def resolve_commit_queue(
+        self,
+        session_id: str,
+        *,
+        deny: bool,
+        taint_at_commit: dict[str, Any] | None = None,
+    ) -> list[DeferralRecord]:
+        """Resolve every queued action for a session, in original order.
+
+        Args:
+            deny: if True, taint is present at commit -> DENY all; else commit.
+            taint_at_commit: the complete-episode taint snapshot (for logging).
+
+        Returns the resolved records (queue is emptied).
+        """
+        queued = self._commit_queue.pop(session_id, [])
+        now = time.time()
+        for record in queued:
+            record.taint_at_commit = taint_at_commit
+            record.resolution = "denied" if deny else "committed"
+            record.resolved_at = now
+            record.resolved_by = "deferred_commit"
+        return queued
+
+    def get_commit_queue(self, session_id: str) -> list[DeferralRecord]:
+        """Return (without removing) the queued actions for a session."""
+        return list(self._commit_queue.get(session_id, []))
+
+    def clear_commit_queue(self, session_id: str) -> None:
+        """Drop any queued actions for a session (per-episode reset)."""
+        self._commit_queue.pop(session_id, None)
 
     def record_deferral(self, session_id: str) -> None:
         """Record that a deferral just happened in this session/turn."""

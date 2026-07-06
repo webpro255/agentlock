@@ -51,6 +51,11 @@ class RequestContext:
         is_bulk: Whether this is a bulk operation.
         is_external: Whether this sends data externally.
         is_financial: Whether this involves financial operations.
+        is_account_modification: Whether this changes account credentials
+            or profile (e.g. password / user info).
+        is_consequential: Whether this is a destructive / committing action
+            that is not financial/external/account-mod (delete, reserve,
+            membership change).
         amount: Financial amount, if applicable.
         metadata: Additional context.
     """
@@ -64,6 +69,8 @@ class RequestContext:
     is_bulk: bool = False
     is_external: bool = False
     is_financial: bool = False
+    is_account_modification: bool = False
+    is_consequential: bool = False
     amount: float = 0.0
     max_output_classification: DataClassification | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -462,6 +469,144 @@ class PolicyEngine:
                         f"{permissions.human_approval.channel.value}."
                     ),
                 )
+
+        # 10.4. Parameter-lineage gate (v1.3 Feature 2) — runs for EVERY tool
+        # call, reads included.  Denies when a parameter value traces to
+        # untrusted context but not the authoritative user request (the gate
+        # attached the match as context.metadata["param_lineage"]).  Targets
+        # read-goal attacks that write-gating cannot see.  Independent of the
+        # write-gating flags: fires whenever param_lineage_enabled.
+        _lp = permissions.lineage_policy
+        if (
+            _lp is not None
+            and _lp.param_lineage_enabled
+            and permissions.version >= "1.3"
+        ):
+            pmatch = context.metadata.get("param_lineage")
+            if pmatch is not None:
+                action = _lp.param_lineage_action
+                detail = (
+                    f"Parameter '{pmatch.get('matched_param')}' carries a value "
+                    f"that originated in untrusted context "
+                    f"({pmatch.get('untrusted_source_ref')}) and is absent from "
+                    f"the authoritative user request. Gated on parameter "
+                    f"provenance, not content."
+                )
+                if action == "log":
+                    # Observe-only: do not block, but the caller can see the
+                    # match in metadata / audit.  Fall through to later checks.
+                    pass
+                elif action == "step_up":
+                    return PolicyDecision(
+                        allowed=False,
+                        reason=DenialReason.PARAM_LINEAGE,
+                        detail=detail,
+                        needs_approval=True,
+                        suggestion=(
+                            "Human step-up required: a tool parameter came "
+                            "from untrusted content, not the user's request."
+                        ),
+                    )
+                else:  # "deny" (default)
+                    return PolicyDecision(
+                        allowed=False,
+                        reason=DenialReason.PARAM_LINEAGE,
+                        detail=detail,
+                        suggestion=(
+                            "The parameter value originated from untrusted "
+                            "context. Re-issue using a value from the user's "
+                            "own request or trusted configuration."
+                        ),
+                    )
+
+        # 10.5. Provenance-lineage gate (v1.3) — independent of everything
+        # above.  This rule inspects ONLY the provenance of what is already
+        # in the session's context window (the worst-case taint summary the
+        # gate attached as context.metadata["lineage"]).  It never looks at
+        # the tool call's parameter content.  A gated action (financial /
+        # external / bulk) is blocked when untrusted content has entered
+        # context.  Inert unless a lineage_policy is present, enabled, and
+        # the permission block is v1.3+.
+        lineage_policy = permissions.lineage_policy
+        if (
+            lineage_policy is not None
+            and lineage_policy.enabled
+            and permissions.version >= "1.3"
+        ):
+            gated_action = (
+                (lineage_policy.gate_financial and context.is_financial)
+                or (lineage_policy.gate_external and context.is_external)
+                or (lineage_policy.gate_bulk and context.is_bulk)
+                or (
+                    lineage_policy.gate_account_modification
+                    and context.is_account_modification
+                )
+                or (
+                    lineage_policy.gate_consequential
+                    and context.is_consequential
+                )
+            )
+            summary = context.metadata.get("lineage")
+            if gated_action and summary is not None:
+                if lineage_policy.require_post_authoritative:
+                    taint = bool(summary.get("post_authoritative_taint"))
+                    taint_kind = "post-authoritative untrusted"
+                else:
+                    taint = bool(summary.get("tainted"))
+                    taint_kind = "untrusted"
+                if taint:
+                    if context.is_financial:
+                        action_kind = "financial"
+                    elif context.is_external:
+                        action_kind = "external"
+                    elif context.is_bulk:
+                        action_kind = "bulk"
+                    elif context.is_account_modification:
+                        action_kind = "account-modification"
+                    elif context.is_consequential:
+                        action_kind = "consequential"
+                    else:
+                        action_kind = "gated"
+                    detail = (
+                        f"Action gated on provenance/lineage, not content: "
+                        f"{taint_kind} content is present in the session's "
+                        f"context window before this {action_kind} "
+                        f"action. No parameter content was inspected."
+                    )
+                    # v1.3 ablation: when the session write-gate is DISABLED,
+                    # do NOT block — record what it WOULD have blocked as a
+                    # shadow and fall through (provenance recording,
+                    # parameter-lineage, and deferred-commit are unaffected).
+                    if not lineage_policy.session_write_gate:
+                        context.metadata["session_gate_shadow"] = "DENY"
+                        context.metadata["session_gate_shadow_detail"] = detail
+                    elif lineage_policy.decision == "deny":
+                        return PolicyDecision(
+                            allowed=False,
+                            reason=DenialReason.UNTRUSTED_LINEAGE,
+                            detail=detail,
+                            suggestion=(
+                                "The tool call was denied purely because "
+                                "untrusted-provenance content preceded it. "
+                                "Start a clean session or re-issue the "
+                                "instruction without intervening untrusted "
+                                "context."
+                            ),
+                        )
+                    else:
+                        # step_up / defer → block pending out-of-band approval
+                        return PolicyDecision(
+                            allowed=False,
+                            reason=DenialReason.UNTRUSTED_LINEAGE,
+                            detail=detail,
+                            needs_approval=True,
+                            suggestion=(
+                                "Human step-up approval required: untrusted-"
+                                "provenance content preceded this gated action. "
+                                "This is a provenance decision, not a content "
+                                "scan."
+                            ),
+                        )
 
         # 10-11. v1.1 checks — trust degradation and unattributed context
         # These run independently of both filters above.  Trust degradation

@@ -47,10 +47,11 @@ __all__ = [
     "StepUpPolicyConfig",
     "TransformationConfig",
     "ModifyPolicyConfig",
+    "LineagePolicyConfig",
     "ToolDefinition",
 ]
 
-SCHEMA_VERSION = "1.2"
+SCHEMA_VERSION = "1.3"
 
 
 class ScopeConfig(BaseModel):
@@ -273,6 +274,52 @@ class ModifyPolicyConfig(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+class LineagePolicyConfig(BaseModel):
+    """Governs provenance-lineage gating of tool calls (v1.3).
+
+    A tool is gated purely on the *provenance* of what is already in the
+    session's context window — not on the content of its parameters.  If
+    untrusted content (authority ``UNTRUSTED``) has entered context, a
+    gated action (financial / external / bulk) is blocked.  This is the
+    opposite of a content rule: it never inspects the payload, only where
+    the session's context came from.
+
+    When ``require_post_authoritative`` is True, only untrusted content
+    that entered *after* the last authoritative (user/system) message
+    taints the action — an untrusted document read before the user's
+    instruction does not, but one read after it does.
+    """
+
+    enabled: bool = False
+    gate_financial: bool = True
+    gate_external: bool = True
+    gate_bulk: bool = True
+    gate_account_modification: bool = True
+    gate_consequential: bool = True
+    decision: str = "step_up"  # "step_up" | "defer" | "deny"
+    require_post_authoritative: bool = True
+
+    # v1.3 ablation — session-level taint write-gate enforcement. When False,
+    # the call-time "untrusted_lineage" block is NOT enforced (the write is
+    # allowed to proceed), but the decision it WOULD have made is still
+    # computed and surfaced as a shadow ("session_gate_shadow"), and all
+    # provenance/taint recording, parameter-lineage, and deferred-commit
+    # remain fully active. This removes ONE enforcement mechanism while
+    # keeping the instrumentation, for ablation.
+    session_write_gate: bool = True
+
+    # v1.3 Feature 2 — parameter lineage. Independent of the write-gating
+    # flags above: when enabled, EVERY tool call (reads included) is checked
+    # for a parameter value that originated in untrusted context but not in
+    # the authoritative user request/config. Targets read-goal attacks that
+    # write-gating is structurally blind to.
+    param_lineage_enabled: bool = False
+    param_lineage_action: str = "deny"  # "deny" | "step_up" | "log"
+    param_lineage_min_len: int = 6      # min length for a plain-string match
+
+    model_config = {"extra": "forbid"}
+
+
 class AgentLockPermissions(BaseModel):
     """The ``agentlock`` permissions block attached to a tool definition.
 
@@ -308,6 +355,7 @@ class AgentLockPermissions(BaseModel):
     modify_policy: ModifyPolicyConfig | None = None
     defer_policy: DeferPolicyConfig | None = None
     stepup_policy: StepUpPolicyConfig | None = None
+    lineage_policy: LineagePolicyConfig | None = None
 
     model_config = {"extra": "forbid"}
 

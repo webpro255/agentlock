@@ -97,6 +97,9 @@ class AuthResult:
     deferral_id: str = ""
     stepup_request_id: str = ""
     receipt: SignedReceipt | None = None
+    # v1.3 ablation: when the session write-gate is disabled, what it WOULD
+    # have blocked ("DENY") — recorded even though the call was allowed.
+    session_gate_shadow: str = ""
 
     def raise_if_denied(self) -> None:
         """Raise DeniedError if the call was denied."""
@@ -241,6 +244,8 @@ class AuthorizationGate:
         is_bulk: bool = False,
         is_external: bool = False,
         is_financial: bool = False,
+        is_account_modification: bool = False,
+        is_consequential: bool = False,
         amount: float = 0.0,
         metadata: dict[str, Any] | None = None,
     ) -> AuthResult:
@@ -259,6 +264,10 @@ class AuthorizationGate:
             is_bulk: Whether this is a bulk operation.
             is_external: Whether this sends data externally.
             is_financial: Whether this involves money.
+            is_account_modification: Whether this changes account
+                credentials/profile (password, user info).
+            is_consequential: Whether this is a destructive/committing
+                action (delete, reserve, membership change).
             amount: Financial amount if applicable.
             metadata: Additional context.
 
@@ -339,6 +348,26 @@ class AuthorizationGate:
         if parameters:
             request_metadata["parameters"] = parameters
 
+        # v1.3 lineage: the gate owns this read; callers cannot supply it.
+        # A worst-case taint summary of the session's provenance log is
+        # attached so the policy engine can gate purely on provenance.
+        if permissions.version >= "1.3" and resolved_session_id:
+            request_metadata["lineage"] = self._context_tracker.lineage_summary(
+                resolved_session_id
+            )
+            # v1.3 Feature 2 — parameter lineage. Gate-owned read: does any
+            # parameter value trace to untrusted context but not the user's
+            # authoritative request?  Attached for the policy engine.
+            _lp = permissions.lineage_policy
+            if _lp is not None and _lp.param_lineage_enabled:
+                _match = self._context_tracker.parameter_lineage_check(
+                    resolved_session_id,
+                    parameters,
+                    min_len=_lp.param_lineage_min_len,
+                )
+                if _match is not None:
+                    request_metadata["param_lineage"] = _match
+
         # Build request context
         ctx = RequestContext(
             user_id=user_id,
@@ -350,6 +379,8 @@ class AuthorizationGate:
             is_bulk=is_bulk,
             is_external=is_external,
             is_financial=is_financial,
+            is_account_modification=is_account_modification,
+            is_consequential=is_consequential,
             amount=amount,
             max_output_classification=resolved_classification,
             metadata=request_metadata,
@@ -358,6 +389,11 @@ class AuthorizationGate:
 
         # Evaluate policy
         decision = self._policy.evaluate(permissions, ctx)
+
+        # v1.3 ablation: capture the session-write-gate shadow (what the gate
+        # WOULD have blocked when session_write_gate is disabled).  Set on the
+        # returned AuthResult so callers can log it alongside the allow.
+        session_gate_shadow = ctx.metadata.get("session_gate_shadow", "")
 
         # Record hardening signals from policy decision
         if hardening_session_id and not decision.allowed and decision.reason:
@@ -983,6 +1019,7 @@ class AuthorizationGate:
                 hardening=directive,
                 modify_output_fn=modify_output_fn,
                 transformations_applied=transformations_applied,
+                session_gate_shadow=session_gate_shadow,
             )
             return self._sign_result(
                 auth_result, tool_name, user_id, role, parameters,
@@ -1015,6 +1052,7 @@ class AuthorizationGate:
                 },
                 audit_id=record.audit_id,
                 hardening=directive,
+                session_gate_shadow=session_gate_shadow,
             )
             return self._sign_result(
                 auth_result, tool_name, user_id, role, parameters,
@@ -1300,6 +1338,58 @@ class AuthorizationGate:
 
     # -- Context tracking (v1.1) --------------------------------------------
 
+    # -- v1.3 Feature 1: deferred commit ------------------------------------
+    def defer_consequential(
+        self,
+        session_id: str,
+        tool_name: str,
+        parameters: dict[str, Any] | None,
+        *,
+        require_post_authoritative: bool = True,
+    ) -> DeferralRecord:
+        """Queue a consequential tool call for end-of-turn commit review.
+
+        Native decision: instead of allow/deny at call time, the action is
+        suspended with a snapshot of the taint state.  Returns the
+        DeferralRecord (the gate owns the taint read, so callers cannot
+        forge the snapshot).
+        """
+        summary = self._context_tracker.lineage_summary(session_id)
+        key = "post_authoritative_taint" if require_post_authoritative else "tainted"
+        taint_at_call = {**summary, "gated_on": key}
+        return self._deferral_manager.queue_commit(
+            session_id, tool_name, parameters, taint_at_call=taint_at_call,
+        )
+
+    def resolve_deferred_commits(
+        self,
+        session_id: str,
+        *,
+        require_post_authoritative: bool = True,
+    ) -> list[DeferralRecord]:
+        """Resolve every queued consequential action against the COMPLETE
+        episode taint state.  Native decision: DENY if taint is present at
+        commit (even if it arrived after the call), else COMMIT, in order.
+
+        Returns the resolved DeferralRecords; execution of committed actions
+        is left to the caller.
+        """
+        summary = self._context_tracker.lineage_summary(session_id)
+        key = "post_authoritative_taint" if require_post_authoritative else "tainted"
+        tainted = bool(summary.get(key))
+        taint_at_commit = {**summary, "gated_on": key}
+        return self._deferral_manager.resolve_commit_queue(
+            session_id, deny=tainted, taint_at_commit=taint_at_commit,
+        )
+
+    def clear_deferred_commits(self, session_id: str) -> None:
+        """Reset the deferred-commit queue for a session (per-episode)."""
+        self._deferral_manager.clear_commit_queue(session_id)
+
+    def peek_deferred_commits(self, session_id: str) -> list[DeferralRecord]:
+        """Return the queued (unresolved) deferred actions for a session."""
+        return self._deferral_manager.get_commit_queue(session_id)
+
     def notify_context_write(
         self,
         session_id: str,
@@ -1311,6 +1401,7 @@ class AuthorizationGate:
         token_id: str | None = None,
         parent_provenance_id: str | None = None,
         metadata: dict[str, Any] | None = None,
+        content: str = "",
     ) -> ContextProvenance:
         """Report that content has entered the agent's context window.
 
@@ -1349,6 +1440,7 @@ class AuthorizationGate:
             token_id=token_id,
             parent_provenance_id=parent_provenance_id,
             metadata=metadata,
+            content=content,
             policy=policy,
         )
 

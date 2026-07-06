@@ -34,7 +34,7 @@ Copyright 2026 David Grice
 SPDX-License-Identifier: Apache-2.0
 """
 
-__version__ = "1.2.1"
+__version__ = "1.3.0"
 
 from agentlock.audit import AuditLogger, AuditRecord, FileAuditBackend, InMemoryAuditBackend
 from agentlock.chain import GENESIS_HASH, ChainedContextEntry, ContextChain
@@ -95,6 +95,7 @@ from agentlock.schema import (
     DeferPolicyConfig,
     DegradationTrigger,
     HumanApprovalConfig,
+    LineagePolicyConfig,
     MemoryPolicyConfig,
     MemoryRetentionConfig,
     ModifyPolicyConfig,
@@ -157,6 +158,7 @@ __all__ = [
     "DeferPolicyConfig",
     "ModifyPolicyConfig",
     "StepUpPolicyConfig",
+    "LineagePolicyConfig",
     "TransformationConfig",
     "SCHEMA_VERSION",
     # v1.1 schema components

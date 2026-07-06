@@ -199,6 +199,10 @@ class DenialReason(str, Enum):
     MEMORY_RETENTION_EXCEEDED = "memory_retention_exceeded"
     MEMORY_PROHIBITED_CONTENT = "memory_prohibited_content"
     MEMORY_CONFIRMATION_REQUIRED = "memory_confirmation_required"
+    # v1.3: Provenance-lineage violations
+    UNTRUSTED_LINEAGE = "untrusted_lineage"
+    PARAM_LINEAGE = "param_lineage"
+    DEFERRED_COMMIT_DENIED = "deferred_commit_denied"
 
 
 class TokenStatus(str, Enum):

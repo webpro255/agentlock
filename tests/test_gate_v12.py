@@ -281,7 +281,7 @@ class TestSchemaVersion:
 
     def test_schema_version_is_1_2(self):
         from agentlock.schema import SCHEMA_VERSION
-        assert SCHEMA_VERSION == "1.2"
+        assert SCHEMA_VERSION == "1.3"
 
     def test_permissions_default_version_1_2(self):
         perms = AgentLockPermissions(
@@ -289,7 +289,7 @@ class TestSchemaVersion:
             requires_auth=True,
             allowed_roles=["admin"],
         )
-        assert perms.version == "1.2"
+        assert perms.version == "1.3"
 
     def test_v11_permissions_still_valid(self):
         """v1.1 permissions block with explicit version still validates."""

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from agentlock import __version__
 from agentlock.cli import main
 
 
@@ -16,7 +17,7 @@ class TestVersion:
             main(["--version"])
         captured = capsys.readouterr()
         assert "agentlock" in captured.out
-        assert "1.2.1" in captured.out
+        assert __version__ in captured.out
 
 
 class TestInit:
