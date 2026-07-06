@@ -5,6 +5,16 @@ All notable changes to AgentLock will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-07-06
+
+### Added
+
+- **Provenance-lineage gating (`LineagePolicyConfig`)** -- New per-tool policy block that gates tool calls based on the provenance lineage of their parameters. Two independent enforcement layers, both inert unless a `lineage_policy` is present and enabled: (1) a **session write-gate** that gates consequential calls -- `gate_financial`, `gate_external`, `gate_bulk`, `gate_account_modification`, `gate_consequential` -- whose session context carries untrusted lineage, and (2) **parameter lineage** (`param_lineage_enabled`) that matches individual parameter values back to untrusted-provenance tokens. Both are gate-owned reads: callers cannot supply the lineage verdict. Configurable `decision` (`step_up` | `defer` | `deny`) and `param_lineage_action` (`deny` | `step_up` | `log`). New helpers in `agentlock/context.py`: `extract_lineage_tokens()`, `ContextTracker.lineage_summary()`, `ContextTracker.parameter_lineage_check()`.
+- **Deferred-commit queue** -- `DeferralManager` gains `queue_commit()`, `resolve_commit_queue()`, `get_commit_queue()`, and `clear_commit_queue()` to hold deferred tool calls pending out-of-band resolution.
+- **Two new denial reasons** -- `DenialReason.UNTRUSTED_LINEAGE` and `DenialReason.PARAM_LINEAGE`.
+- **Schema** -- `SCHEMA_VERSION` bumped to `1.3`; `AgentLockPermissions` gains an optional `lineage_policy` field. `LineagePolicyConfig` is exported from the package root.
+- **Tests** -- 21 new tests (`test_v13_session_write_gate.py`, `test_v13_deferred_and_param_lineage.py`); suite total is now 868.
+
 ## [1.2.1] - 2026-04-06
 
 ### Added
