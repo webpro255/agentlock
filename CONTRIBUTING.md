@@ -95,7 +95,7 @@ pytest tests/test_gate.py -v
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the Apache License 2.0.
+By contributing, you agree that your contributions are licensed under the Apache License 2.0, allowing them to be incorporated into AgentLock under its dual-license model (AGPL-3.0 + commercial). See COMMERCIAL.md.
 
 ## Code of Conduct
 

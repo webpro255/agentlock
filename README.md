@@ -10,7 +10,7 @@
     <a href="https://github.com/webpro255/agentlock/actions"><img src="https://github.com/webpro255/agentlock/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
     <a href="https://pypi.org/project/agentlock/"><img src="https://img.shields.io/pypi/v/agentlock.svg" alt="PyPI"></a>
     <a href="https://pypi.org/project/agentlock/"><img src="https://img.shields.io/pypi/pyversions/agentlock.svg" alt="Python"></a>
-    <a href="https://github.com/webpro255/agentlock/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
+    <a href="https://github.com/webpro255/agentlock/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="License"></a>
   </p>
 </p>
 
@@ -692,7 +692,13 @@ pytest
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+AgentLock v1.3 and later are licensed under the [GNU AGPL-3.0](LICENSE).
+
+**Commercial licenses** are available for use in closed-source or
+proprietary products without AGPL obligations — see [COMMERCIAL.md](COMMERCIAL.md)
+or contact licensing@agentlock.dev.
+
+Versions 1.2.x and earlier remain available under the Apache License 2.0.
 
 ## Author
 

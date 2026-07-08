@@ -31,7 +31,7 @@ Quick start::
         output = gate.execute("read_db", my_db_func, token=result.token)
 
 Copyright 2026 David Grice
-SPDX-License-Identifier: Apache-2.0
+SPDX-License-Identifier: AGPL-3.0-or-later
 """
 
 __version__ = "1.3.0"

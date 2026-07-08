@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.3.0] - 2026-07-06
 
+### Changed
+
+- **License** -- AgentLock is now licensed under the **GNU AGPL-3.0** (previously Apache 2.0), with commercial licenses available for closed-source use -- see `COMMERCIAL.md`. Versions 1.2.x and earlier remain under Apache 2.0.
+
 ### Added
 
 - **Provenance-lineage gating (`LineagePolicyConfig`)** -- New per-tool policy block that gates tool calls based on the provenance lineage of their parameters. Two independent enforcement layers, both inert unless a `lineage_policy` is present and enabled: (1) a **session write-gate** that gates consequential calls -- `gate_financial`, `gate_external`, `gate_bulk`, `gate_account_modification`, `gate_consequential` -- whose session context carries untrusted lineage, and (2) **parameter lineage** (`param_lineage_enabled`) that matches individual parameter values back to untrusted-provenance tokens. Both are gate-owned reads: callers cannot supply the lineage verdict. Configurable `decision` (`step_up` | `defer` | `deny`) and `param_lineage_action` (`deny` | `step_up` | `log`). New helpers in `agentlock/context.py`: `extract_lineage_tokens()`, `ContextTracker.lineage_summary()`, `ContextTracker.parameter_lineage_check()`.
