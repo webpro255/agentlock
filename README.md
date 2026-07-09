@@ -546,7 +546,7 @@ v1.3 adds two denial reason codes, both returned in `result.denial["reason"]`:
 
 ### Benchmark: AgentDojo
 
-v1.3 was evaluated on [AgentDojo](https://github.com/ethz-spylab/agentdojo) across its banking, workspace, travel, and slack suites. On the **write-trailing-read** threat model — where an untrusted read precedes a consequential write — the provenance-lineage gate drove the defense-effective attack success rate to **0%**, at a measured utility cost on benign tasks. This result is scoped specifically to the write-trailing-read threat model; it is **not** a claim of 0% attack success against all AgentDojo attacks or all threat models, and the utility trade-off is reported alongside it. Consistent with the rest of AgentLock's benchmarking, the setbacks and costs are disclosed rather than buried. Full methodology and results: [ARXIV-LINK-TBD]
+v1.3 was evaluated on [AgentDojo](https://github.com/ethz-spylab/agentdojo) across its banking, workspace, travel, and slack suites. On the **write-trailing-read** threat model — where an untrusted read precedes a consequential write — the provenance-lineage gate drove the defense-effective attack success rate to **0%**, at a measured utility cost on benign tasks. This result is scoped specifically to the write-trailing-read threat model; it is **not** a claim of 0% attack success against all AgentDojo attacks or all threat models, and the utility trade-off is reported alongside it. Consistent with the rest of AgentLock's benchmarking, the setbacks and costs are disclosed rather than buried. Full methodology and results: [the paper (DOI: 10.5281/zenodo.21270300)](https://doi.org/10.5281/zenodo.21270300)
 
 ## Benchmark
 
@@ -703,6 +703,31 @@ Versions 1.2.x and earlier remain available under the Apache License 2.0.
 ## Author
 
 **David Grice** — [agentlock.dev](https://agentlock.dev)
+
+
+## Citation
+
+If you use AgentLock in your research, please cite:
+
+> Grice, D. (2026). *Provenance-Based Pre-Action Authorization for LLM Agents:
+> A Structural Defense Evaluated on AgentDojo with AgentLock.* Zenodo.
+> https://doi.org/10.5281/zenodo.21270300
+
+```bibtex
+@misc{grice2026agentlock,
+  author       = {Grice, David},
+  title        = {Provenance-Based Pre-Action Authorization for LLM Agents:
+                  A Structural Defense Evaluated on AgentDojo with AgentLock},
+  year         = {2026},
+  publisher    = {Zenodo},
+  doi          = {10.5281/zenodo.21270300},
+  url          = {https://doi.org/10.5281/zenodo.21270300}
+}
+```
+
+*Research commits authored as `schen-analytics` were made under an alternate
+GitHub identity of the author, configured on the research machine
+(see paper, Appendix B).*
 
 ---
 
