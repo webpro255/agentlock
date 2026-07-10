@@ -374,6 +374,17 @@ class AuthorizationGate:
                 if _match is not None:
                     request_metadata["param_lineage"] = _match
 
+            # v1.4 — novel lineage. Gate-owned read: does any parameter token
+            # trace to NEITHER the authoritative nor the untrusted context?
+            # Independent of param_lineage_enabled; exact-token membership.
+            if _lp is not None and _lp.novel_lineage_enabled:
+                _novel = self._context_tracker.novel_lineage_check(
+                    resolved_session_id,
+                    parameters,
+                )
+                if _novel is not None:
+                    request_metadata["novel_lineage"] = _novel
+
         # Build request context
         ctx = RequestContext(
             user_id=user_id,

@@ -519,6 +519,55 @@ class PolicyEngine:
                         ),
                     )
 
+        # 10.47. Novel-lineage gate (v1.4) — sibling of parameter lineage.
+        # Deliberately placed ABOVE the coarse session-taint gate below: a
+        # NOVEL target (traceable to neither authoritative nor untrusted
+        # context) is a strictly sharper finding than "this session is
+        # tainted somewhere".  Running it second would let the session-wide
+        # taint verdict mask the per-target one.
+        if (
+            _lp is not None
+            and _lp.novel_lineage_enabled
+            and permissions.version >= "1.3"
+        ):
+            nmatch = context.metadata.get("novel_lineage")
+            if nmatch is not None:
+                naction = _lp.novel_lineage_action
+                ndetail = (
+                    f"Parameter '{nmatch.get('matched_param')}' carries token "
+                    f"'{nmatch.get('matched_token')}', which traces to neither "
+                    f"the authoritative user request nor any untrusted context "
+                    f"in this session. The target is novel — unaccounted for by "
+                    f"provenance. Gated on token provenance, not content."
+                )
+                if naction == "log":
+                    # Observe-only: the caller can still see the match in
+                    # metadata / audit.  Fall through to later checks.
+                    pass
+                elif naction == "step_up":
+                    return PolicyDecision(
+                        allowed=False,
+                        reason=DenialReason.NOVEL_LINEAGE,
+                        detail=ndetail,
+                        needs_approval=True,
+                        suggestion=(
+                            "Human step-up required: the tool's target appears "
+                            "in neither the user's request nor any content the "
+                            "session read."
+                        ),
+                    )
+                else:  # "deny"
+                    return PolicyDecision(
+                        allowed=False,
+                        reason=DenialReason.NOVEL_LINEAGE,
+                        detail=ndetail,
+                        suggestion=(
+                            "The target originated outside all recorded "
+                            "provenance. Re-issue using a target from the "
+                            "user's own request or trusted configuration."
+                        ),
+                    )
+
         # 10.5. Provenance-lineage gate (v1.3) — independent of everything
         # above.  This rule inspects ONLY the provenance of what is already
         # in the session's context window (the worst-case taint summary the

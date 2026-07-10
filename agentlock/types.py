@@ -203,6 +203,8 @@ class DenialReason(str, Enum):
     UNTRUSTED_LINEAGE = "untrusted_lineage"
     PARAM_LINEAGE = "param_lineage"
     DEFERRED_COMMIT_DENIED = "deferred_commit_denied"
+    # v1.4: target token traces to NEITHER authoritative nor untrusted context
+    NOVEL_LINEAGE = "novel_lineage"
 
 
 class TokenStatus(str, Enum):

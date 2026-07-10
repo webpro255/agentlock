@@ -317,6 +317,14 @@ class LineagePolicyConfig(BaseModel):
     param_lineage_action: str = "deny"  # "deny" | "step_up" | "log"
     param_lineage_min_len: int = 6      # min length for a plain-string match
 
+    # v1.4 — novel lineage. Sibling of parameter lineage: classifies a target
+    # token as trusted / untrusted / NOVEL by EXACT token-set membership. A
+    # NOVEL token traces to neither the authoritative nor the untrusted
+    # context — a target the session cannot account for. Independent of the
+    # param_lineage_* flags; off by default.
+    novel_lineage_enabled: bool = False
+    novel_lineage_action: str = "step_up"  # "deny" | "step_up" | "log"
+
     model_config = {"extra": "forbid"}
 
 

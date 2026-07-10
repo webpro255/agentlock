@@ -351,6 +351,88 @@ class ContextTracker:
                         }
         return None
 
+    def novel_lineage_check(
+        self,
+        session_id: str,
+        parameters: dict[str, Any] | None,
+        *,
+        min_len: int = 6,
+    ) -> dict[str, Any] | None:
+        """Classify a tool call's target tokens as trusted / untrusted / NOVEL
+        (v1.4).  Sibling of :meth:`parameter_lineage_check`.
+
+        A token is NOVEL when it traces to NEITHER the authoritative context
+        (the user's own request/config) NOR the untrusted context.  It came
+        from nowhere the session can account for — the signature of a target
+        the agent invented or smuggled in outside the recorded provenance.
+
+        Membership is decided by EXACT token-set equality, never substring.
+        Substring launders look-alikes: ``boss@acme.co`` is a substring of
+        ``boss@acme.com`` and would falsely read trusted.
+
+        Read-only.  Returns the first NOVEL token as::
+
+            {"matched_param", "matched_value", "classification",
+             "matched_token"}
+
+        or ``None`` when every distinctive token is accounted for.  Returns
+        ``None`` when the session has no authoritative content, since without
+        a baseline nothing can be classified.
+        """
+        if not parameters:
+            return None
+        state = self._states.get(session_id)
+        if state is None or not state.provenance_log:
+            return None
+
+        # EXACT token sets — not blobs.  Compare on the normalized token
+        # string across kinds: the same extractor runs on both sides, so a
+        # value present in context yields the identical token here.
+        auth_tokens: set[str] = set()
+        untrusted_tokens: set[str] = set()
+        for e in state.provenance_log:
+            if not e.content:
+                continue
+            if e.authority == ContextAuthority.AUTHORITATIVE:
+                target = auth_tokens
+            elif e.authority == ContextAuthority.UNTRUSTED:
+                target = untrusted_tokens
+            else:
+                continue
+            for _kind, tok in extract_lineage_tokens(e.content, min_len):
+                if tok:
+                    target.add(tok)
+
+        # No authoritative baseline -> cannot classify anything as novel.
+        if not auth_tokens:
+            return None
+
+        # Most-specific-first so the reported token is deterministic across
+        # PYTHONHASHSEED: email -> url -> long/structural str, then lexical.
+        kind_rank = {"email": 0, "url": 1, "str": 2}
+        candidates: list[tuple[int, int, str, str, str]] = []
+        for path, value in _iter_param_leaves(parameters):
+            for kind, tok in extract_lineage_tokens(value, min_len):
+                if not tok:
+                    continue
+                candidates.append(
+                    (kind_rank.get(kind, 3), -len(tok), tok, path, str(value)),
+                )
+        candidates.sort()
+
+        for _rank, _neglen, tok, path, value in candidates:
+            if tok in auth_tokens:
+                continue                      # trusted
+            if tok in untrusted_tokens:
+                continue                      # untrusted -> param_lineage's job
+            return {
+                "matched_param": path,
+                "matched_value": value[:120],
+                "classification": "novel",
+                "matched_token": tok[:120],
+            }
+        return None
+
     def record_unattributed(self, session_id: str) -> None:
         """Record that unattributed content entered context."""
         state = self.get_or_create(session_id)
