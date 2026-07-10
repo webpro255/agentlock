@@ -2,11 +2,27 @@
 
 ## Supported Versions
 
-| Version | Supported          |
-|---------|--------------------|
-| 1.2.x   | Yes                |
-| 1.1.x   | Yes                |
-| 1.0.x   | Yes                |
+| Version | Supported           | Notes                                        |
+|---------|---------------------|----------------------------------------------|
+| 1.4.x   | Yes                 | Current release. Fixes land here first.      |
+| 1.3.x   | Security fixes only | Previous minor. Supported until 1.5.0.       |
+| 1.2.x   | No                  | End of support. Last Apache 2.0 release.     |
+| 1.1.x   | No                  | End of support.                              |
+| 1.0.x   | No                  | End of support.                              |
+
+### Support policy
+
+AgentLock supports the **current minor release** and the **one before it**. The
+current minor receives all fixes. The previous minor receives security fixes
+only, and its support ends when the next minor ships. Everything older is out of
+support and will not receive security fixes.
+
+If you are on an unsupported version, upgrade to a supported one. We will say so
+plainly in a report response rather than backporting silently.
+
+End of support does not change the license of a release that already shipped.
+Versions 1.2.x and earlier remain available under Apache 2.0; 1.3.0 and later are
+AGPL-3.0-or-later with a commercial option (see `COMMERCIAL.md`).
 
 ## Reporting a Vulnerability
 
