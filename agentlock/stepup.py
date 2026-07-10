@@ -1,4 +1,4 @@
-"""STEP_UP decision type — dynamic human approval.
+"""STEP_UP decision type -- dynamic human approval.
 
 When session state indicates elevated risk, STEP_UP pauses execution
 and requires human approval before proceeding.  Unlike the static
@@ -11,7 +11,7 @@ Triggers:
 1. ``hardening_elevated_high_risk``: Hardening severity >= elevated
    AND the tool is HIGH or CRITICAL risk.
 2. ``multi_pii_tool_session``: 2+ PII-returning tools already called
-   in the session — the next one triggers step-up.
+   in the session -- the next one triggers step-up.
 3. ``post_denial_retry``: A tool was denied earlier in the session
    and the user is now attempting a different HIGH risk tool.
 """

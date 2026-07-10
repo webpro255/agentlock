@@ -1,4 +1,4 @@
-"""Action-class audit — the on-demand replacement for the register-time warning.
+"""Action-class audit -- the on-demand replacement for the register-time warning.
 
 A ``UserWarning`` at ``register_tool()`` could not see how a tool is actually
 called, so it guessed from name and risk level and fired in every importing
@@ -10,15 +10,15 @@ Everything here is **pure data over a snapshot**.  ``audit_action_classes()``
 reads the tool registry and the audit log, mutates nothing, and is never
 called from ``authorize()`` or any other hot path.  The audit log is the only
 place caller-asserted classes are recorded, and it is read back exactly once
-per report — never during a decision.
+per report -- never during a decision.
 
 Coverage is defined to match ``policy.py`` exactly, not approximately.  Three
 structural facts drive it, and the report would lie if it ignored any of them:
 
 1. The lineage block is skipped entirely when the permission block predates
    v1.3, however the policy is configured.  Such a tool is ``inert``.
-   Compared NUMERICALLY via ``schema.version_at_least`` — never as strings.
-2. ``session_write_gate=False`` computes the decision but never blocks — it
+   Compared NUMERICALLY via ``schema.version_at_least`` -- never as strings.
+2. ``session_write_gate=False`` computes the decision but never blocks -- it
    records a shadow and falls through.  Such a tool is ``shadow``.
 3. ``is_value_carrying`` weakens ONLY the residual ``is_consequential``
    disjunct, ``C ∧ (G ∨ ¬V)``.  A value-carrying tool is still taint-gated
@@ -82,7 +82,7 @@ class FindingStatus(str, Enum):
     UNDECLARED = "undeclared"
     #: Declares at least one action class that is taint-gated as configured.
     DECLARED = "declared"
-    #: The session write-gate cannot deny this tool at all — the permission
+    #: The session write-gate cannot deny this tool at all -- the permission
     #: block predates v1.3, or ``session_write_gate`` is off.  Declaration
     #: changes nothing until that is fixed.
     NOT_COVERED = "not_covered"
@@ -91,14 +91,14 @@ class FindingStatus(str, Enum):
 class LineageMode(str, Enum):
     """How the lineage policy treats this tool's residual bucket."""
 
-    #: The permission block predates v1.3 (numeric compare) — policy.py skips
+    #: The permission block predates v1.3 (numeric compare) -- policy.py skips
     #: the lineage block entirely.
     INERT = "inert"
-    #: ``session_write_gate=False`` — decision computed, never enforced.
+    #: ``session_write_gate=False`` -- decision computed, never enforced.
     SHADOW = "shadow"
-    #: ``gate_consequential=True`` — every consequential call is taint-gated.
+    #: ``gate_consequential=True`` -- every consequential call is taint-gated.
     UNIFORM = "uniform"
-    #: ``gate_consequential=False`` — only declared/asserted classes are gated.
+    #: ``gate_consequential=False`` -- only declared/asserted classes are gated.
     SELECTIVE = "selective"
 
 
@@ -164,8 +164,8 @@ class ActionClassFinding:
         )
 
     def __post_init__(self) -> None:
-        # The polarity invariant, enforced at construction so no code path —
-        # not Phase 4, not a future contributor — can produce a finding that
+        # The polarity invariant, enforced at construction so no code path --
+        # not Phase 4, not a future contributor -- can produce a finding that
         # quietly recommends un-gating without a human in the loop.
         if self.suggests_value_carrying and not self.requires_human_decision:
             raise ValueError(
@@ -206,7 +206,7 @@ class ActionClassAudit(list[ActionClassFinding]):
 
 
 # ---------------------------------------------------------------------------
-# Classification — pure functions over a permission block.
+# Classification -- pure functions over a permission block.
 # ---------------------------------------------------------------------------
 
 
@@ -247,7 +247,7 @@ def _version_ok(permissions: AgentLockPermissions) -> bool:
 
     Calls the SAME ``version_at_least`` the gate calls.  The report must never
     claim coverage the gate does not provide, so this shares the predicate
-    rather than reimplementing it — a second implementation is a second thing
+    rather than reimplementing it -- a second implementation is a second thing
     to drift.
 
     (This function once deliberately mirrored a lexicographic string compare,
@@ -290,7 +290,7 @@ def describe(
     if status is FindingStatus.NOT_COVERED:
         if declared == ("is_value_carrying",):
             return (
-                "declares is_value_carrying with gate_consequential=False — "
+                "declares is_value_carrying with gate_consequential=False -- "
                 "DELIBERATELY un-gated. Session taint does not block it; "
                 "parameter/novel lineage is the covering control. This is the "
                 "intended configuration, not a defect"
@@ -368,7 +368,7 @@ def tally_observations(
 
 
 # ---------------------------------------------------------------------------
-# Suggestions — two tiers.  Tier B (observed) beats Tier A (lexical).
+# Suggestions -- two tiers.  Tier B (observed) beats Tier A (lexical).
 #
 # Suggestions are EVIDENCE PRESENTED TO A HUMAN.  Nothing here ever feeds a
 # gating decision: the gate reads `permissions.action_class`, which only a
@@ -433,7 +433,7 @@ def _name_tokens(tool_name: str) -> set[str]:
 
 def lexical_classes(tool_name: str) -> tuple[str, ...]:
     """Named, gating-adding classes implied by a tool's name.  Never
-    ``is_value_carrying`` — that is gating-removing and needs a human.
+    ``is_value_carrying`` -- that is gating-removing and needs a human.
 
     Collisions are intentional: ``remove_user`` is BOTH a deletion and a
     membership change, and ``ActionClassConfig`` permits both together (they
@@ -477,7 +477,7 @@ def suggest(
     Tier B (observed) beats Tier A (lexical): what callers actually asserted
     is evidence; what a tool is named is a guess.
     """
-    # Three-state basis.  A broken readback is NOT "no observations" — one is
+    # Three-state basis.  A broken readback is NOT "no observations" -- one is
     # a missing instrument, the other is a reading of zero.  Conflating them
     # would let a dead audit backend masquerade as a clean bill of health.
     if not observation_available:
@@ -520,7 +520,7 @@ def suggest(
         )
         # The name can say WHICH value-free class the residual bucket holds.
         # That is still a gating-adding suggestion, so it stays safe if wrong,
-        # and the observation — not the name — is what triggered it.
+        # and the observation -- not the name -- is what triggered it.
         lex = lexical_classes(tool_name)
         if lex:
             return Suggestion(
@@ -534,7 +534,7 @@ def suggest(
                 ),
             )
         # Nothing named it.  The residual bucket is exactly the question
-        # is_value_carrying answers — and answering it wrong FAILS OPEN.
+        # is_value_carrying answers -- and answering it wrong FAILS OPEN.
         return Suggestion(
             suggestion=("is_value_carrying",),
             confidence=Confidence.LOW,
@@ -542,7 +542,7 @@ def suggest(
             requires_human_decision=True,  # enforced again in __post_init__
             rationale=(
                 f"{seen}. No name token identifies a value-free class, so "
-                f"this may be a value-carrying write — but only a human can "
+                f"this may be a value-carrying write -- but only a human can "
                 f"say so, and saying so wrongly un-gates it"
             ),
         )
@@ -599,12 +599,12 @@ _STATUS_ORDER = (
 
 _STATUS_HEADING = {
     FindingStatus.UNDECLARED: (
-        "UNDECLARED — no action_class in the trusted permission block"
+        "UNDECLARED -- no action_class in the trusted permission block"
     ),
     FindingStatus.NOT_COVERED: (
-        "NOT COVERED — the session write-gate cannot block these tools"
+        "NOT COVERED -- the session write-gate cannot block these tools"
     ),
-    FindingStatus.DECLARED: "DECLARED — action class on the trusted side",
+    FindingStatus.DECLARED: "DECLARED -- action class on the trusted side",
 }
 
 
@@ -680,7 +680,7 @@ def format_action_class_audit(
             f"Note: {total} audited decision(s) across "
             f"{len(unregistered)} tool(s) NOT in the registry carried asserted "
             f"action classes ({', '.join(sorted(unregistered))}). Not audited "
-            f"here — this report's subject is the tool registry."
+            f"here -- this report's subject is the tool registry."
         )
 
     return "\n".join(lines)

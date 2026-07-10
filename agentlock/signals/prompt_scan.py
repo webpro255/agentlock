@@ -23,7 +23,7 @@ The prompt scanner runs on the framework side, before ``agent.chat()``::
 
 This closes the first-turn gap: the scanner reads the attacker's message
 before the LLM does, fires signals, and the hardening directive is active
-for the *same* turn — not just the next one.
+for the *same* turn -- not just the next one.
 """
 
 from __future__ import annotations

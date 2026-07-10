@@ -1,4 +1,4 @@
-"""Tests for agentlock.audit — AuditLogger, backends, and log level filtering."""
+"""Tests for agentlock.audit -- AuditLogger, backends, and log level filtering."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Audit logging — every tool call generates an audit record.
+"""Audit logging -- every tool call generates an audit record.
 
 Audit is not optional in AgentLock.  The default backend writes structured
 JSON to a file.  Production deployments should use the ``AuditBackend``
@@ -250,7 +250,7 @@ class AuditLogger:
             # both describe *why* a decision came out the way it did, and are
             # bounded, non-sensitive, caller-independent.  MINIMAL sheds the
             # unbounded, caller-controlled fields (parameters, response bodies)
-            # and the identity fields — not the provenance of the decision.
+            # and the identity fields -- not the provenance of the decision.
             # ``audit_action_classes()`` reads ``metadata["asserted_classes"]``
             # back out, so stripping it here would silently blind the audit
             # report on any tool logging at MINIMAL.
@@ -263,7 +263,7 @@ class AuditLogger:
             record.parameters = None
             record.response_summary = ""
         else:
-            # FULL — include everything
+            # FULL -- include everything
             if include_parameters:
                 record.parameters = parameters
             record.response_summary = response_summary

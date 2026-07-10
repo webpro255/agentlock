@@ -1,4 +1,4 @@
-"""Tests for v1.2 gate integration — MODIFY decision type, DecisionType field."""
+"""Tests for v1.2 gate integration -- MODIFY decision type, DecisionType field."""
 
 from __future__ import annotations
 
@@ -217,7 +217,7 @@ class TestModifyWithEnforcement:
     """Test MODIFY + hardening enforcement interaction."""
 
     def test_enforcement_blocks_before_modify(self):
-        """At critical severity with enforcement, tool is blocked — MODIFY doesn't run."""
+        """At critical severity with enforcement, tool is blocked -- MODIFY doesn't run."""
         gate = _make_gate(enforce=True)
         session = gate.create_session(user_id="alice", role="admin")
         for _ in range(4):
@@ -304,7 +304,7 @@ class TestSchemaVersion:
         assert perms.modify_policy is None
 
     def test_v10_permissions_still_valid(self):
-        """v1.0 permissions block still validates — deny by default."""
+        """v1.0 permissions block still validates -- deny by default."""
         perms = AgentLockPermissions(
             risk_level="low",
             requires_auth=False,

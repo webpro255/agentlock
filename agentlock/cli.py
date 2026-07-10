@@ -1,4 +1,4 @@
-"""AgentLock CLI — validate schemas, inspect audit logs, manage tools.
+"""AgentLock CLI -- validate schemas, inspect audit logs, manage tools.
 
 Usage::
 
@@ -57,16 +57,16 @@ def _validate(args: argparse.Namespace) -> int:
             errors.extend(str(err) for err in e.errors())
 
     if errors:
-        print(f"INVALID — {len(errors)} error(s):")
+        print(f"INVALID -- {len(errors)} error(s):")
         for err in errors:
             print(f"  {err}")
         return 1
 
-    print(f"VALID — {path.name}")
+    print(f"VALID -- {path.name}")
     print(f"  Version:     {perms.version}")
     print(f"  Risk level:  {perms.risk_level.value}")
     print(f"  Auth:        {'required' if perms.requires_auth else 'not required'}")
-    print(f"  Roles:       {', '.join(perms.allowed_roles) or '(none — deny all)'}")
+    print(f"  Roles:       {', '.join(perms.allowed_roles) or '(none -- deny all)'}")
     if perms.rate_limit:
         print(f"  Rate limit:  {perms.rate_limit.max_calls}/{perms.rate_limit.window_seconds}s")
     if perms.data_policy.prohibited_in_output:
@@ -189,7 +189,7 @@ def _inspect(args: argparse.Namespace) -> int:
     print(f"  Risk:          {rc}{perms.risk_level.value.upper()}{reset}")
     print(f"  Auth required: {'Yes' if perms.requires_auth else 'No'}")
     print(f"  Auth methods:  {', '.join(m.value for m in perms.auth_methods)}")
-    print(f"  Allowed roles: {', '.join(perms.allowed_roles) or '(none — DENY ALL)'}")
+    print(f"  Allowed roles: {', '.join(perms.allowed_roles) or '(none -- DENY ALL)'}")
     print(f"  Data boundary: {perms.scope.data_boundary.value}")
     if perms.scope.max_records:
         print(f"  Max records:   {perms.scope.max_records}")
@@ -290,7 +290,7 @@ def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
         prog="agentlock",
-        description="AgentLock — Authorization framework for AI agent tool calls",
+        description="AgentLock -- Authorization framework for AI agent tool calls",
     )
     parser.add_argument(
         "--version", action="version", version=f"agentlock {__version__}"

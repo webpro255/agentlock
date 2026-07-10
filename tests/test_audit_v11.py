@@ -1,4 +1,4 @@
-"""Tests for v1.1 audit record extensions — trust degradation, memory ops, context provenance."""
+"""Tests for v1.1 audit record extensions -- trust degradation, memory ops, context provenance."""
 
 from __future__ import annotations
 

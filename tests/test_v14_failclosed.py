@@ -5,7 +5,7 @@
 tool nobody had classified. A delete tool asserting only ``is_consequential``
 matched no disjunct and executed under taint. Omission produced silence.
 
-The inversion makes un-gating require TWO affirmative acts — the deployment
+The inversion makes un-gating require TWO affirmative acts -- the deployment
 sets ``gate_consequential=False`` AND the tool positively declares
 ``is_value_carrying=True`` in the trusted permission block.
 
@@ -13,7 +13,7 @@ Invariant: an unclassified consequential action is never un-gated.
 
 Let C = context.is_consequential, G = gate_consequential, V = value_carrying.
 The disjunct is ``C and (G or not V)``. With C=True, V=False it evaluates to
-``True and (G or True)`` = True for ANY G — the gate holds regardless of the
+``True and (G or True)`` = True for ANY G -- the gate holds regardless of the
 deployment flag. That is the proof, and the table below is its enumeration.
 """
 

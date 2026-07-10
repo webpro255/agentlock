@@ -1,4 +1,4 @@
-"""Tests for agentlock.policy — v1.1 policy checks (trust degradation, context)."""
+"""Tests for agentlock.policy -- v1.1 policy checks (trust degradation, context)."""
 
 from __future__ import annotations
 

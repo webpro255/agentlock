@@ -1,4 +1,4 @@
-"""Tests for agentlock.memory_gate — MemoryGate, MemoryEntry, InMemoryMemoryStore."""
+"""Tests for agentlock.memory_gate -- MemoryGate, MemoryEntry, InMemoryMemoryStore."""
 
 from __future__ import annotations
 
@@ -64,7 +64,7 @@ class TestMemoryEntry:
         assert len(set(ids)) == len(ids)
 
     def test_is_expired_always_false(self):
-        """Expiry is delegated to MemoryGate — the entry itself returns False."""
+        """Expiry is delegated to MemoryGate -- the entry itself returns False."""
         entry = MemoryEntry()
         assert entry.is_expired is False
 
@@ -345,7 +345,7 @@ class TestAuthorizeRead:
 
         assert gate.store.count("u1") == 2
 
-        # Authorize read with max_age of 60 seconds — should purge old entry
+        # Authorize read with max_age of 60 seconds -- should purge old entry
         decision = gate.authorize_read(
             user_id="u1",
             reader=MemoryWriter.AGENT,
@@ -359,7 +359,7 @@ class TestAuthorizeRead:
         assert remaining[0].content == "fresh"
 
     def test_lazy_retention_no_purge_when_max_age_zero(self, gate: MemoryGate):
-        """max_age_seconds=0 means no expiry — nothing purged."""
+        """max_age_seconds=0 means no expiry -- nothing purged."""
         old_entry = MemoryEntry(
             user_id="u1",
             content="ancient",

@@ -30,7 +30,7 @@ gate.register_tool("send_email", AgentLockPermissions(
 ))
 ```
 
-That's it. Two fields — `risk_level` and `allowed_roles` — provide immediate value.
+That's it. Two fields -- `risk_level` and `allowed_roles` -- provide immediate value.
 
 ### Step 3: Authorize Every Call
 
@@ -115,6 +115,6 @@ Any SSNs or credit card numbers in the tool's output will be automatically repla
 
 ## Next Steps
 
-- [Full Specification](specification.md) — complete schema and architecture
-- [Framework Integrations](integrations.md) — LangChain, CrewAI, FastAPI, etc.
-- [Examples](../examples/) — working code for every use case
+- [Full Specification](specification.md) -- complete schema and architecture
+- [Framework Integrations](integrations.md) -- LangChain, CrewAI, FastAPI, etc.
+- [Examples](../examples/) -- working code for every use case

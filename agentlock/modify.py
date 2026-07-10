@@ -1,4 +1,4 @@
-"""MODIFY decision type — parameter and output transformations.
+"""MODIFY decision type -- parameter and output transformations.
 
 When a tool call is authorized but the output or parameters should be
 transformed before the LLM sees them, the MODIFY engine applies
@@ -63,7 +63,7 @@ class ModifyResult:
 class ModifyEngine:
     """Applies parameter and output transformations.
 
-    The engine is stateless — it applies transformations based on the
+    The engine is stateless -- it applies transformations based on the
     configuration passed to each call.  It does not track sessions or
     accumulate state.
     """

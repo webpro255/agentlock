@@ -1,4 +1,4 @@
-"""Tests for agentlock.schema — AgentLockPermissions validation."""
+"""Tests for agentlock.schema -- AgentLockPermissions validation."""
 
 from __future__ import annotations
 

@@ -5,12 +5,12 @@ produce an allow/deny decision with a specific reason.
 
 The engine runs two independent filter chains after base authorization:
 
-1. **Injection filter** — checks tool call parameters for adversarial
+1. **Injection filter** -- checks tool call parameters for adversarial
    patterns (reconnaissance, schema enumeration, prompt extraction,
    social engineering).  Runs first.  A blocked request never reaches
    the PII filter.
 
-2. **PII filter** — checks the caller's ``max_output_classification``
+2. **PII filter** -- checks the caller's ``max_output_classification``
    against the tool's ``output_classification``.  Blocks at the gate
    if clearance is too low.  Output redaction in ``execute()`` remains
    as the defense-in-depth backup.
@@ -102,15 +102,15 @@ class PolicyDecision:
 
 
 # ---------------------------------------------------------------------------
-# The lineage gating predicate — ONE definition, TWO enforcement points.
+# The lineage gating predicate -- ONE definition, TWO enforcement points.
 # ---------------------------------------------------------------------------
 # This is the single source of truth for "does session taint block this
 # action?".  It is consulted at CALL time by ``PolicyEngine.evaluate`` and at
 # COMMIT time by ``AuthorizationGate.resolve_deferred_commits``.
 #
-# It MUST NOT be duplicated.  A deferred write is authorized twice — once when
+# It MUST NOT be duplicated.  A deferred write is authorized twice -- once when
 # the agent asks for it and once at end-of-turn against the complete taint
-# state — and if the two sites compute gating differently, a policy that
+# state -- and if the two sites compute gating differently, a policy that
 # un-gates at call time can be silently re-gated at commit time (or, worse,
 # the reverse).  That divergence is exactly the defect this module closes:
 # before v1.4-defer-policy the commit path denied on taint alone, ignoring
@@ -129,7 +129,7 @@ class ActionFlags:
 
     Note the asymmetry, per the polarity rule in ``ActionClassConfig``:
     every field here is gating-ADDING.  ``is_value_carrying`` is absent by
-    design — it is gating-REMOVING and is readable only from the trusted
+    design -- it is gating-REMOVING and is readable only from the trusted
     permission block.
     """
 
@@ -168,8 +168,8 @@ def resolve_action_classes(
     only ever ADD gating and an omitted kwarg can never escape a class the
     tool itself declares.
 
-    ``is_value_carrying`` is read ONLY from the trusted block — never from the
-    caller — because it is gating-REMOVING.
+    ``is_value_carrying`` is read ONLY from the trusted block -- never from the
+    caller -- because it is gating-REMOVING.
     """
     ac = permissions.action_class
     is_deletion = bool(ac and ac.is_deletion) or flags.is_deletion
@@ -188,7 +188,7 @@ def lineage_gated_action(
     ``is_consequential`` is the RESIDUAL bucket, not a class, so
     ``gate_consequential=False`` would un-gate an open-ended set: every
     consequential tool nobody classified.  Inverted as ``C and (G or not V)``,
-    an unclassified consequential action fails CLOSED — un-gating needs BOTH
+    an unclassified consequential action fails CLOSED -- un-gating needs BOTH
     the deployment flag AND a positive per-tool ``is_value_carrying``
     declaration.  With ``gate_consequential=True`` this reduces to
     ``is_consequential``, exactly as before v1.4.
@@ -223,7 +223,7 @@ def lineage_gated_action(
 # ---------------------------------------------------------------------------
 # These patterns detect adversarial parameter content: reconnaissance,
 # schema enumeration, prompt extraction, and social engineering.  They
-# are intentionally simple and conservative — false positives are
+# are intentionally simple and conservative -- false positives are
 # preferable to missed injections.
 
 _INJECTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
@@ -253,7 +253,7 @@ _INJECTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
             r"|(?:what\s+(?:are|were)\s+your\s+(?:original\s+)?instructions?)",
         ),
     ),
-    # Social engineering — impersonation / authority assertion
+    # Social engineering -- impersonation / authority assertion
     (
         "social_engineering",
         re.compile(
@@ -265,7 +265,7 @@ _INJECTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
             r"|(?:maintenance\s+mode\s+(?:enabled|activated))",
         ),
     ),
-    # Direct injection — command separators, escapes
+    # Direct injection -- command separators, escapes
     (
         "command_injection",
         re.compile(
@@ -280,7 +280,7 @@ _INJECTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ),
 ]
 
-# Classification hierarchy — shared by the PII filter
+# Classification hierarchy -- shared by the PII filter
 _CLASSIFICATION_ORDER = [
     DataClassification.PUBLIC,
     DataClassification.INTERNAL,
@@ -404,10 +404,10 @@ class PolicyEngine:
 
     Runs three independent evaluation stages:
 
-    1. **Base authorization** — auth, role, scope, records, approval
-    2. **Injection filter** — parameter content analysis (blocks first)
-    3. **PII filter** — data classification clearance check
-    4. **Trust degradation** — v1.1 context authority (independent)
+    1. **Base authorization** -- auth, role, scope, records, approval
+    2. **Injection filter** -- parameter content analysis (blocks first)
+    3. **PII filter** -- data classification clearance check
+    4. **Trust degradation** -- v1.1 context authority (independent)
 
     Stages 2 and 3 are fully decoupled: they share no logic, no state,
     and no code paths.  A request blocked by the injection filter never
@@ -464,7 +464,7 @@ class PolicyEngine:
                 suggestion="Complete authentication via the out-of-band channel.",
             )
 
-        # 3. Role check — empty allowed_roles means denied to everyone
+        # 3. Role check -- empty allowed_roles means denied to everyone
         if permissions.allowed_roles:
             if context.role not in permissions.allowed_roles:
                 return PolicyDecision(
@@ -482,7 +482,7 @@ class PolicyEngine:
             return PolicyDecision(
                 allowed=False,
                 reason=DenialReason.NO_PERMISSIONS,
-                detail="No roles configured — denied by default.",
+                detail="No roles configured -- denied by default.",
                 suggestion="Add allowed_roles to this tool's agentlock permissions.",
             )
 
@@ -529,7 +529,7 @@ class PolicyEngine:
         # These two filters are fully decoupled.  A request blocked by
         # the injection filter never reaches the PII filter.
 
-        # 6. Injection filter — parameter content analysis
+        # 6. Injection filter -- parameter content analysis
         injection_decision = self._injection_filter.evaluate(
             context.metadata.get("parameters"),
             context.metadata,
@@ -537,7 +537,7 @@ class PolicyEngine:
         if injection_decision is not None:
             return injection_decision
 
-        # 7. PII filter — data classification clearance
+        # 7. PII filter -- data classification clearance
         pii_decision = self._pii_filter.evaluate(
             context.max_output_classification,
             permissions.data_policy.output_classification,
@@ -593,7 +593,7 @@ class PolicyEngine:
                     ),
                 )
 
-        # 10.4. Parameter-lineage gate (v1.3 Feature 2) — runs for EVERY tool
+        # 10.4. Parameter-lineage gate (v1.3 Feature 2) -- runs for EVERY tool
         # call, reads included.  Denies when a parameter value traces to
         # untrusted context but not the authoritative user request (the gate
         # attached the match as context.metadata["param_lineage"]).  Targets
@@ -642,7 +642,7 @@ class PolicyEngine:
                         ),
                     )
 
-        # 10.47. Novel-lineage gate (v1.4) — sibling of parameter lineage.
+        # 10.47. Novel-lineage gate (v1.4) -- sibling of parameter lineage.
         # Deliberately placed ABOVE the coarse session-taint gate below: a
         # NOVEL target (traceable to neither authoritative nor untrusted
         # context) is a strictly sharper finding than "this session is
@@ -660,7 +660,7 @@ class PolicyEngine:
                     f"Parameter '{nmatch.get('matched_param')}' carries token "
                     f"'{nmatch.get('matched_token')}', which traces to neither "
                     f"the authoritative user request nor any untrusted context "
-                    f"in this session. The target is novel — unaccounted for by "
+                    f"in this session. The target is novel -- unaccounted for by "
                     f"provenance. Gated on token provenance, not content."
                 )
                 if naction == "log":
@@ -691,7 +691,7 @@ class PolicyEngine:
                         ),
                     )
 
-        # 10.5. Provenance-lineage gate (v1.3) — independent of everything
+        # 10.5. Provenance-lineage gate (v1.3) -- independent of everything
         # above.  This rule inspects ONLY the provenance of what is already
         # in the session's context window (the worst-case taint summary the
         # gate attached as context.metadata["lineage"]).  It never looks at
@@ -701,7 +701,7 @@ class PolicyEngine:
         # the permission block is v1.3+.
         lineage_policy = active_lineage_policy(permissions)
         if lineage_policy is not None:
-            # v1.4 — the gating disjunct lives in ``lineage_gated_action`` and
+            # v1.4 -- the gating disjunct lives in ``lineage_gated_action`` and
             # is shared verbatim with the commit-time re-decision in
             # ``AuthorizationGate.resolve_deferred_commits``.  Do not inline it
             # here again: two copies WILL drift, and a deferred write is
@@ -751,7 +751,7 @@ class PolicyEngine:
                         f"action. No parameter content was inspected."
                     )
                     # v1.3 ablation: when the session write-gate is DISABLED,
-                    # do NOT block — record what it WOULD have blocked as a
+                    # do NOT block -- record what it WOULD have blocked as a
                     # shadow and fall through (provenance recording,
                     # parameter-lineage, and deferred-commit are unaffected).
                     if not lineage_policy.session_write_gate:
@@ -785,7 +785,7 @@ class PolicyEngine:
                             ),
                         )
 
-        # 10-11. v1.1 checks — trust degradation and unattributed context
+        # 10-11. v1.1 checks -- trust degradation and unattributed context
         # These run independently of both filters above.  Trust degradation
         # fires based on session state from notify_context_write(), not
         # from parameter content or PII classification.
@@ -824,7 +824,7 @@ class PolicyEngine:
                         allowed=False,
                         reason=DenialReason.TRUST_DEGRADED,
                         detail=(
-                            "Write operations denied — session trust "
+                            "Write operations denied -- session trust "
                             "degraded after "
                             f"{cs.degradation_reason} entered context."
                         ),

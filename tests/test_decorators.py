@@ -1,4 +1,4 @@
-"""Tests for agentlock.decorators — @agentlock decorator."""
+"""Tests for agentlock.decorators -- @agentlock decorator."""
 
 from __future__ import annotations
 

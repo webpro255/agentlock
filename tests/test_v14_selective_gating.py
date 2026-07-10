@@ -125,7 +125,7 @@ class TestSelectiveGatingRecoversUtility:
     """gate_consequential=False un-gates value-carrying writes only."""
 
     def test_value_carrying_reserve_allowed_under_taint(self):
-        """Utility: the reserve executes despite taint — param lineage covers it.
+        """Utility: the reserve executes despite taint -- param lineage covers it.
 
         This test PREVIOUSLY encoded the fail-open hazard: it registered a
         consequential tool with NO action_class and asserted the write was
@@ -199,7 +199,7 @@ class TestSelectiveGatingRecoversUtility:
         assert r.allowed is True
 
     def test_value_free_classes_are_independently_ungateable(self):
-        """gate_deletion=False is honored — the split cuts both ways."""
+        """gate_deletion=False is honored -- the split cuts both ways."""
         gate = AuthorizationGate()
         gate.register_tool(
             "delete_channel",
@@ -244,7 +244,7 @@ class TestTrustedBlockCannotBeBypassed:
             ),
         )
         _tainted_session(gate)
-        # Caller asserts NOTHING — no is_deletion, no is_consequential.
+        # Caller asserts NOTHING -- no is_deletion, no is_consequential.
         r = gate.authorize(
             "delete_channel", user_id="u", role="user",
             parameters={"channel": "#general"},

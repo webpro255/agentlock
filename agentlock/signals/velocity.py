@@ -10,7 +10,7 @@ Signal fires when:
   (topic_escalation)
 - Same tool called 3+ times in under 30 seconds (burst_pattern)
 
-Records both allowed AND denied calls — attackers who blast rapid
+Records both allowed AND denied calls -- attackers who blast rapid
 requests trigger velocity even if individual requests are denied.
 """
 

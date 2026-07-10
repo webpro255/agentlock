@@ -1,4 +1,4 @@
-"""Tests for the MODIFY decision type — parameter and output transformations."""
+"""Tests for the MODIFY decision type -- parameter and output transformations."""
 
 from __future__ import annotations
 

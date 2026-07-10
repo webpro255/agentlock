@@ -16,8 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - New `authorize()` kwargs `is_deletion` and `is_membership_change`. New `LineagePolicyConfig` fields `gate_deletion` and `gate_membership_change`, both defaulting to `True`, so an existing config that only sets `gate_consequential` is unchanged.
 - **Novel lineage (`novel_lineage_enabled`, `novel_lineage_action`)** -- Sibling of parameter lineage, and independent of the `param_lineage_*` flags. Classifies a target token by exact token-set membership as trusted, untrusted, or **novel**: a target the session can account for in neither the authoritative request nor the untrusted context. Checked per target, above the coarse taint gate. Off by default; `novel_lineage_action` is one of `deny`, `step_up`, `log`.
 - **Schema version 1.4 (`schema/agentlock-v1.4.json`)** -- `SCHEMA_VERSION` is now `"1.4"`. `AgentLockPermissions` and `LineagePolicyConfig` are `additionalProperties: false`, so a block carrying `action_class`, `gate_deletion`, `gate_membership_change`, or `novel_lineage_*` does not validate against the published v1.3 schema. The v1.4 document adds them. A v1.3 block still validates against v1.4. `schema/agentlock-v1.3.json` is unchanged.
-- **Decision provenance in the audit record** — every `authorize()` exit path now records the class flags the caller asserted under `AuditRecord.metadata["asserted_classes"]`. Descriptive only: written strictly after the decision, never read back by the gate, and never placed in `PolicyContext.metadata`. The key is omitted entirely when nothing was asserted. It survives `log_level=MINIMAL`, as `trust_ceiling` already does.
-- **`AuthorizationGate.audit_action_classes()`** — on-demand report over every tool with `lineage_policy.enabled`, partitioned `UNDECLARED` / `DECLARED` / `NOT_COVERED`, independent of `gate_consequential` and of risk level. Suggestions come in two tiers: lexical (name + risk) and observed (what callers actually asserted, read back from the audit log). Observed beats lexical. Gating-adding suggestions (`is_deletion`, `is_membership_change`) are paste-ready; a suggestion of `is_value_carrying` is gating-removing and always requires human confirmation — enforced in `ActionClassFinding.__post_init__`, not merely in the formatter. `format_action_class_audit()` renders it. `query()` is called exactly once per report and never from a hot path.
+- **Decision provenance in the audit record** -- every `authorize()` exit path now records the class flags the caller asserted under `AuditRecord.metadata["asserted_classes"]`. Descriptive only: written strictly after the decision, never read back by the gate, and never placed in `PolicyContext.metadata`. The key is omitted entirely when nothing was asserted. It survives `log_level=MINIMAL`, as `trust_ceiling` already does.
+- **`AuthorizationGate.audit_action_classes()`** -- on-demand report over every tool with `lineage_policy.enabled`, partitioned `UNDECLARED` / `DECLARED` / `NOT_COVERED`, independent of `gate_consequential` and of risk level. Suggestions come in two tiers: lexical (name + risk) and observed (what callers actually asserted, read back from the audit log). Observed beats lexical. Gating-adding suggestions (`is_deletion`, `is_membership_change`) are paste-ready; a suggestion of `is_value_carrying` is gating-removing and always requires human confirmation -- enforced in `ActionClassFinding.__post_init__`, not merely in the formatter. `format_action_class_audit()` renders it. `query()` is called exactly once per report and never from a hot path.
 
 ### Changed
 
@@ -29,11 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- **The `register_tool()` undeclared-tool `UserWarning` is gone.** Registering a high/critical-risk tool with `gate_consequential=False` and no `action_class` no longer emits a `UserWarning`. A registration-time warning cannot see how a tool is actually called, so it guessed from name and risk level, fired in every importing application, and could not be acted on with evidence. **Behaviour change for strict callers:** applications running under `-W error::UserWarning` previously saw such a registration *raise*; it now returns normally. This is intended. Applications that relied on the raise as a fail-fast configuration check should call `gate.audit_action_classes()` at startup and assert on the result instead. **No gating decision changed** — the warning was pure side effect, and the disjunct `C ∧ (G ∨ ¬V)` never consulted risk level.
+- **The `register_tool()` undeclared-tool `UserWarning` is gone.** Registering a high/critical-risk tool with `gate_consequential=False` and no `action_class` no longer emits a `UserWarning`. A registration-time warning cannot see how a tool is actually called, so it guessed from name and risk level, fired in every importing application, and could not be acted on with evidence. **Behaviour change for strict callers:** applications running under `-W error::UserWarning` previously saw such a registration *raise*; it now returns normally. This is intended. Applications that relied on the raise as a fail-fast configuration check should call `gate.audit_action_classes()` at startup and assert on the result instead. **No gating decision changed** -- the warning was pure side effect, and the disjunct `C ∧ (G ∨ ¬V)` never consulted risk level.
 
 ### Fixed
 
-- **Schema versions are now compared numerically, not lexicographically.** `permissions.version >= "1.3"` was a string comparison, and `"1.10" >= "1.3"` is `False` — so a permission block declaring schema version `1.10` or later within the `1.x` line would have silently skipped the session write-gate, parameter lineage, **and** novel lineage, all three failing **open**. New `schema.parse_version()` / `schema.version_at_least()` parse into integer tuples and are applied at all six comparison sites (`policy.py` ×4, `gate.py` ×2). An unparseable version now **fails closed** — it enforces the lineage block rather than skipping it. Latent since v1.3; found by the action-class audit during its own development, when the report had to reproduce the gate's coverage rule exactly and the rule turned out to be wrong; never exploitable, because `permissions` is trusted config and no `>=1.10` schema ever existed.
+- **Schema versions are now compared numerically, not lexicographically.** `permissions.version >= "1.3"` was a string comparison, and `"1.10" >= "1.3"` is `False` -- so a permission block declaring schema version `1.10` or later within the `1.x` line would have silently skipped the session write-gate, parameter lineage, **and** novel lineage, all three failing **open**. New `schema.parse_version()` / `schema.version_at_least()` parse into integer tuples and are applied at all six comparison sites (`policy.py` ×4, `gate.py` ×2). An unparseable version now **fails closed** -- it enforces the lineage block rather than skipping it. Latent since v1.3; found by the action-class audit during its own development, when the report had to reproduce the gate's coverage rule exactly and the rule turned out to be wrong; never exploitable, because `permissions` is trusted config and no `>=1.10` schema ever existed.
 
 ## [1.3.0] - 2026-07-06
 
@@ -130,9 +130,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Independent filter pipeline** — Decoupled InjectionFilter and PiiFilter into separate classes on PolicyEngine. Each runs independently with no shared logic or state.
-- **InjectionFilter** — Scans tool call parameters for reconnaissance/enumeration, prompt extraction, social engineering, and command injection patterns. Recursively inspects nested dicts and lists.
-- **PiiFilter** — Checks caller's max_output_classification against tool's output_classification using 7-level classification hierarchy. Independent from injection filtering.
+- **Independent filter pipeline** -- Decoupled InjectionFilter and PiiFilter into separate classes on PolicyEngine. Each runs independently with no shared logic or state.
+- **InjectionFilter** -- Scans tool call parameters for reconnaissance/enumeration, prompt extraction, social engineering, and command injection patterns. Recursively inspects nested dicts and lists.
+- **PiiFilter** -- Checks caller's max_output_classification against tool's output_classification using 7-level classification hierarchy. Independent from injection filtering.
 - 44 new tests (test_filter_pipeline.py)
 
 ### Changed
@@ -149,7 +149,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Gate-level PII classification check** — max_output_classification parameter on authorize() blocks tool execution before data is retrieved when caller clearance is below tool's output classification
+- **Gate-level PII classification check** -- max_output_classification parameter on authorize() blocks tool execution before data is retrieved when caller clearance is below tool's output classification
 - 7-level classification hierarchy: PUBLIC, INTERNAL, CONFIDENTIAL, MAY_CONTAIN_PII, CONTAINS_PII, CONTAINS_PHI, CONTAINS_FINANCIAL
 - 16 new tests (test_pii_defense.py)
 
@@ -165,14 +165,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Context authority model** — `context_policy` block on `AgentLockPermissions` with `source_authorities` mapping context sources (user messages, tool outputs, web content, peer agents, etc.) to authority levels (`authoritative`, `derived`, `untrusted`)
-- **Trust degradation** — `TrustDegradationConfig` with per-session trust that monotonically degrades when untrusted content enters context. Effects: `require_approval`, `elevate_logging`, `restrict_scope`, `deny_writes`. Trust never escalates within a session.
+- **Context authority model** -- `context_policy` block on `AgentLockPermissions` with `source_authorities` mapping context sources (user messages, tool outputs, web content, peer agents, etc.) to authority levels (`authoritative`, `derived`, `untrusted`)
+- **Trust degradation** -- `TrustDegradationConfig` with per-session trust that monotonically degrades when untrusted content enters context. Effects: `require_approval`, `elevate_logging`, `restrict_scope`, `deny_writes`. Trust never escalates within a session.
 - **`allow_cascade_to_untrusted`** flag for security-critical deployments that need maximum restriction after contamination
-- **Memory access control** — `memory_policy` block with `allowed_writers`, `allowed_readers`, `prohibited_content`, `retention` limits, and `require_write_confirmation`
-- **Provenance tracking** — `ContextProvenance` dataclass with source, authority, writer identity, timestamp, content hash, and token binding for every context write
-- **`ContextTracker`** — per-session provenance log and trust state management on the authorization gate
-- **`MemoryGate`** — validates memory read/write operations against `MemoryPolicyConfig` with lazy retention enforcement
-- **`notify_context_write()`** on `AuthorizationGate` — framework integrations report context entries to the gate
+- **Memory access control** -- `memory_policy` block with `allowed_writers`, `allowed_readers`, `prohibited_content`, `retention` limits, and `require_write_confirmation`
+- **Provenance tracking** -- `ContextProvenance` dataclass with source, authority, writer identity, timestamp, content hash, and token binding for every context write
+- **`ContextTracker`** -- per-session provenance log and trust state management on the authorization gate
+- **`MemoryGate`** -- validates memory read/write operations against `MemoryPolicyConfig` with lazy retention enforcement
+- **`notify_context_write()`** on `AuthorizationGate` -- framework integrations report context entries to the gate
 - **`authorize_memory_write()` / `authorize_memory_read()`** on `AuthorizationGate`
 - **New enums**: `ContextSource`, `ContextAuthority`, `DegradationEffect`, `MemoryPersistence`, `MemoryWriter`
 - **New denial reasons**: `TRUST_DEGRADED`, `UNATTRIBUTED_CONTEXT`, `CONTEXT_AUTHORITY_VIOLATION`, `MEMORY_WRITE_DENIED`, `MEMORY_READ_DENIED`, `MEMORY_RETENTION_EXCEEDED`, `MEMORY_PROHIBITED_CONTENT`, `MEMORY_CONFIRMATION_REQUIRED`
@@ -190,7 +190,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Backward Compatibility
 
-- All v1.0 `agentlock` blocks remain valid — new fields are optional with secure defaults
+- All v1.0 `agentlock` blocks remain valid -- new fields are optional with secure defaults
 - When `version` is `"1.0"`, the gate skips all v1.1 checks entirely
 - All 267 original tests continue to pass without modification
 

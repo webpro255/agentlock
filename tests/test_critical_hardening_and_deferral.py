@@ -443,7 +443,7 @@ class TestPromptScanCarryForward:
             ),
         )
 
-        # Turn 2: lookup_order call — scan signal persists in session
+        # Turn 2: lookup_order call -- scan signal persists in session
         result = gate.authorize("lookup_order", user_id="alice", role="admin")
         assert result.decision == DecisionType.DEFER
 

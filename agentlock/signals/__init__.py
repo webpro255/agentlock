@@ -8,7 +8,7 @@ detectors.
 - ``ComboDetector``: detects suspicious tool call combinations
 - ``EchoDetector``: checks LLM responses for attack prompt fragments
 
-The EchoDetector is a framework-side signal — it analyzes LLM text
+The EchoDetector is a framework-side signal -- it analyzes LLM text
 responses, which the gate never sees.  Framework integrations call it
 between turns and feed the resulting signals into the HardeningEngine.
 """

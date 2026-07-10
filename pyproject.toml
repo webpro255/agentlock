@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "agentlock"
 version = "1.4.0"
-description = "Authorization framework for AI agent tool calls. Your AI agent needs a login screen — AgentLock is that login screen."
+description = "Authorization framework for AI agent tool calls. Your AI agent needs a login screen. AgentLock is that login screen."
 readme = "README.md"
 license = "AGPL-3.0-or-later"
 requires-python = ">=3.10"

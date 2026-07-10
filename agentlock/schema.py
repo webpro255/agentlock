@@ -1,4 +1,4 @@
-"""AgentLock permission schema — Pydantic models for tool authorization.
+"""AgentLock permission schema -- Pydantic models for tool authorization.
 
 These models define the ``agentlock`` permissions block that any tool can carry.
 Validation is strict: unknown fields are forbidden, enums are enforced, and
@@ -83,8 +83,8 @@ def version_at_least(version: str, minimum: tuple[int, ...]) -> bool:
     FAILS CLOSED.  An unparseable version returns ``True``, so a malformed
     permission block still runs the lineage gate rather than skipping it.
     The guards this feeds are all of the form
-    ``if policy_enabled and version_at_least(...)`` — enforcement, not
-    exemption — so "unknown version" must mean "enforce", never "skip".
+    ``if policy_enabled and version_at_least(...)`` -- enforcement, not
+    exemption -- so "unknown version" must mean "enforce", never "skip".
     """
     parsed = parse_version(version)
     if parsed is None:
@@ -319,7 +319,7 @@ class LineagePolicyConfig(BaseModel):
     """Governs provenance-lineage gating of tool calls (v1.3).
 
     A tool is gated purely on the *provenance* of what is already in the
-    session's context window — not on the content of its parameters.  If
+    session's context window -- not on the content of its parameters.  If
     untrusted content (authority ``UNTRUSTED``) has entered context, a
     gated action (financial / external / bulk) is blocked.  This is the
     opposite of a content rule: it never inspects the payload, only where
@@ -327,7 +327,7 @@ class LineagePolicyConfig(BaseModel):
 
     When ``require_post_authoritative`` is True, only untrusted content
     that entered *after* the last authoritative (user/system) message
-    taints the action — an untrusted document read before the user's
+    taints the action -- an untrusted document read before the user's
     instruction does not, but one read after it does.
     """
 
@@ -342,7 +342,7 @@ class LineagePolicyConfig(BaseModel):
     # bucket of {delete, reserve, membership change}: ``reserve`` is a
     # value-CARRYING write, whose attacker-chosen target is already covered
     # by parameter/novel lineage, while ``delete`` and membership change are
-    # value-FREE — they admit malice with no attacker-chosen parameter for
+    # value-FREE -- they admit malice with no attacker-chosen parameter for
     # per-value lineage to trace.  Splitting them lets a deployment set
     # ``gate_consequential=False`` (recovering the utility lost to gating
     # every consequential write on any session taint) while keeping the
@@ -354,7 +354,7 @@ class LineagePolicyConfig(BaseModel):
     decision: str = "step_up"  # "step_up" | "defer" | "deny"
     require_post_authoritative: bool = True
 
-    # v1.3 ablation — session-level taint write-gate enforcement. When False,
+    # v1.3 ablation -- session-level taint write-gate enforcement. When False,
     # the call-time "untrusted_lineage" block is NOT enforced (the write is
     # allowed to proceed), but the decision it WOULD have made is still
     # computed and surfaced as a shadow ("session_gate_shadow"), and all
@@ -363,7 +363,7 @@ class LineagePolicyConfig(BaseModel):
     # keeping the instrumentation, for ablation.
     session_write_gate: bool = True
 
-    # v1.3 Feature 2 — parameter lineage. Independent of the write-gating
+    # v1.3 Feature 2 -- parameter lineage. Independent of the write-gating
     # flags above: when enabled, EVERY tool call (reads included) is checked
     # for a parameter value that originated in untrusted context but not in
     # the authoritative user request/config. Targets read-goal attacks that
@@ -372,10 +372,10 @@ class LineagePolicyConfig(BaseModel):
     param_lineage_action: str = "deny"  # "deny" | "step_up" | "log"
     param_lineage_min_len: int = 6      # min length for a plain-string match
 
-    # v1.4 — novel lineage. Sibling of parameter lineage: classifies a target
+    # v1.4 -- novel lineage. Sibling of parameter lineage: classifies a target
     # token as trusted / untrusted / NOVEL by EXACT token-set membership. A
     # NOVEL token traces to neither the authoritative nor the untrusted
-    # context — a target the session cannot account for. Independent of the
+    # context -- a target the session cannot account for. Independent of the
     # param_lineage_* flags; off by default.
     novel_lineage_enabled: bool = False
     novel_lineage_action: str = "step_up"  # "deny" | "step_up" | "log"
@@ -393,7 +393,7 @@ class ActionClassConfig(BaseModel):
     be turned off independently of ``gate_deletion`` /
     ``gate_membership_change``, a caller that simply *omits* ``is_deletion``
     would slip a deletion past the taint gate.  The action class therefore
-    lives here — registered with the tool, on the trusted side — rather than
+    lives here -- registered with the tool, on the trusted side -- rather than
     only in the per-call, caller-asserted kwarg.
 
     Resolution is **monotone OR**: the effective class is
@@ -404,14 +404,14 @@ class ActionClassConfig(BaseModel):
     block to switch a class *off*; ``gate_*`` on ``LineagePolicyConfig`` is
     the knob for that, and it lives in trusted config too.
 
-    THE POLARITY RULE — the invariant future contributors must not break:
+    THE POLARITY RULE -- the invariant future contributors must not break:
 
     * **Gating-ADDING** signals (``is_deletion``, ``is_membership_change``)
       may originate from the trusted block OR the caller's ``authorize()``
       kwarg, and combine by OR.  A wrong or missing one can only under-gate
       the tool relative to a correct one, and the caller can always add.
     * **Gating-REMOVING** signals (``is_value_carrying``) may originate
-      **ONLY** from the trusted block — never a caller kwarg — and may weaken
+      **ONLY** from the trusted block -- never a caller kwarg -- and may weaken
       **ONLY** the residual ``is_consequential`` disjunct, never a named
       class.  Admitting a removing signal from the caller, or letting one
       reach the deletion / membership terms, reintroduces exactly the bypass
@@ -421,7 +421,7 @@ class ActionClassConfig(BaseModel):
 
     ``is_value_carrying`` is a positive, trusted, auditable claim that this
     tool's consequential effect is fully determined by an attacker-choosable
-    parameter value — so parameter/novel lineage already covers it and
+    parameter value -- so parameter/novel lineage already covers it and
     session taint need not.  It exists because ``is_consequential`` is not a
     class but the *residual bucket* ("consequential, but none of the named
     classes"), which makes ``gate_consequential=False`` un-gate an open-ended
@@ -446,7 +446,7 @@ class ActionClassConfig(BaseModel):
     def _value_carrying_excludes_value_free(self) -> ActionClassConfig:
         """A value-free class cannot also be value-carrying.
 
-        Catches the mislabel at ``register_tool()`` — a startup
+        Catches the mislabel at ``register_tool()`` -- a startup
         ``ValidationError`` instead of a runtime fail-open.
         """
         if self.is_value_carrying and (
@@ -508,7 +508,7 @@ class AgentLockPermissions(BaseModel):
     def _deny_by_default(self) -> AgentLockPermissions:
         """Ensure deny-by-default: no roles = no access (unless risk is none)."""
         if not self.allowed_roles and self.risk_level != RiskLevel.NONE:
-            # This is valid — it means "denied to everyone" which is the
+            # This is valid -- it means "denied to everyone" which is the
             # secure default.  We leave it as-is; the gate will enforce.
             pass
         return self

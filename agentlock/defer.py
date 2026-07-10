@@ -1,4 +1,4 @@
-"""DEFER decision type — suspend authorization pending resolution.
+"""DEFER decision type -- suspend authorization pending resolution.
 
 When the gate cannot confidently allow or deny a tool call, DEFER
 suspends execution.  The deferral times out to DENY by default.
@@ -54,7 +54,7 @@ class DeferralRecord:
     # v1.4 (defer-policy): the caller-asserted action classes, captured at
     # queue time so the commit-time re-decision can evaluate the same gating
     # disjunct the call-time path did.  ``None`` means the caller recorded
-    # nothing, which the gate treats as FAIL-CLOSED (gated on taint) — the
+    # nothing, which the gate treats as FAIL-CLOSED (gated on taint) -- the
     # exact pre-v1.4 behavior.
     action_flags: ActionFlags | None = None
 
@@ -83,7 +83,7 @@ class DeferralManager:
         self._sibling_window = sibling_window_seconds
         # Tracks (session_id -> timestamp) of the most recent deferral
         self._session_last_deferral: dict[str, float] = {}
-        # v1.3 Feature 1 — per-session queue of consequential actions deferred
+        # v1.3 Feature 1 -- per-session queue of consequential actions deferred
         # for end-of-turn commit-or-deny against the complete taint state.
         self._commit_queue: dict[str, list[DeferralRecord]] = {}
 
@@ -190,7 +190,7 @@ class DeferralManager:
         record = DeferralRecord(
             tool_name=tool_name,
             reason=(
-                f"Session trust at '{trust_ceiling}' — too low for "
+                f"Session trust at '{trust_ceiling}' -- too low for "
                 f"{risk_level} risk tool '{tool_name}'. "
                 f"Deferring pending human review."
             ),

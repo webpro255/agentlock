@@ -272,7 +272,7 @@ class TestStepUpInGate:
         from agentlock import DecisionType
         gate = self._make_gate()
         gate.create_session(user_id="alice", role="admin")
-        # Call PII tools twice — third should trigger step_up
+        # Call PII tools twice -- third should trigger step_up
         gate.authorize("query_database", user_id="alice", role="admin")
         gate.authorize("query_database", user_id="alice", role="admin")
         result = gate.authorize("query_database", user_id="alice", role="admin")
@@ -321,4 +321,4 @@ class TestStepUpInGate:
             HardeningSignal(signal_type="trust_degraded", weight=4),
         )
         result = gate.authorize("lookup_order", user_id="alice", role="admin")
-        assert result.allowed  # medium risk — no step_up
+        assert result.allowed  # medium risk -- no step_up

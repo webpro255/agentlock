@@ -1,4 +1,4 @@
-"""Tests for agentlock.schema — v1.1 models (context policy, memory policy)."""
+"""Tests for agentlock.schema -- v1.1 models (context policy, memory policy)."""
 
 from __future__ import annotations
 

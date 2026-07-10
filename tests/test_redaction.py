@@ -1,4 +1,4 @@
-"""Tests for agentlock.redaction — RedactionEngine."""
+"""Tests for agentlock.redaction -- RedactionEngine."""
 
 from __future__ import annotations
 

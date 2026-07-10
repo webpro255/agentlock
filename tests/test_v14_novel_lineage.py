@@ -1,4 +1,4 @@
-"""v1.4 — novel-lineage gate.
+"""v1.4 -- novel-lineage gate.
 
 Sibling of parameter lineage.  A target token is NOVEL when it traces to
 NEITHER the authoritative context (the user's own request) NOR the untrusted
@@ -83,7 +83,7 @@ def _send(gate, recipient: str):
 
 
 # ---------------------------------------------------------------------------
-# Flag OFF — v1.3 baseline is untouched
+# Flag OFF -- v1.3 baseline is untouched
 # ---------------------------------------------------------------------------
 class TestFlagOff:
     def test_from_nowhere_recipient_allowed_when_flag_off(self):
@@ -119,7 +119,7 @@ class TestFlagOff:
 
 
 # ---------------------------------------------------------------------------
-# Flag ON — classification in a CLEAN session (no untrusted content at all)
+# Flag ON -- classification in a CLEAN session (no untrusted content at all)
 # ---------------------------------------------------------------------------
 class TestNovelInCleanSession:
     def test_from_nowhere_recipient_is_novel_and_denied(self):
@@ -161,7 +161,7 @@ class TestNovelInCleanSession:
 
 
 # ---------------------------------------------------------------------------
-# Exact-token membership — look-alikes must not launder
+# Exact-token membership -- look-alikes must not launder
 # ---------------------------------------------------------------------------
 class TestExactTokenMembership:
     def test_lookalike_domain_reads_novel_not_trusted(self):
@@ -224,7 +224,7 @@ class TestNovelDoesNotStealUntrusted:
 
 
 # ---------------------------------------------------------------------------
-# Precedence — novel survives session-wide taint
+# Precedence -- novel survives session-wide taint
 # ---------------------------------------------------------------------------
 class TestNovelSurvivesSessionTaint:
     def test_novel_wins_over_coarse_session_gate(self):

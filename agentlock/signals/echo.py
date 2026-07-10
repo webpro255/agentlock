@@ -3,7 +3,7 @@
 Detects when the LLM response contains fragments of attack prompts,
 tool name echoing, injection phrase echoing, or credential-format
 strings.  If the model is being manipulated, echo detection catches
-it early — before the tool call comes.
+it early -- before the tool call comes.
 
 This is a **framework-side signal**.  The gate never sees LLM text
 responses.  Framework integrations call the EchoDetector between turns
@@ -136,7 +136,7 @@ class EchoDetector:
     """Checks LLM responses for attack prompt fragments and echoing.
 
     This detector runs on the **framework side**, not inside the gate.
-    The gate never sees LLM text responses — only tool call parameters.
+    The gate never sees LLM text responses -- only tool call parameters.
 
     Usage::
 

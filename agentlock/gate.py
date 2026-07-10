@@ -1,4 +1,4 @@
-"""Authorization Gate — Layer 2 of the AgentLock enforcement architecture.
+"""Authorization Gate -- Layer 2 of the AgentLock enforcement architecture.
 
 The gate sits between the agent (Layer 1) and tool execution (Layer 3).
 It validates permissions, enforces rate limits, manages sessions, issues
@@ -120,7 +120,7 @@ class AuthResult:
     stepup_request_id: str = ""
     receipt: SignedReceipt | None = None
     # v1.3 ablation: when the session write-gate is disabled, what it WOULD
-    # have blocked ("DENY") — recorded even though the call was allowed.
+    # have blocked ("DENY") -- recorded even though the call was allowed.
     session_gate_shadow: str = ""
 
     def raise_if_denied(self) -> None:
@@ -144,7 +144,7 @@ _ASSERTED_CLASS_FLAGS: tuple[str, ...] = (
     # ``is_value_carrying`` is DELIBERATELY ABSENT and must stay absent: it is
     # gating-REMOVING, so it is declarable only in the trusted permission block
     # and has no ``authorize()`` kwarg to record.  Adding it here would imply a
-    # caller can assert it — the exact bypass the polarity rule closes.  See
+    # caller can assert it -- the exact bypass the polarity rule closes.  See
     # ActionClassConfig's "THE POLARITY RULE" in schema.py.
     "is_bulk",
     "is_external",
@@ -210,7 +210,7 @@ class AuthorizationGate:
         self._memory_gate = MemoryGate(store=memory_store)
         self._token_ttl = token_ttl
         self._session_duration = session_duration
-        # Adaptive prompt hardening (off by default — pass HardeningConfig to enable)
+        # Adaptive prompt hardening (off by default -- pass HardeningConfig to enable)
         self._hardening_engine = HardeningEngine(config=hardening_config)
         self._velocity_detector = VelocityDetector(config=velocity_config)
         self._combo_detector = ComboDetector(config=combo_config)
@@ -259,7 +259,7 @@ class AuthorizationGate:
         # lineage_policy.enabled, partitions declared from undeclared, and backs
         # its suggestions with what callers were actually observed asserting.
         #
-        # Removing the warning changed no gating behaviour whatsoever — see the
+        # Removing the warning changed no gating behaviour whatsoever -- see the
         # guard in tests/test_v14_failclosed.py.
 
         # Pre-build redaction engine if data policy has prohibited types
@@ -289,7 +289,7 @@ class AuthorizationGate:
         reads the tool registry and the audit log, mutates no gate state, and
         returns immutable findings.
 
-        Reports independently of ``gate_consequential`` — a tool is worth
+        Reports independently of ``gate_consequential`` -- a tool is worth
         naming whether or not this particular deployment has un-gated the
         residual bucket, because the declaration outlives the deployment flag.
 
@@ -306,7 +306,7 @@ class AuthorizationGate:
         # Observation readback probe.  The gate knows how many decisions it
         # has logged; if the log reads back empty despite that, observation is
         # UNAVAILABLE, which is categorically different from a tool simply
-        # having no assertions.  Never conflate the two — one is a broken
+        # having no assertions.  Never conflate the two -- one is a broken
         # backend, the other is evidence.
         try:
             records = self._audit.query(limit=observation_limit)
@@ -478,7 +478,7 @@ class AuthorizationGate:
         # Decision provenance for the on-demand action-class audit.  Computed
         # here only so every exit path can attach it; it is written into the
         # audit record *after* the decision and never read back by the gate.
-        # A fresh dict per record — audit backends may retain the reference.
+        # A fresh dict per record -- audit backends may retain the reference.
         _asserted = _asserted_classes(
             is_bulk=is_bulk,
             is_external=is_external,
@@ -561,7 +561,7 @@ class AuthorizationGate:
         if max_output_classification is not None:
             resolved_classification = DataClassification(max_output_classification)
 
-        # Build request metadata — include parameters for injection filter
+        # Build request metadata -- include parameters for injection filter
         request_metadata = dict(metadata or {})
         if parameters:
             request_metadata["parameters"] = parameters
@@ -573,7 +573,7 @@ class AuthorizationGate:
             request_metadata["lineage"] = self._context_tracker.lineage_summary(
                 resolved_session_id
             )
-            # v1.3 Feature 2 — parameter lineage. Gate-owned read: does any
+            # v1.3 Feature 2 -- parameter lineage. Gate-owned read: does any
             # parameter value trace to untrusted context but not the user's
             # authoritative request?  Attached for the policy engine.
             _lp = permissions.lineage_policy
@@ -586,7 +586,7 @@ class AuthorizationGate:
                 if _match is not None:
                     request_metadata["param_lineage"] = _match
 
-            # v1.4 — novel lineage. Gate-owned read: does any parameter token
+            # v1.4 -- novel lineage. Gate-owned read: does any parameter token
             # trace to NEITHER the authoritative nor the untrusted context?
             # Independent of param_lineage_enabled; exact-token membership.
             if _lp is not None and _lp.novel_lineage_enabled:
@@ -805,7 +805,7 @@ class AuthorizationGate:
                         details=(
                             f"Blocked {tool_name} "
                             f"(risk={permissions.risk_level.value}) "
-                            f"at critical hardening — enforce_all_at_critical"
+                            f"at critical hardening -- enforce_all_at_critical"
                         ),
                         source="gate_enforcement",
                     ),
@@ -938,7 +938,7 @@ class AuthorizationGate:
                     )
 
             # Sibling deferral: if another tool was deferred in this turn
-            # (within the sibling window), defer this tool too — even if
+            # (within the sibling window), defer this tool too -- even if
             # it has no defer_policy configured.
             if hardening_session_id:
                 sibling = self._deferral_manager.check_sibling_deferral(
@@ -983,7 +983,7 @@ class AuthorizationGate:
                     )
 
             # Prompt scan carry-forward: if a prompt_scan signal fired in
-            # this session, defer ANY tool call — even tools without a
+            # this session, defer ANY tool call -- even tools without a
             # defer_policy.  This prevents attackers from falling through
             # to lower-friction tools (e.g. lookup_order) after a scan
             # fires on the same or previous turn.
@@ -1342,7 +1342,7 @@ class AuthorizationGate:
         params = parameters or {}
         result = func(**params)
 
-        # Apply MODIFY output transformation (v1.2) — runs before redaction
+        # Apply MODIFY output transformation (v1.2) -- runs before redaction
         if modify_output_fn and isinstance(result, str):
             modified = modify_output_fn(result)
             if modified != result:
@@ -1651,7 +1651,7 @@ class AuthorizationGate:
         commit (even if it arrived after the call) AND the action is gated by
         this tool's own policy, else COMMIT, in order.
 
-        v1.4 (defer-policy): the taint read is unchanged — it is still the
+        v1.4 (defer-policy): the taint read is unchanged -- it is still the
         complete end-of-turn state.  What is new is that each queued record is
         re-decided against ITS OWN permission block through
         :func:`lineage_gated_action`, the same predicate ``authorize()`` uses.
@@ -1663,7 +1663,7 @@ class AuthorizationGate:
         Fail-closed at every unknown.  A record is gated (i.e. denied on
         taint) when:
 
-        * the tool is no longer in the registry at commit time — it cannot be
+        * the tool is no longer in the registry at commit time -- it cannot be
           re-decided, so it is not committed;
         * the tool has no active lineage policy;
         * the record carries no ``action_flags`` (queued without them).

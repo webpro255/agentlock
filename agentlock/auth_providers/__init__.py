@@ -1,7 +1,7 @@
 """Pluggable authentication provider backends.
 
-AgentLock does not perform authentication itself — it delegates to
-external identity providers.  These adapters standardize the interface.
+AgentLock does not perform authentication itself. It delegates to external
+identity providers, and these adapters standardize the interface.
 
 Authentication MUST occur out-of-band from the agent conversation.
 """

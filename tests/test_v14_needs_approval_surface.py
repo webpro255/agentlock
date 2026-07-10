@@ -1,4 +1,4 @@
-"""v1.4 bug fix — needs_approval must survive the gate boundary.
+"""v1.4 bug fix -- needs_approval must survive the gate boundary.
 
 PolicyDecision.needs_approval is set by the step-up paths in policy.py, but the
 terminal denied-branch in gate.py used to construct AuthResult without reading

@@ -1,4 +1,4 @@
-"""Tests for v1.1 gate functionality — context tracking, trust degradation, memory gate."""
+"""Tests for v1.1 gate functionality -- context tracking, trust degradation, memory gate."""
 
 from __future__ import annotations
 
@@ -173,7 +173,7 @@ class TestV10SkipsDegradation:
                 (ContextSource.WEB_CONTENT, DegradationEffect.REQUIRE_APPROVAL),
             ),
         ))
-        # Register a v1.0 tool — should NOT be affected by degradation
+        # Register a v1.0 tool -- should NOT be affected by degradation
         gate.register_tool("legacy_tool", AgentLockPermissions(
             version="1.0",
             risk_level=RiskLevel.MEDIUM,
@@ -217,7 +217,7 @@ class TestElevateLoggingEffect:
             writer_id="fetcher",
         )
 
-        # Authorize — should still be allowed (elevate_logging doesn't deny)
+        # Authorize -- should still be allowed (elevate_logging doesn't deny)
         result = gate.authorize("tool_a", user_id="alice", role="user")
         assert result.allowed is True
 
@@ -250,7 +250,7 @@ class TestRestrictScopeEffect:
             "alice", "user", data_boundary=DataBoundary.TEAM,
         )
 
-        # Before degradation — TEAM boundary works
+        # Before degradation -- TEAM boundary works
         result_before = gate.authorize("team_tool", user_id="alice", role="user")
         assert result_before.allowed is True
 
@@ -262,7 +262,7 @@ class TestRestrictScopeEffect:
             writer_id="fetcher",
         )
 
-        # After degradation — boundary restricted to AUTHENTICATED_USER_ONLY
+        # After degradation -- boundary restricted to AUTHENTICATED_USER_ONLY
         # The tool scope allows TEAM but restrict_scope forces the request boundary
         # down to AUTHENTICATED_USER_ONLY, which is within scope → still allowed.
         result_after = gate.authorize("team_tool", user_id="alice", role="user")

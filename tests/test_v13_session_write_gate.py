@@ -1,4 +1,4 @@
-"""v1.3 ablation test — AGENTLOCK_SESSION_WRITE_GATE (session_write_gate flag).
+"""v1.3 ablation test -- AGENTLOCK_SESSION_WRITE_GATE (session_write_gate flag).
 
 When the session write-gate is OFF, a tainted consequential write must EXECUTE
 (allowed) but be shadow-logged (AuthResult.session_gate_shadow == "DENY");

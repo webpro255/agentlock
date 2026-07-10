@@ -1,4 +1,4 @@
-"""Tests for agentlock.rate_limit — RateLimiter."""
+"""Tests for agentlock.rate_limit -- RateLimiter."""
 
 from __future__ import annotations
 

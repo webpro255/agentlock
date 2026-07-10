@@ -248,14 +248,14 @@ class TestHardeningEngine:
         engine.record_signal("s1", HardeningSignal(signal_type="rapid_calls", weight=2))
         engine.record_signal("s1", HardeningSignal(signal_type="suspicious_combo", weight=4))
         score_after_first = engine.get_session_risk("s1")
-        # Add another suspicious_combo — compound should NOT fire again
+        # Add another suspicious_combo -- compound should NOT fire again
         engine.record_signal("s1", HardeningSignal(signal_type="suspicious_combo", weight=4))
         assert engine.get_session_risk("s1") == score_after_first + 4
 
     def test_compound_does_not_fire_without_all_required(self):
         engine = HardeningEngine()
         engine.record_signal("s1", HardeningSignal(signal_type="rapid_calls", weight=2))
-        # Only rapid_calls, no suspicious_combo — compound should not fire
+        # Only rapid_calls, no suspicious_combo -- compound should not fire
         assert engine.get_session_risk("s1") == 2.0
 
 
@@ -300,7 +300,7 @@ class TestTargetedInstructions:
         engine.record_signal("s1", HardeningSignal(signal_type="unknown_signal_xyz", weight=5))
         d = engine.evaluate("s1")
         assert d.active
-        # Unknown signal has no targeted instructions — falls back to generic
+        # Unknown signal has no targeted instructions -- falls back to generic
         assert len(d.instructions) > 0
 
     def test_multiple_signals_combine_instructions(self):
@@ -323,7 +323,7 @@ class TestTargetedInstructions:
 
     def test_no_duplicate_instructions(self):
         engine = HardeningEngine()
-        # Same signal type twice — instructions should not duplicate
+        # Same signal type twice -- instructions should not duplicate
         engine.record_signal("s1", HardeningSignal(signal_type="injection_blocked", weight=3))
         engine.record_signal("s1", HardeningSignal(signal_type="injection_blocked", weight=3))
         d = engine.evaluate("s1")
@@ -348,7 +348,7 @@ class TestHardeningGateIntegration:
         gate.create_session(user_id="alice", role="admin")
 
         result = gate.authorize("send_email", user_id="alice", role="admin")
-        # No signals yet — directive should be inactive or None
+        # No signals yet -- directive should be inactive or None
         if result.hardening:
             assert not result.hardening.active
 
@@ -585,7 +585,7 @@ class TestGateEnforcement:
         assert gate.hardening_engine.get_session_risk(session.session_id) == 7
 
         result = gate.authorize("send_email", user_id="alice", role="admin")
-        assert result.allowed  # elevated but not critical — no enforcement
+        assert result.allowed  # elevated but not critical -- no enforcement
 
     def test_no_enforcement_when_disabled(self):
         gate = self._build_gate(enforce=False)

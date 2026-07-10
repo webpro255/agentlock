@@ -200,7 +200,7 @@ class TestCombinedDefense:
         )
         assert not result.allowed
         assert result.denial["reason"] == DenialReason.DATA_POLICY_VIOLATION.value
-        # The tool function never runs — no PII was ever fetched
+        # The tool function never runs -- no PII was ever fetched
 
     def test_high_clearance_allowed_but_output_still_redacted(self):
         """An admin with PII clearance gets through gate, but output is
@@ -231,7 +231,7 @@ class TestCombinedDefense:
         gate = AuthorizationGate()
         gate.register_tool("query_customers", _make_pii_tool_perms())
 
-        # Admin with clearance — passes gate, gets redacted output
+        # Admin with clearance -- passes gate, gets redacted output
         output = gate.call(
             "query_customers",
             _db_query,

@@ -218,7 +218,7 @@ class TestDeferInGate:
         gate = self._make_gate()
         gate.create_session(user_id="alice", role="admin")
         result = gate.authorize("lookup_order", user_id="alice", role="admin")
-        assert result.allowed  # medium risk — first_call_high_risk doesn't fire
+        assert result.allowed  # medium risk -- first_call_high_risk doesn't fire
 
     def test_second_call_not_deferred(self):
         gate = self._make_gate()

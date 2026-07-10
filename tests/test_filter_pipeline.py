@@ -267,7 +267,7 @@ class TestFilterIndependence:
         ctx = RequestContext(
             user_id="alice",
             role="admin",
-            # High clearance — PII filter would pass
+            # High clearance -- PII filter would pass
             max_output_classification=DataClassification.CONTAINS_FINANCIAL,
             # But parameters contain injection
             metadata={"parameters": {"query": "SHOW TABLES"}},
@@ -366,7 +366,7 @@ class TestTrustDegradationIndependence:
         ctx = RequestContext(
             user_id="alice",
             role="analyst",
-            # No max_output_classification — PII filter skips
+            # No max_output_classification -- PII filter skips
             context_state=self._make_degraded_state(),
         )
         decision = engine.evaluate(perms, ctx)
@@ -430,7 +430,7 @@ class TestTrustDegradationIndependence:
 
 
 # ---------------------------------------------------------------------------
-# Gate integration tests — full pipeline
+# Gate integration tests -- full pipeline
 # ---------------------------------------------------------------------------
 
 
@@ -576,7 +576,7 @@ class TestGateFilterPipeline:
             writer_id="memory_system",
         )
 
-        # Action blocked by trust degradation — not by PII filter
+        # Action blocked by trust degradation -- not by PII filter
         result = gate.authorize(
             "execute_action",
             user_id="alice",
@@ -606,7 +606,7 @@ class TestGateFilterPipeline:
             writer_id="web_tool",
         )
 
-        # Request with injection in parameters — injection filter fires first
+        # Request with injection in parameters -- injection filter fires first
         result = gate.authorize(
             "query_db",
             user_id="alice",

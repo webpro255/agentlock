@@ -1,4 +1,4 @@
-"""Memory gate — governs what agents can persist to and read from memory.
+"""Memory gate -- governs what agents can persist to and read from memory.
 
 Memory operations are gate-mediated actions parallel to tool execution.
 Every write is checked against the tool's ``memory_policy`` for allowed
@@ -50,7 +50,7 @@ class MemoryEntry:
     def is_expired(self) -> bool:
         """Check if the entry has exceeded its max_age.
 
-        Note: max_age is not stored on the entry — it's checked against
+        Note: max_age is not stored on the entry -- it's checked against
         the policy at read time.
         """
         return False  # Expiry checked by MemoryGate at read time
@@ -219,7 +219,7 @@ class MemoryGate:
                 suggestion="Approve via the configured confirmation channel.",
             )
 
-        # All checks passed — create and persist entry
+        # All checks passed -- create and persist entry
         entry = MemoryEntry(
             user_id=user_id,
             tool_name=tool_name,

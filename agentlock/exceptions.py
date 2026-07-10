@@ -46,7 +46,7 @@ class DeniedError(AgentLockError):
         parts = [f"denied: {self.reason}"]
         if self.detail:
             parts.append(self.detail)
-        return " — ".join(parts)
+        return " -- ".join(parts)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to the AgentLock denial response format."""
@@ -168,7 +168,7 @@ class MemoryConfirmationRequiredError(DeniedError):
 
 
 class DeferredError(AgentLockError):
-    """Tool call was deferred — suspended pending resolution.
+    """Tool call was deferred -- suspended pending resolution.
 
     Attributes:
         deferral_id: Identifier for the deferred decision.
@@ -218,7 +218,7 @@ class StepUpRequiredError(AgentLockError):
 class ModifyAppliedError(AgentLockError):
     """Tool output was modified by a MODIFY policy.
 
-    This is informational, not an error — raised only when callers
+    This is informational, not an error -- raised only when callers
     need to detect that modification occurred.
     """
 

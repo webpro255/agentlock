@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-AI agents are being deployed with direct access to tools that can read databases, send emails, execute financial transactions, and modify production systems. Yet these tools have no standardized permission model. Every major agent framework LangChain, CrewAI, AutoGen, and others treats tool calls as trusted function invocations with no identity verification, scope constraints, or access control.
+AI agents are being deployed with direct access to tools that can read databases, send emails, execute financial transactions, and modify production systems. Yet these tools have no standardized permission model. Every major agent framework (LangChain, CrewAI, AutoGen, and others) treats tool calls as trusted function invocations with no identity verification, scope constraints, or access control.
 
 AgentLock defines an open standard for authorization in AI agent systems. It introduces a permissions schema that any tool can implement, any agent framework can enforce, and any security team can audit.
 
@@ -12,7 +12,7 @@ This specification is informed by empirical research: 222 multi-turn adversarial
 
 1. **Deny by default.** No permissions defined = denied. Always.
 2. **Tool-level enforcement.** Each tool enforces its own permissions.
-3. **Identity-bound access.** Every call associated with verified identity. Agent cannot assert identity — must be verified out-of-band.
+3. **Identity-bound access.** Every call associated with verified identity. Agent cannot assert identity -- must be verified out-of-band.
 4. **Least privilege.** Minimum access for the specific operation.
 5. **Framework-agnostic.** Independent of any framework, LLM, or language.
 6. **Auditable.** Every call generates an audit record.
@@ -32,8 +32,9 @@ This specification is informed by empirical research: 222 multi-turn adversarial
 ### Authentication
 
 - `requires_auth` (boolean): Must be authenticated before tool executes.
-- `auth_methods` (array): Acceptable mechanisms — `oauth2`, `magic_link`, `mfa`, `api_key`.
+- `auth_methods` (array): Acceptable mechanisms -- `oauth2`, `magic_link`, `mfa`, `api_key`.
 - **CRITICAL:** Authentication MUST occur out-of-band from agent conversation. Agent never sees, handles, or stores credentials.
+- The out-of-band flow itself is not AgentLock's job. `agentlock.AuthProvider` is the protocol an implementation satisfies (`initiate_auth()` starts the flow, `verify()` returns the confirmed identity or `None`), and `agentlock.StaticAuthProvider` is a development-only stub that maps user IDs to roles directly.
 
 ### Authorization
 
@@ -72,7 +73,7 @@ This specification is informed by empirical research: 222 multi-turn adversarial
 
 - `required`: Whether every invocation needs approval.
 - `threshold`: `always`, `bulk_operations`, `external_communication`, `financial_above_limit`, `first_invocation_per_session`
-- `channel`: `push_notification`, `email`, `sms`, `in_app` — must be out-of-band.
+- `channel`: `push_notification`, `email`, `sms`, `in_app` -- must be out-of-band.
 
 ## Enforcement Architecture
 

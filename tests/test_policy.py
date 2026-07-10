@@ -1,4 +1,4 @@
-"""Tests for agentlock.policy — PolicyEngine."""
+"""Tests for agentlock.policy -- PolicyEngine."""
 
 from __future__ import annotations
 

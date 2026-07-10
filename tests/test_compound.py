@@ -95,7 +95,7 @@ class TestWeightsAddUp:
         engine.record_signal("s1", HardeningSignal(signal_type="rapid_calls", weight=2))
         engine.record_signal("s1", HardeningSignal(signal_type="echo_detected", weight=3))
         # 3 + 2 + 3 + probing_attack(3) = 11
-        # Wait — probing_attack requires echo_detected + injection_blocked, which are both present
+        # Wait -- probing_attack requires echo_detected + injection_blocked, which are both present
         assert engine.get_session_risk("s1") == 11.0
 
     def test_severity_escalation_with_accumulation(self):

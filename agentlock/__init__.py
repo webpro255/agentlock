@@ -1,4 +1,4 @@
-"""AgentLock — Authorization framework for AI agent tool calls.
+"""AgentLock -- Authorization framework for AI agent tool calls.
 
 Your AI agent needs a login screen. AgentLock is that login screen.
 
@@ -46,6 +46,7 @@ from agentlock.action_class_audit import (
     format_action_class_audit,
 )
 from agentlock.audit import AuditLogger, AuditRecord, FileAuditBackend, InMemoryAuditBackend
+from agentlock.auth_providers import AuthProvider, StaticAuthProvider
 from agentlock.chain import GENESIS_HASH, ChainedContextEntry, ContextChain
 from agentlock.context import ContextProvenance, ContextState, ContextTracker
 from agentlock.decorators import agentlock
@@ -158,6 +159,9 @@ __all__ = [
     "AgentLockPermissions",
     "ToolDefinition",
     "agentlock",
+    # Authentication (out-of-band; the gate authorizes, it does not authenticate)
+    "AuthProvider",
+    "StaticAuthProvider",
     # Schema components
     "ScopeConfig",
     "RateLimitConfig",

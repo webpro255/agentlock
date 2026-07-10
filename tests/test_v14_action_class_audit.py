@@ -1,4 +1,4 @@
-"""v1.4 §10 action-class audit — decision provenance, recorded not enforced.
+"""v1.4 §10 action-class audit -- decision provenance, recorded not enforced.
 
 The register-time hazard warning is gone.  In its place: the gate *records*
 what each caller asserted, and an operator asks for the report on demand.
@@ -9,7 +9,7 @@ they are decision INPUTS.  They travel to ``AuditRecord.metadata`` as
 ``asserted_classes``, where they are decision OBSERVATIONS, written strictly
 after the fact.  These two paths must never join.  ``PolicyEngine`` reads
 ``context.metadata`` for ``param_lineage`` / ``novel_lineage`` / ``lineage``,
-and ``InjectionFilter`` scans that dict's values as attacker-controlled text —
+and ``InjectionFilter`` scans that dict's values as attacker-controlled text --
 so a leak of observation data into ``request_metadata`` would not merely be
 untidy, it would feed the scanner and the lineage lookups with the gate's own
 bookkeeping.  ``TestObservationIsolation`` is the test that holds that line.
@@ -101,7 +101,7 @@ def _records(gate):
 
 
 # ---------------------------------------------------------------------------
-# Phase 1 — the gate records what the caller asserted.
+# Phase 1 -- the gate records what the caller asserted.
 # ---------------------------------------------------------------------------
 
 
@@ -157,7 +157,7 @@ class TestAssertedClassesRecorded:
         """An unregistered tool called with class flags is worth logging.
 
         This path fires before ``permissions`` exists, so there is no tool
-        declaration to compare against — but the caller's assertion is fully
+        declaration to compare against -- but the caller's assertion is fully
         available and is exactly the kind of event an operator wants to see.
         """
         gate = AuthorizationGate()
@@ -185,7 +185,7 @@ class TestAssertedClassesRecorded:
 
 
 # ---------------------------------------------------------------------------
-# RULING (a) — asserted_classes survives MINIMAL, matching trust_ceiling.
+# RULING (a) -- asserted_classes survives MINIMAL, matching trust_ceiling.
 # ---------------------------------------------------------------------------
 
 
@@ -209,7 +209,7 @@ class TestSurvivesMinimalLogLevel:
 
 
 # ---------------------------------------------------------------------------
-# HARD CONSTRAINT — the real isolation boundary.
+# HARD CONSTRAINT -- the real isolation boundary.
 #
 # policy.py reads context.metadata (param_lineage / novel_lineage / lineage)
 # and InjectionFilter scans its values as text. Observation data must never
@@ -224,7 +224,7 @@ class TestObservationIsolation:
         real = gate._policy.evaluate
 
         def spy(permissions, context):
-            # Snapshot at call time — policy.py mutates context.metadata
+            # Snapshot at call time -- policy.py mutates context.metadata
             # (session_gate_shadow) during evaluation.
             seen.append(dict(context.metadata))
             return real(permissions, context)
@@ -247,7 +247,7 @@ class TestObservationIsolation:
             assert "asserted_classes" not in meta
 
     def test_no_flag_name_leaks_anywhere_into_policy_metadata(self):
-        """Not just the key — the observation values must not appear either.
+        """Not just the key -- the observation values must not appear either.
 
         InjectionFilter walks nested values in this dict as text.  A leak at
         any depth would feed the scanner the gate's own bookkeeping.
@@ -311,7 +311,7 @@ class TestObservationIsolation:
 
 
 # ---------------------------------------------------------------------------
-# Phase 3 — the audit report. Pure data over a snapshot; on demand only.
+# Phase 3 -- the audit report. Pure data over a snapshot; on demand only.
 # ---------------------------------------------------------------------------
 
 
@@ -455,7 +455,7 @@ class TestPartition:
         """The deliberately un-gated case. Accurate status, honest rationale.
 
         is_value_carrying weakens ONLY the residual disjunct C ∧ (G ∨ ¬V), so
-        with G off the session write-gate truly cannot block it — NOT_COVERED
+        with G off the session write-gate truly cannot block it -- NOT_COVERED
         is the truthful status. The rationale must say this is intended, or
         the report cries wolf on a correct configuration.
         """
@@ -690,7 +690,7 @@ class TestFormatting:
 
 
 # ---------------------------------------------------------------------------
-# Phase 4 — suggestions, two tiers. Evidence for a human, never gating input.
+# Phase 4 -- suggestions, two tiers. Evidence for a human, never gating input.
 # ---------------------------------------------------------------------------
 
 
@@ -809,7 +809,7 @@ class TestTierBObserved:
 
     def test_residual_only_with_no_name_signal_asks_the_human(self):
         """Observed is_consequential and nothing else. That IS the residual
-        bucket, and is_value_carrying is exactly the question — which fails
+        bucket, and is_value_carrying is exactly the question -- which fails
         OPEN if answered wrong. Never auto-suggest it as paste-ready."""
         gate = AuthorizationGate()
         gate.register_tool("frobnicate", _lineage_perms(risk_level="low"))
@@ -895,7 +895,7 @@ class TestPolarityGuardAcrossTheEngine:
 
     def test_no_finding_ever_pairs_value_carrying_with_no_human_decision(self):
         """THE invariant. Swept across every risk level, both gating modes,
-        and every observation state — including a broken backend."""
+        and every observation state -- including a broken backend."""
         for risk in ("low", "medium", "high", "critical"):
             for gate_conseq in (True, False):
                 for assertion in (
@@ -1091,7 +1091,7 @@ class TestFileBackendRoundTrip:
 
         If AuditLogger stripped metadata at MINIMAL, or FileAuditBackend
         dropped it on the JSON round trip, Tier B would silently degrade to
-        Tier A on every MINIMAL-logging tool — and report basis="observed_none"
+        Tier A on every MINIMAL-logging tool -- and report basis="observed_none"
         as though the tool had simply never been called that way.
         """
         path = tmp_path / "audit.jsonl"
@@ -1145,7 +1145,7 @@ class TestFileBackendRoundTrip:
 # rule exactly and the rule turned out to be wrong.
 #
 # "1.10" >= "1.3" is False as strings. A v1.10 permission block silently
-# skipped the session write-gate, parameter lineage, and novel lineage — all
+# skipped the session write-gate, parameter lineage, and novel lineage -- all
 # three failing OPEN. These tests now assert the FIXED behaviour.
 # ---------------------------------------------------------------------------
 
@@ -1183,7 +1183,7 @@ class TestVersionParsing:
     def test_unparseable_version_fails_closed(self):
         """An unknown version must ENFORCE, never exempt.
 
-        Every caller is `if policy_enabled and version_at_least(...)` — a
+        Every caller is `if policy_enabled and version_at_least(...)` -- a
         guard on enforcement. Returning False for a malformed version would
         SKIP the lineage block, which is exactly backwards.
         """

@@ -1,4 +1,4 @@
-"""Adaptive Prompt Hardening — Layer 0 defense.
+"""Adaptive Prompt Hardening -- Layer 0 defense.
 
 When AgentLock's gate detects suspicious activity (injection attempts,
 trust degradation, rate limiting, etc.), the hardening engine accumulates
@@ -412,7 +412,7 @@ class HardeningEngine:
         instructions: list[str] = []
 
         for sig_type in signal_types:
-            # Skip compound signals — they don't have their own instructions
+            # Skip compound signals -- they don't have their own instructions
             if sig_type.startswith("compound:"):
                 continue
             sig_instructions = self._config.signal_instructions.get(sig_type, [])
@@ -422,7 +422,7 @@ class HardeningEngine:
                     instructions.append(instr)
 
         if not instructions:
-            # No targeted instructions matched — fall back to generic
+            # No targeted instructions matched -- fall back to generic
             if severity == "critical":
                 return list(self._config.critical_instructions)
             elif severity == "elevated":

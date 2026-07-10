@@ -1,4 +1,4 @@
-"""Tests for agentlock.context — ContextProvenance and ContextTracker."""
+"""Tests for agentlock.context -- ContextProvenance and ContextTracker."""
 
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ class TestContextProvenance:
 
 
 # ---------------------------------------------------------------------------
-# ContextTracker — basic CRUD
+# ContextTracker -- basic CRUD
 # ---------------------------------------------------------------------------
 
 class TestContextTrackerBasic:

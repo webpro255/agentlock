@@ -1,4 +1,4 @@
-"""Tests for agentlock.gate — AuthorizationGate (integration)."""
+"""Tests for agentlock.gate -- AuthorizationGate (integration)."""
 
 from __future__ import annotations
 
@@ -139,7 +139,7 @@ class TestSessionAutoResolve:
     def test_session_resolves_role(self, gate):
         _register_basic_tool(gate)
         gate.create_session("alice", "user")
-        # Omit role — should be resolved from session
+        # Omit role -- should be resolved from session
         result = gate.authorize("test_tool", user_id="alice")
         assert result.allowed is True
         assert result.token is not None

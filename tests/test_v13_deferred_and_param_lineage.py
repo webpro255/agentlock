@@ -1,4 +1,4 @@
-"""v1.3 tests — Feature 1 (deferred commit) and Feature 2 (parameter lineage).
+"""v1.3 tests -- Feature 1 (deferred commit) and Feature 2 (parameter lineage).
 
 These exercise the NATIVE engine primitives directly (no AgentDojo), matching
 the mechanisms they target:
@@ -46,7 +46,7 @@ def _param_lineage_perms(action: str = "deny") -> AgentLockPermissions:
 
 
 # ---------------------------------------------------------------------------
-# Feature 1 — deferred commit
+# Feature 1 -- deferred commit
 # ---------------------------------------------------------------------------
 class TestDeferredCommit:
     def _fresh(self):
@@ -121,7 +121,7 @@ class TestDeferredCommit:
 
 
 # ---------------------------------------------------------------------------
-# Feature 2 — parameter lineage
+# Feature 2 -- parameter lineage
 # ---------------------------------------------------------------------------
 class TestParameterLineage:
     def _session(self, gate, user_text: str, untrusted_text: str | None = None):

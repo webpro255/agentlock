@@ -5,9 +5,9 @@ receipt.  Receipts are verifiable offline without gate access.
 
 Signing methods:
 
-- **Ed25519** (via PyNaCl) — default when available.  Fast, small
+- **Ed25519** (via PyNaCl) -- default when available.  Fast, small
   signatures, widely supported.
-- **HMAC-SHA256** — fallback when PyNaCl is not installed.  Symmetric
+- **HMAC-SHA256** -- fallback when PyNaCl is not installed.  Symmetric
   key, suitable for single-service deployments.
 
 Install PyNaCl for Ed25519::

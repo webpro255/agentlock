@@ -144,7 +144,7 @@ class TokenStore:
         if parameters and token.parameters_hash:
             expected = ExecutionToken.hash_parameters(parameters)
             if expected != token.parameters_hash:
-                raise TokenInvalidError("Parameter hash mismatch — token is operation-bound")
+                raise TokenInvalidError("Parameter hash mismatch -- token is operation-bound")
         token.consume()
         return token
 

@@ -1,4 +1,4 @@
-"""Tests for agentlock.token — ExecutionToken and TokenStore."""
+"""Tests for agentlock.token -- ExecutionToken and TokenStore."""
 
 from __future__ import annotations
 

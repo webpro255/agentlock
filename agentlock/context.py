@@ -249,13 +249,13 @@ class ContextTracker:
     def lineage_summary(self, session_id: str) -> dict[str, bool]:
         """Summarize the worst-case taint in a session's provenance log (v1.3).
 
-        Reads — never mutates — the ordered ``provenance_log`` for a session
+        Reads -- never mutates -- the ordered ``provenance_log`` for a session
         and reports whether untrusted content is present and, if so, whether
         it entered *after* the last authoritative entry.
 
         Returns a dict with:
-            * ``tainted`` — any entry has authority ``UNTRUSTED``.
-            * ``post_authoritative_taint`` — an ``UNTRUSTED`` entry exists
+            * ``tainted`` -- any entry has authority ``UNTRUSTED``.
+            * ``post_authoritative_taint`` -- an ``UNTRUSTED`` entry exists
               after the index of the last ``AUTHORITATIVE`` entry.  If no
               authoritative entry exists, all untrusted content is treated
               as post-authoritative.
@@ -334,7 +334,7 @@ class ContextTracker:
             for kind, tok in extract_lineage_tokens(value, min_len):
                 if not tok:
                     continue
-                # Authoritative FIRST — clean if the user's own request has it.
+                # Authoritative FIRST -- clean if the user's own request has it.
                 if tok in auth_blob:
                     continue
                 for entry, blob in untrusted_blobs:
@@ -363,7 +363,7 @@ class ContextTracker:
 
         A token is NOVEL when it traces to NEITHER the authoritative context
         (the user's own request/config) NOR the untrusted context.  It came
-        from nowhere the session can account for — the signature of a target
+        from nowhere the session can account for -- the signature of a target
         the agent invented or smuggled in outside the recorded provenance.
 
         Membership is decided by EXACT token-set equality, never substring.
@@ -385,7 +385,7 @@ class ContextTracker:
         if state is None or not state.provenance_log:
             return None
 
-        # EXACT token sets — not blobs.  Compare on the normalized token
+        # EXACT token sets -- not blobs.  Compare on the normalized token
         # string across kinds: the same extractor runs on both sides, so a
         # value present in context yields the identical token here.
         auth_tokens: set[str] = set()

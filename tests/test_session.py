@@ -1,4 +1,4 @@
-"""Tests for agentlock.session — Session and SessionStore."""
+"""Tests for agentlock.session -- Session and SessionStore."""
 
 from __future__ import annotations
 
