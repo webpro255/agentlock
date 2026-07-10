@@ -1,7 +1,15 @@
-"""Tests for benchmark gap fixes: first_call_any_risk + deny_on_block.
+"""The ``first_call_any_risk`` defer trigger and ``deny_on_block`` escalation.
 
-Phase 1: first_call_any_risk defer trigger (8 tests)
-Phase 2: deny_on_block whitelist escalation (6 tests)
+1. ``first_call_any_risk``: a session's very first tool call is deferred at any
+   risk level, not only at high or critical risk.
+2. ``deny_on_block``: once a call has been blocked, the hardening directive
+   escalates to a deny-by-default whitelist for the rest of the session.
+
+Each is covered at the unit level and through the gate. Disjoint from
+``test_critical_hardening_and_deferral.py``, which covers a different set of
+escalation behaviours.
+
+Originally added as benchmark gap fixes.
 """
 
 from __future__ import annotations

@@ -1,10 +1,17 @@
-"""Tests for v1.2.1 benchmark gap fixes.
+"""Escalation and deferral behaviour under critical session hardening.
 
-Four fixes verified:
-1. enforce_all_at_critical — blocks ALL tool risk levels at critical hardening
-2. lookup_order combo pairs — new suspicious pair patterns
-3. Sibling deferral — defer co-occurring tools when one is deferred
-4. Prompt scan carry-forward — defer tools without defer_policy when scan fired
+Four behaviours, plus their interaction:
+
+1. ``enforce_all_at_critical``: at critical hardening, every tool risk level is
+   blocked, not only high and critical ones.
+2. ``lookup_order`` combo pairs: suspicious lookup-then-act tool pairs fire a
+   compound signal that neither call triggers alone.
+3. Sibling deferral: when one tool in a co-occurring set is deferred, its
+   siblings defer with it.
+4. Prompt-scan carry-forward: once the prompt scanner fires, tools carrying no
+   ``defer_policy`` of their own are deferred anyway.
+
+Originally added as v1.2.1 benchmark gap fixes.
 """
 
 from __future__ import annotations
