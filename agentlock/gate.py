@@ -84,6 +84,10 @@ class AuthResult:
         hardening: Hardening directive for the session.
         modify_output_fn: Callable to transform tool output (MODIFY only).
         transformations_applied: List of transformations applied (MODIFY only).
+        needs_approval: The call is blocked pending out-of-band human
+            approval rather than hard-denied.  ``allowed`` is still False.
+        approval_channel: Channel to route the approval request to, when
+            the permission block declares one.
     """
 
     allowed: bool
@@ -94,6 +98,8 @@ class AuthResult:
     hardening: HardeningDirective | None = None
     modify_output_fn: Callable[[str], str] | None = None
     transformations_applied: list[str] = field(default_factory=list)
+    needs_approval: bool = False
+    approval_channel: str = ""
     deferral_id: str = ""
     stepup_request_id: str = ""
     receipt: SignedReceipt | None = None
@@ -1043,7 +1049,11 @@ class AuthorizationGate:
                 allowed=False,
                 decision=DecisionType.DENY,
                 denial={
-                    "status": "denied",
+                    "status": (
+                        "approval_required"
+                        if decision.needs_approval
+                        else "denied"
+                    ),
                     "reason": decision.reason.value if decision.reason else "unknown",
                     "detail": decision.detail,
                     "required_role": decision.required_role,
@@ -1053,6 +1063,8 @@ class AuthorizationGate:
                 audit_id=record.audit_id,
                 hardening=directive,
                 session_gate_shadow=session_gate_shadow,
+                needs_approval=decision.needs_approval,
+                approval_channel=decision.approval_channel,
             )
             return self._sign_result(
                 auth_result, tool_name, user_id, role, parameters,
