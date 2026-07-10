@@ -54,8 +54,12 @@ class RequestContext:
         is_account_modification: Whether this changes account credentials
             or profile (e.g. password / user info).
         is_consequential: Whether this is a destructive / committing action
-            that is not financial/external/account-mod (delete, reserve,
-            membership change).
+            that is not financial/external/account-mod (e.g. reserve).  As of
+            v1.4 the value-free members of this bucket have their own flags
+            below; this one now covers the value-CARRYING remainder.
+        is_deletion: Whether this destroys existing state (value-free).
+        is_membership_change: Whether this adds/removes a principal from a
+            group, channel, or ACL (value-free).
         amount: Financial amount, if applicable.
         metadata: Additional context.
     """
@@ -71,6 +75,8 @@ class RequestContext:
     is_financial: bool = False
     is_account_modification: bool = False
     is_consequential: bool = False
+    is_deletion: bool = False
+    is_membership_change: bool = False
     amount: float = 0.0
     max_output_classification: DataClassification | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -582,6 +588,21 @@ class PolicyEngine:
             and lineage_policy.enabled
             and permissions.version >= "1.3"
         ):
+            # v1.4 — resolve the value-free action classes against the TRUSTED
+            # per-tool permission block before consulting the caller's kwarg.
+            # Monotone OR: a declaration can only ADD gating, never cancel it.
+            # This closes the surface that selective gating would otherwise
+            # open — with gate_consequential off, a caller who merely omits
+            # is_deletion must not thereby escape the taint gate.  A tool
+            # registered as a deletion/membership tool carries that class
+            # itself, so the assertion lives on the trusted side.
+            _ac = permissions.action_class
+            is_deletion = bool(_ac and _ac.is_deletion) or context.is_deletion
+            is_membership_change = (
+                bool(_ac and _ac.is_membership_change)
+                or context.is_membership_change
+            )
+
             gated_action = (
                 (lineage_policy.gate_financial and context.is_financial)
                 or (lineage_policy.gate_external and context.is_external)
@@ -593,6 +614,15 @@ class PolicyEngine:
                 or (
                     lineage_policy.gate_consequential
                     and context.is_consequential
+                )
+                # Value-free classes (§7): no attacker-chosen parameter value
+                # for per-value lineage to trace, so session taint is the only
+                # signal that catches them.  Gated independently of
+                # gate_consequential.
+                or (lineage_policy.gate_deletion and is_deletion)
+                or (
+                    lineage_policy.gate_membership_change
+                    and is_membership_change
                 )
             )
             summary = context.metadata.get("lineage")
@@ -612,6 +642,10 @@ class PolicyEngine:
                         action_kind = "bulk"
                     elif context.is_account_modification:
                         action_kind = "account-modification"
+                    elif is_deletion:
+                        action_kind = "deletion"
+                    elif is_membership_change:
+                        action_kind = "membership-change"
                     elif context.is_consequential:
                         action_kind = "consequential"
                     else:

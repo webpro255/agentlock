@@ -252,6 +252,8 @@ class AuthorizationGate:
         is_financial: bool = False,
         is_account_modification: bool = False,
         is_consequential: bool = False,
+        is_deletion: bool = False,
+        is_membership_change: bool = False,
         amount: float = 0.0,
         metadata: dict[str, Any] | None = None,
     ) -> AuthResult:
@@ -272,6 +274,12 @@ class AuthorizationGate:
             is_financial: Whether this involves money.
             is_account_modification: Whether this changes account
                 credentials/profile (password, user info).
+            is_deletion: Whether this destroys existing state (value-free).
+                Advisory only: OR-ed with the tool's trusted
+                ``permissions.action_class`` declaration, which this kwarg
+                cannot cancel.
+            is_membership_change: Whether this adds/removes a principal from
+                a group/channel/ACL (value-free).  Same OR semantics.
             is_consequential: Whether this is a destructive/committing
                 action (delete, reserve, membership change).
             amount: Financial amount if applicable.
@@ -398,6 +406,8 @@ class AuthorizationGate:
             is_financial=is_financial,
             is_account_modification=is_account_modification,
             is_consequential=is_consequential,
+            is_deletion=is_deletion,
+            is_membership_change=is_membership_change,
             amount=amount,
             max_output_classification=resolved_classification,
             metadata=request_metadata,

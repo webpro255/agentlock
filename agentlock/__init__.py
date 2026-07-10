@@ -88,6 +88,7 @@ from agentlock.receipts import ReceiptSigner, ReceiptVerifier, SignedReceipt
 from agentlock.redaction import RedactionEngine, RedactionResult
 from agentlock.schema import (
     SCHEMA_VERSION,
+    ActionClassConfig,
     AgentLockPermissions,
     AuditConfig,
     ContextPolicyConfig,
@@ -159,6 +160,7 @@ __all__ = [
     "ModifyPolicyConfig",
     "StepUpPolicyConfig",
     "LineagePolicyConfig",
+    "ActionClassConfig",
     "TransformationConfig",
     "SCHEMA_VERSION",
     # v1.1 schema components

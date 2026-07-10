@@ -48,6 +48,7 @@ __all__ = [
     "TransformationConfig",
     "ModifyPolicyConfig",
     "LineagePolicyConfig",
+    "ActionClassConfig",
     "ToolDefinition",
 ]
 
@@ -296,6 +297,20 @@ class LineagePolicyConfig(BaseModel):
     gate_bulk: bool = True
     gate_account_modification: bool = True
     gate_consequential: bool = True
+
+    # v1.4 selective action-class gating. ``is_consequential`` is a mixed
+    # bucket of {delete, reserve, membership change}: ``reserve`` is a
+    # value-CARRYING write, whose attacker-chosen target is already covered
+    # by parameter/novel lineage, while ``delete`` and membership change are
+    # value-FREE — they admit malice with no attacker-chosen parameter for
+    # per-value lineage to trace.  Splitting them lets a deployment set
+    # ``gate_consequential=False`` (recovering the utility lost to gating
+    # every consequential write on any session taint) while keeping the
+    # value-free classes taint-gated.  Both default True, so an existing
+    # config that only sets ``gate_consequential`` is unchanged.
+    gate_deletion: bool = True
+    gate_membership_change: bool = True
+
     decision: str = "step_up"  # "step_up" | "defer" | "deny"
     require_post_authoritative: bool = True
 
@@ -324,6 +339,37 @@ class LineagePolicyConfig(BaseModel):
     # param_lineage_* flags; off by default.
     novel_lineage_enabled: bool = False
     novel_lineage_action: str = "step_up"  # "deny" | "step_up" | "log"
+
+    model_config = {"extra": "forbid"}
+
+
+class ActionClassConfig(BaseModel):
+    """Declares a tool's action class in the trusted permission block (v1.4).
+
+    Selective action-class gating expands the *trusted-assertion surface*.
+    Under a uniform write-gate, the ``is_*`` flags a caller passes to
+    ``authorize()`` are safe to get wrong at the sub-class level: any
+    consequential write is gated regardless.  Once ``gate_consequential`` can
+    be turned off independently of ``gate_deletion`` /
+    ``gate_membership_change``, a caller that simply *omits* ``is_deletion``
+    would slip a deletion past the taint gate.  The action class therefore
+    lives here — registered with the tool, on the trusted side — rather than
+    only in the per-call, caller-asserted kwarg.
+
+    Resolution is **monotone OR**: the effective class is
+    ``declared or caller_asserted``.  A declaration can only ever *add*
+    gating.  A tool declared ``is_deletion=True`` cannot be escaped by
+    omitting the kwarg, and an absent (or False) declaration can never cancel
+    a class the caller did assert.  There is deliberately no way to use this
+    block to switch a class *off*; ``gate_*`` on ``LineagePolicyConfig`` is
+    the knob for that, and it lives in trusted config too.
+
+    Only the value-free classes are declarable today.  The same pattern
+    extends to the value-carrying ones if they ever need it.
+    """
+
+    is_deletion: bool = False
+    is_membership_change: bool = False
 
     model_config = {"extra": "forbid"}
 
@@ -364,6 +410,7 @@ class AgentLockPermissions(BaseModel):
     defer_policy: DeferPolicyConfig | None = None
     stepup_policy: StepUpPolicyConfig | None = None
     lineage_policy: LineagePolicyConfig | None = None
+    action_class: ActionClassConfig | None = None
 
     model_config = {"extra": "forbid"}
 
