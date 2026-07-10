@@ -43,9 +43,10 @@ def _perms(
     *,
     gate_consequential: bool = True,
     action_class: ActionClassConfig | None = None,
+    risk_level: str = "high",
 ):
     return AgentLockPermissions(
-        risk_level="high",
+        risk_level=risk_level,
         requires_auth=False,
         allowed_roles=["user"],
         lineage_policy=LineagePolicyConfig(
@@ -305,6 +306,66 @@ class TestUndeclaredToolWarning:
         gate = AuthorizationGate()
         with pytest.warns(UserWarning, match="declares no action_class"):
             gate.register_tool("reserve", _perms(gate_consequential=False))
+
+    def test_warns_for_high_risk_undeclared_tool(self):
+        """Aimed at the class that admits the hazard."""
+        gate = AuthorizationGate()
+        with pytest.warns(UserWarning, match="high risk"):
+            gate.register_tool(
+                "delete_channel",
+                _perms(gate_consequential=False, risk_level="high"),
+            )
+
+    def test_warns_for_critical_risk_undeclared_tool(self):
+        """Guards a real trap: RiskLevel is a str-Enum, so `>= HIGH` is a
+        LEXICOGRAPHIC compare and "critical" < "high" — an ordering test would
+        silently skip the highest-risk tools. Membership test, not ordering.
+        """
+        gate = AuthorizationGate()
+        with pytest.warns(UserWarning, match="critical risk"):
+            gate.register_tool(
+                "wipe_db",
+                _perms(gate_consequential=False, risk_level="critical"),
+            )
+
+    def test_does_not_warn_for_low_risk_undeclared_tool(self):
+        """A low-risk undeclared tool is almost certainly a benign read.
+
+        Warning on it would train operators to ignore the warning that matters.
+        """
+        gate = AuthorizationGate()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            gate.register_tool(
+                "read_doc",
+                _perms(gate_consequential=False, risk_level="low"),
+            )
+
+    def test_does_not_warn_for_medium_risk_undeclared_tool(self):
+        gate = AuthorizationGate()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            gate.register_tool(
+                "list_items",
+                _perms(gate_consequential=False, risk_level="medium"),
+            )
+
+    def test_risk_level_tightening_does_not_weaken_gating(self):
+        """Warning-emission only: a LOW-risk undeclared consequential call
+        still fails CLOSED under taint. Quieting the warning must not quiet
+        the gate.
+        """
+        gate = AuthorizationGate()
+        _register(
+            gate, "read_doc",
+            _perms(gate_consequential=False, risk_level="low"),
+        )
+        _tainted_session(gate)
+        r = gate.authorize(
+            "read_doc", user_id="u", role="user", is_consequential=True,
+        )
+        assert r.allowed is False
+        assert r.denial["reason"] == "untrusted_lineage"
 
     def test_no_warning_when_action_class_declared(self):
         gate = AuthorizationGate()

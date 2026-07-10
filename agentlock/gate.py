@@ -190,19 +190,30 @@ class AuthorizationGate:
         # caller asserts none, matches no disjunct and is never taint-gated.
         # The inversion cannot close that; make it LOUD instead of silent.
         # A warning, not an error — an undeclared tool may be a benign read.
+        #
+        # Aimed at the class that actually admits the hazard: only a tool that
+        # is plausibly consequential (high/critical risk) under *selective*
+        # gating (gate_consequential=False) with no declared class.  A low-risk
+        # undeclared tool is almost certainly a read, and warning on it would
+        # train operators to ignore the warning that matters.
+        #
+        # NOTE: RiskLevel is a plain str-Enum, so `risk_level >= HIGH` compares
+        # LEXICOGRAPHICALLY ("critical" < "high" < "low") and would silently
+        # EXCLUDE critical tools.  Membership test, never an ordering test.
         _lp = permissions.lineage_policy
         if (
             _lp is not None
             and _lp.enabled
             and not _lp.gate_consequential
             and permissions.action_class is None
+            and permissions.risk_level in (RiskLevel.HIGH, RiskLevel.CRITICAL)
         ):
             warnings.warn(
-                f"Tool '{tool_name}' is registered with "
-                f"gate_consequential=False but declares no action_class. "
-                f"Consequential calls stay gated (fail-closed), but a call "
-                f"asserting no class at all is never taint-gated. Declare "
-                f"ActionClassConfig(is_value_carrying=True) to recover "
+                f"Tool '{tool_name}' ({permissions.risk_level.value} risk) is "
+                f"registered with gate_consequential=False but declares no "
+                f"action_class. Consequential calls stay gated (fail-closed), "
+                f"but a call asserting no class at all is never taint-gated. "
+                f"Declare ActionClassConfig(is_value_carrying=True) to recover "
                 f"utility, or is_deletion / is_membership_change to gate it.",
                 UserWarning,
                 stacklevel=2,
