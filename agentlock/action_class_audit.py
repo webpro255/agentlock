@@ -27,6 +27,7 @@ structural facts drive it, and the report would lie if it ignored any of them:
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
@@ -42,6 +43,10 @@ __all__ = [
     "describe",
     "declared_classes",
     "tally_observations",
+    "suggest",
+    "Suggestion",
+    "lexical_classes",
+    "lexical_value_carrying",
     "FindingStatus",
     "SuggestionBasis",
     "Confidence",
@@ -235,8 +240,24 @@ def _lineage_mode(permissions: AgentLockPermissions) -> LineageMode:
 
 
 def _version_ok(permissions: AgentLockPermissions) -> bool:
-    # policy.py compares version strings directly; reproduce it rather than
-    # invent a parse, so the report cannot disagree with the gate.
+    """Does policy.py consider this permission block v1.3+?
+
+    DELIBERATELY reproduces policy.py's LEXICOGRAPHIC string comparison,
+    bug and all, rather than parsing the version properly.
+
+    KNOWN DEFECT, pre-existing, NOT fixed here (policy.py:489, :537, :589):
+    ``permissions.version >= "1.3"`` compares strings, so ``"1.10" >= "1.3"``
+    is False.  A v1.10 permission block silently skips the session write-gate,
+    parameter lineage, AND novel lineage — all three fail OPEN.  Same trap
+    class as ``RiskLevel``'s str-Enum ordering.  It is latent today only
+    because SCHEMA_VERSION is "1.3"; it detonates at "1.10".
+
+    This function must keep mirroring the defect until policy.py is fixed.
+    A report that "helpfully" parsed the version would tell an operator that a
+    v1.10 tool is covered by the taint gate when the gate in fact skips it —
+    trading a real bug for a report that lies about it, which is strictly
+    worse.  When policy.py is fixed, fix this in the SAME commit.
+    """
     return bool(permissions.version >= "1.3")
 
 
@@ -347,6 +368,225 @@ def tally_observations(
         for flag in asserted:
             per_tool[flag] = per_tool.get(flag, 0) + 1
     return tally
+
+
+# ---------------------------------------------------------------------------
+# Suggestions — two tiers.  Tier B (observed) beats Tier A (lexical).
+#
+# Suggestions are EVIDENCE PRESENTED TO A HUMAN.  Nothing here ever feeds a
+# gating decision: the gate reads `permissions.action_class`, which only a
+# human can write.  Tier B tallies what callers asserted; it does not make
+# those assertions authoritative.
+#
+# THE POLARITY ASYMMETRY governs every default below.  A wrong gating-ADDING
+# suggestion (is_deletion / is_membership_change) over-gates: the operator
+# loses some utility and nothing fails open.  A wrong gating-REMOVING one
+# (is_value_carrying) under-gates: it silently un-gates a value-free action
+# for which session taint was the only available signal.  So gating-adding
+# suggestions may be paste-ready, and value-carrying suggestions may never be.
+# ---------------------------------------------------------------------------
+
+#: Verbs that destroy existing state.
+_DELETION_VERBS = frozenset(
+    {"delete", "destroy", "drop", "purge", "wipe", "erase", "remove",
+     "truncate", "rm", "del"}
+)
+
+#: Verbs that move a principal across a boundary, on their own.
+_STANDALONE_MEMBERSHIP_VERBS = frozenset(
+    {"invite", "kick", "ban", "unban", "subscribe", "unsubscribe",
+     "join", "leave"}
+)
+
+#: Verbs that change membership only when applied to a principal noun.
+_MEMBERSHIP_VERBS = frozenset(
+    {"add", "remove", "delete", "grant", "revoke", "assign", "unassign",
+     "set", "update"}
+)
+
+#: Principal nouns.  Deliberately EXCLUDES container nouns like "channel" and
+#: "group": `delete_channel` destroys a container, it does not change a
+#: membership, and `add_user_to_channel` is already caught by "user".
+_PRINCIPAL_NOUNS = frozenset(
+    {"user", "users", "member", "members", "membership", "principal",
+     "role", "roles", "acl", "permission", "permissions", "collaborator",
+     "collaborators", "owner", "admin"}
+)
+
+#: Verbs whose effect is determined by an attacker-choosable parameter value.
+_VALUE_CARRYING_VERBS = frozenset(
+    {"reserve", "book", "schedule", "create", "transfer", "pay", "charge",
+     "purchase", "order", "allocate", "submit", "issue", "provision"}
+)
+
+#: Tier A fires only for these risk levels.  MEMBERSHIP TEST, never an
+#: ordering test: RiskLevel is a plain str-Enum, so `risk >= "high"` compares
+#: LEXICOGRAPHICALLY and "critical" < "high" would silently exclude the
+#: highest-risk tools.  Same trap as policy.py's `version >= "1.3"`.
+_ELEVATED_RISK = frozenset({"high", "critical"})
+
+#: Named (gating-ADDING) classes, in schema order.
+_NAMED_CLASSES = ("is_deletion", "is_membership_change")
+
+
+def _name_tokens(tool_name: str) -> set[str]:
+    return {t for t in re.split(r"[^a-z0-9]+", tool_name.lower()) if t}
+
+
+def lexical_classes(tool_name: str) -> tuple[str, ...]:
+    """Named, gating-adding classes implied by a tool's name.  Never
+    ``is_value_carrying`` — that is gating-removing and needs a human.
+
+    Collisions are intentional: ``remove_user`` is BOTH a deletion and a
+    membership change, and ``ActionClassConfig`` permits both together (they
+    are both gating-adding).  Suggest both rather than picking one.
+    """
+    t = _name_tokens(tool_name)
+    out: list[str] = []
+    if t & _DELETION_VERBS:
+        out.append("is_deletion")
+    if (t & _STANDALONE_MEMBERSHIP_VERBS) or (
+        (t & _MEMBERSHIP_VERBS) and (t & _PRINCIPAL_NOUNS)
+    ):
+        out.append("is_membership_change")
+    return tuple(out)
+
+
+def lexical_value_carrying(tool_name: str) -> bool:
+    return bool(_name_tokens(tool_name) & _VALUE_CARRYING_VERBS)
+
+
+@dataclass(frozen=True, slots=True)
+class Suggestion:
+    """A suggestion plus everything needed to judge it."""
+
+    suggestion: tuple[str, ...] | None
+    confidence: Confidence
+    basis: SuggestionBasis
+    requires_human_decision: bool
+    rationale: str
+
+
+def suggest(
+    *,
+    tool_name: str,
+    risk_level: str,
+    observed: dict[str, int],
+    observation_available: bool,
+) -> Suggestion:
+    """Suggest an action class for an UNDECLARED tool.
+
+    Tier B (observed) beats Tier A (lexical): what callers actually asserted
+    is evidence; what a tool is named is a guess.
+    """
+    # Three-state basis.  A broken readback is NOT "no observations" — one is
+    # a missing instrument, the other is a reading of zero.  Conflating them
+    # would let a dead audit backend masquerade as a clean bill of health.
+    if not observation_available:
+        lex = lexical_classes(tool_name)
+        return Suggestion(
+            suggestion=lex or None,
+            confidence=Confidence.LOW,
+            basis=SuggestionBasis.OBSERVATION_UNAVAILABLE,
+            # Nothing is paste-ready when the evidence channel is broken.
+            requires_human_decision=True,
+            rationale=(
+                "the audit log read back empty despite decisions having been "
+                "issued, so no observed evidence is available; this rests on "
+                "NAMING ALONE"
+            ),
+        )
+
+    # -- Tier B: observed ---------------------------------------------------
+    observed_named = tuple(c for c in _NAMED_CLASSES if observed.get(c))
+    if observed_named:
+        evidence = "; ".join(
+            f"{c} on >={observed[c]} audited decision"
+            f"{'s' if observed[c] != 1 else ''}"
+            for c in observed_named
+        )
+        return Suggestion(
+            suggestion=observed_named,
+            confidence=Confidence.HIGH,
+            basis=SuggestionBasis.OBSERVED,
+            requires_human_decision=False,  # gating-adding: safe if wrong
+            rationale=f"callers were observed asserting {evidence}",
+        )
+
+    if observed.get("is_consequential"):
+        n = observed["is_consequential"]
+        seen = (
+            f"callers were observed asserting is_consequential on >={n} "
+            f"audited decision{'s' if n != 1 else ''}, the RESIDUAL bucket "
+            f"rather than a named class"
+        )
+        # The name can say WHICH value-free class the residual bucket holds.
+        # That is still a gating-adding suggestion, so it stays safe if wrong,
+        # and the observation — not the name — is what triggered it.
+        lex = lexical_classes(tool_name)
+        if lex:
+            return Suggestion(
+                suggestion=lex,
+                confidence=Confidence.MEDIUM,
+                basis=SuggestionBasis.OBSERVED,
+                requires_human_decision=False,
+                rationale=(
+                    f"{seen}. The tool's name identifies the class as "
+                    f"{', '.join(lex)}"
+                ),
+            )
+        # Nothing named it.  The residual bucket is exactly the question
+        # is_value_carrying answers — and answering it wrong FAILS OPEN.
+        return Suggestion(
+            suggestion=("is_value_carrying",),
+            confidence=Confidence.LOW,
+            basis=SuggestionBasis.OBSERVED,
+            requires_human_decision=True,  # enforced again in __post_init__
+            rationale=(
+                f"{seen}. No name token identifies a value-free class, so "
+                f"this may be a value-carrying write — but only a human can "
+                f"say so, and saying so wrongly un-gates it"
+            ),
+        )
+
+    # -- Tier A: lexical ----------------------------------------------------
+    # Membership test on risk, never an ordering test.
+    if risk_level in _ELEVATED_RISK:
+        lex = lexical_classes(tool_name)
+        if lex:
+            return Suggestion(
+                suggestion=lex,
+                confidence=Confidence.LOW,
+                basis=SuggestionBasis.LEXICAL,
+                requires_human_decision=False,  # gating-adding
+                rationale=(
+                    f"no observed assertions; the tool's name implies "
+                    f"{', '.join(lex)} at {risk_level} risk"
+                ),
+            )
+        if lexical_value_carrying(tool_name):
+            return Suggestion(
+                suggestion=("is_value_carrying",),
+                confidence=Confidence.LOW,
+                basis=SuggestionBasis.LEXICAL,
+                requires_human_decision=True,
+                rationale=(
+                    f"no observed assertions; the tool's name suggests a "
+                    f"value-carrying write at {risk_level} risk. A NAME IS "
+                    f"NOT EVIDENCE for a gating-removing declaration"
+                ),
+            )
+
+    return Suggestion(
+        suggestion=None,
+        confidence=Confidence.UNKNOWN,
+        basis=SuggestionBasis.OBSERVED_NONE,
+        requires_human_decision=True,
+        rationale=(
+            "no observed assertions and no name/risk signal; a human must "
+            "classify this tool"
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

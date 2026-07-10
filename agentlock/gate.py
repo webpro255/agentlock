@@ -40,6 +40,7 @@ from agentlock.action_class_audit import (
     classify_tool,
     declared_classes,
     describe,
+    suggest,
     tally_observations,
 )
 from agentlock.audit import AuditBackend, AuditLogger, InMemoryAuditBackend
@@ -318,6 +319,37 @@ class AuthorizationGate:
                 continue
             mode, status = classify_tool(permissions)
             declared = declared_classes(permissions)
+            observed = dict(tally.get(tool_name, {}))
+            rationale = describe(permissions, mode, status, declared)
+
+            # Suggestions are only meaningful for a tool that has not been
+            # classified.  A DECLARED tool needs nothing; a NOT_COVERED one has
+            # a deployment-flag or schema-version problem that no action_class
+            # can fix, and whose rationale already states it plainly.
+            if status is FindingStatus.UNDECLARED:
+                s = suggest(
+                    tool_name=tool_name,
+                    risk_level=permissions.risk_level.value,
+                    observed=observed,
+                    observation_available=observation_available,
+                )
+                findings.append(
+                    ActionClassFinding(
+                        tool_name=tool_name,
+                        risk_level=permissions.risk_level.value,
+                        lineage_mode=mode,
+                        status=status,
+                        declared=declared,
+                        observed=observed,
+                        suggestion=s.suggestion,
+                        confidence=s.confidence,
+                        basis=s.basis,
+                        rationale=f"{rationale}. Suggestion: {s.rationale}",
+                        requires_human_decision=s.requires_human_decision,
+                    )
+                )
+                continue
+
             findings.append(
                 ActionClassFinding(
                     tool_name=tool_name,
@@ -325,17 +357,9 @@ class AuthorizationGate:
                     lineage_mode=mode,
                     status=status,
                     declared=declared,
-                    observed=dict(tally.get(tool_name, {})),
-                    rationale=describe(permissions, mode, status, declared),
-                    # Only an UNDECLARED tool poses a declaration question.
-                    # A DECLARED tool needs nothing; a NOT_COVERED one has a
-                    # deployment-flag or schema-version issue that the
-                    # rationale states plainly.  Phase 4 refines this per
-                    # suggestion, and may only ever RAISE it for a
-                    # value-carrying suggestion, never lower it.
-                    requires_human_decision=(
-                        status is FindingStatus.UNDECLARED
-                    ),
+                    observed=observed,
+                    rationale=rationale,
+                    requires_human_decision=False,
                 )
             )
 

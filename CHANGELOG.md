@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Decision provenance in the audit record** — every `authorize()` exit path now records the class flags the caller asserted under `AuditRecord.metadata["asserted_classes"]`. Descriptive only: written strictly after the decision, never read back by the gate, and never placed in `PolicyContext.metadata`. The key is omitted entirely when nothing was asserted. It survives `log_level=MINIMAL`, as `trust_ceiling` already does.
+- **`AuthorizationGate.audit_action_classes()`** — on-demand report over every tool with `lineage_policy.enabled`, partitioned `UNDECLARED` / `DECLARED` / `NOT_COVERED`, independent of `gate_consequential` and of risk level. Suggestions come in two tiers: lexical (name + risk) and observed (what callers actually asserted, read back from the audit log). Observed beats lexical. Gating-adding suggestions (`is_deletion`, `is_membership_change`) are paste-ready; a suggestion of `is_value_carrying` is gating-removing and always requires human confirmation — enforced in `ActionClassFinding.__post_init__`, not merely in the formatter. `format_action_class_audit()` renders it. `query()` is called exactly once per report and never from a hot path.
+
+### Known issues
+
+- **`permissions.version >= "1.3"` is a lexicographic string comparison** (`policy.py:489`, `:537`, `:589`). `"1.10" >= "1.3"` is `False`, so a permission block declaring schema version `1.10` or later within the `1.x` line would silently skip the session write-gate, parameter lineage, **and** novel lineage — all three fail **open**. Latent today only because `SCHEMA_VERSION` is `"1.3"`; it detonates at `"1.10"`. Not fixed in this change. `audit_action_classes()` deliberately mirrors the defect (reporting such a tool as `inert` / `NOT_COVERED`) rather than parsing versions correctly, because a report that claimed coverage the gate does not provide would be strictly worse than the bug it papers over. Fix both in the same commit.
 
 ## [1.3.0] - 2026-07-06
 

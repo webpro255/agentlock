@@ -27,13 +27,17 @@ from agentlock import (
     AgentLockPermissions,
     AuditLogLevel,
     AuthorizationGate,
+    Confidence,
     ContextSource,
+    FileAuditBackend,
     FindingStatus,
     InMemoryAuditBackend,
     LineageMode,
     LineagePolicyConfig,
+    SuggestionBasis,
     format_action_class_audit,
 )
+from agentlock.action_class_audit import VALUE_CARRYING_QUESTION
 
 
 def _h(s: str) -> str:
@@ -327,6 +331,7 @@ def _lineage_perms(
     risk_level: str = "high",
     action_class: ActionClassConfig | None = None,
     version: str | None = None,
+    log_level: AuditLogLevel = AuditLogLevel.STANDARD,
     **lp_kwargs,
 ):
     kw = {}
@@ -338,6 +343,7 @@ def _lineage_perms(
         allowed_roles=["user"],
         lineage_policy=LineagePolicyConfig(enabled=True, **lp_kwargs),
         action_class=action_class,
+        audit={"log_level": log_level},
         **kw,
     )
 
@@ -354,6 +360,16 @@ class TestReportsEveryLineageTool:
         f = _by_name(findings)["delete_channel"]
         assert f.status is FindingStatus.UNDECLARED
         assert f.declared == ()
+        # Gating-adding suggestion: paste-ready, since over-gating is safe.
+        assert f.suggestion == ("is_deletion",)
+        assert f.requires_human_decision is False
+
+    def test_undeclared_tool_with_no_signal_requires_a_human(self):
+        gate = AuthorizationGate()
+        gate.register_tool("frobnicate", _lineage_perms(risk_level="medium"))
+        f = _by_name(gate.audit_action_classes())["frobnicate"]
+        assert f.status is FindingStatus.UNDECLARED
+        assert f.suggestion is None
         assert f.requires_human_decision is True
 
     def test_report_is_independent_of_gate_consequential(self):
@@ -670,3 +686,511 @@ class TestFormatting:
         gate.register_tool("t", _lineage_perms())
         out = format_action_class_audit(list(gate.audit_action_classes()))
         assert "t" in out
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — suggestions, two tiers. Evidence for a human, never gating input.
+# ---------------------------------------------------------------------------
+
+
+class _BlindBackend(InMemoryAuditBackend):
+    """Writes fine, reads back empty. A dead observation channel."""
+
+    def query(self, **kwargs):
+        return []
+
+
+class _BrokenBackend(InMemoryAuditBackend):
+    """query() raises. The report must survive and say so."""
+
+    def query(self, **kwargs):
+        raise OSError("audit log unreadable")
+
+
+class TestTierALexical:
+    def test_remove_user_suggests_deletion_and_membership(self):
+        """Collision is intentional: both are gating-adding, and
+        ActionClassConfig permits them together. Suggest BOTH, not one."""
+        gate = AuthorizationGate()
+        gate.register_tool("remove_user", _lineage_perms(risk_level="high"))
+        f = _by_name(gate.audit_action_classes())["remove_user"]
+        assert f.suggestion == ("is_deletion", "is_membership_change")
+        assert f.basis is SuggestionBasis.LEXICAL
+        assert f.requires_human_decision is False
+
+    def test_add_user_to_channel_suggests_membership_only(self):
+        gate = AuthorizationGate()
+        gate.register_tool("add_user_to_channel", _lineage_perms(risk_level="high"))
+        f = _by_name(gate.audit_action_classes())["add_user_to_channel"]
+        assert f.suggestion == ("is_membership_change",)
+        assert f.basis is SuggestionBasis.LEXICAL
+
+    def test_delete_channel_is_deletion_not_membership(self):
+        """A container is not a principal. delete_channel destroys a channel;
+        it does not move anyone across a membership boundary."""
+        gate = AuthorizationGate()
+        gate.register_tool("delete_channel", _lineage_perms(risk_level="high"))
+        assert _by_name(gate.audit_action_classes())["delete_channel"].suggestion == (
+            "is_deletion",
+        )
+
+    def test_critical_risk_is_included_by_membership_not_ordering(self):
+        """RiskLevel is a str-Enum: "critical" < "high" lexicographically.
+        An ordering test would silently skip the highest-risk tools."""
+        gate = AuthorizationGate()
+        gate.register_tool(
+            "wipe_db", _lineage_perms(risk_level="critical"),
+        )
+        f = _by_name(gate.audit_action_classes())["wipe_db"]
+        assert f.suggestion == ("is_deletion",)
+        assert f.confidence is not Confidence.UNKNOWN
+
+    def test_low_and_medium_risk_get_no_lexical_suggestion(self):
+        gate = AuthorizationGate()
+        gate.register_tool("delete_thing", _lineage_perms(risk_level="low"))
+        gate.register_tool("remove_user", _lineage_perms(risk_level="medium"))
+        found = _by_name(gate.audit_action_classes())
+        for f in found.values():
+            assert f.suggestion is None
+            assert f.basis is SuggestionBasis.OBSERVED_NONE
+            assert f.requires_human_decision is True
+
+    def test_reads_get_no_suggestion(self):
+        """Suggesting a class for get_user would over-gate a read."""
+        gate = AuthorizationGate()
+        gate.register_tool("get_user", _lineage_perms(risk_level="high"))
+        gate.register_tool("list_users", _lineage_perms(risk_level="high"))
+        for f in gate.audit_action_classes():
+            assert f.suggestion is None
+
+    def test_value_carrying_name_is_never_paste_ready(self):
+        gate = AuthorizationGate()
+        gate.register_tool("reserve_table", _lineage_perms(risk_level="high"))
+        f = _by_name(gate.audit_action_classes())["reserve_table"]
+        assert f.suggestion == ("is_value_carrying",)
+        assert f.requires_human_decision is True
+        out = format_action_class_audit(gate.audit_action_classes())
+        assert "REQUIRES HUMAN CONFIRMATION" in out
+        assert VALUE_CARRYING_QUESTION in out
+        assert "paste:" not in out
+
+
+class TestTierBObserved:
+    def test_observed_beats_lexical(self):
+        """add_user_to_channel at MEDIUM risk is lexically missed by Tier A.
+        Observed assertions of is_consequential promote it to basis=observed."""
+        gate = AuthorizationGate()
+        gate.register_tool(
+            "add_user_to_channel", _lineage_perms(risk_level="medium"),
+        )
+        _clean_session(gate)
+        for _ in range(3):
+            gate.authorize(
+                "add_user_to_channel", user_id="u", role="user",
+                is_consequential=True,
+            )
+        f = _by_name(gate.audit_action_classes())["add_user_to_channel"]
+        assert f.basis is SuggestionBasis.OBSERVED
+        assert f.suggestion == ("is_membership_change",)
+        assert f.observed["is_consequential"] >= 3
+        assert f.confidence is Confidence.MEDIUM
+
+    def test_observed_named_class_wins_outright(self):
+        gate = AuthorizationGate()
+        gate.register_tool("frobnicate", _lineage_perms(risk_level="low"))
+        _clean_session(gate)
+        gate.authorize("frobnicate", user_id="u", role="user", is_deletion=True)
+        f = _by_name(gate.audit_action_classes())["frobnicate"]
+        assert f.basis is SuggestionBasis.OBSERVED
+        assert f.suggestion == ("is_deletion",)
+        assert f.confidence is Confidence.HIGH
+        assert f.requires_human_decision is False
+
+    def test_residual_only_with_no_name_signal_asks_the_human(self):
+        """Observed is_consequential and nothing else. That IS the residual
+        bucket, and is_value_carrying is exactly the question — which fails
+        OPEN if answered wrong. Never auto-suggest it as paste-ready."""
+        gate = AuthorizationGate()
+        gate.register_tool("frobnicate", _lineage_perms(risk_level="low"))
+        _clean_session(gate)
+        gate.authorize(
+            "frobnicate", user_id="u", role="user", is_consequential=True,
+        )
+        f = _by_name(gate.audit_action_classes())["frobnicate"]
+        assert f.basis is SuggestionBasis.OBSERVED
+        assert f.suggestion == ("is_value_carrying",)
+        assert f.requires_human_decision is True
+
+    def test_observed_none_when_readback_works_and_nothing_asserted(self):
+        gate = AuthorizationGate()
+        gate.register_tool("frobnicate", _lineage_perms(risk_level="low"))
+        _clean_session(gate)
+        gate.authorize("frobnicate", user_id="u", role="user")
+        f = _by_name(gate.audit_action_classes())["frobnicate"]
+        assert f.basis is SuggestionBasis.OBSERVED_NONE
+        assert f.suggestion is None
+
+
+class TestReadbackProbe:
+    def test_blind_backend_reports_observation_unavailable_not_observed_none(self):
+        """decisions_issued > 0 but the log reads back empty. A dead
+        instrument must never masquerade as a reading of zero."""
+        gate = AuthorizationGate(audit_backend=_BlindBackend())
+        gate.register_tool("remove_user", _lineage_perms(risk_level="high"))
+        _clean_session(gate)
+        gate.authorize("remove_user", user_id="u", role="user", is_deletion=True)
+
+        audit = gate.audit_action_classes()
+        assert audit.observation_available is False
+        assert audit.decisions_issued > 0
+        f = _by_name(audit)["remove_user"]
+        assert f.basis is SuggestionBasis.OBSERVATION_UNAVAILABLE
+        assert f.basis is not SuggestionBasis.OBSERVED_NONE
+        # Nothing is paste-ready when the evidence channel is broken.
+        assert f.requires_human_decision is True
+
+    def test_unavailable_is_reported_loudly(self):
+        gate = AuthorizationGate(audit_backend=_BlindBackend())
+        gate.register_tool("remove_user", _lineage_perms(risk_level="high"))
+        _clean_session(gate)
+        gate.authorize("remove_user", user_id="u", role="user")
+        out = format_action_class_audit(gate.audit_action_classes())
+        assert "OBSERVATION UNAVAILABLE" in out
+        assert "NAMING ALONE" in out
+        assert "paste:" not in out
+
+    def test_unreadable_backend_degrades_gracefully(self):
+        """query() raising must not take the report down."""
+        gate = AuthorizationGate(audit_backend=_BrokenBackend())
+        gate.register_tool("remove_user", _lineage_perms(risk_level="high"))
+        _clean_session(gate)
+        gate.authorize("remove_user", user_id="u", role="user")
+        audit = gate.audit_action_classes()
+        assert audit.observation_available is False
+        assert _by_name(audit)["remove_user"].basis is (
+            SuggestionBasis.OBSERVATION_UNAVAILABLE
+        )
+
+    def test_no_decisions_issued_is_observed_none_not_unavailable(self):
+        """A fresh gate has an empty log because nothing happened, not because
+        the backend is broken."""
+        gate = AuthorizationGate()
+        gate.register_tool("frobnicate", _lineage_perms(risk_level="low"))
+        audit = gate.audit_action_classes()
+        assert audit.decisions_issued == 0
+        assert audit.observation_available is True
+        assert _by_name(audit)["frobnicate"].basis is SuggestionBasis.OBSERVED_NONE
+
+
+class TestPolarityGuardAcrossTheEngine:
+    #: Names chosen to hit every branch: deletion, membership, both,
+    #: value-carrying, residual-only, and nothing.
+    _NAMES = [
+        "remove_user", "add_user_to_channel", "delete_channel", "wipe_db",
+        "reserve_table", "book_flight", "transfer_funds", "create_booking",
+        "frobnicate", "get_user", "list_users", "purge_logs", "revoke_role",
+        "kick_user", "invite_member", "remove_user_from_channel",
+    ]
+
+    def test_no_finding_ever_pairs_value_carrying_with_no_human_decision(self):
+        """THE invariant. Swept across every risk level, both gating modes,
+        and every observation state — including a broken backend."""
+        for risk in ("low", "medium", "high", "critical"):
+            for gate_conseq in (True, False):
+                for assertion in (
+                    {},
+                    {"is_consequential": True},
+                    {"is_deletion": True},
+                    {"is_membership_change": True},
+                    {"is_consequential": True, "is_deletion": True},
+                ):
+                    gate = AuthorizationGate()
+                    for name in self._NAMES:
+                        gate.register_tool(
+                            name,
+                            _lineage_perms(
+                                risk_level=risk,
+                                gate_consequential=gate_conseq,
+                            ),
+                        )
+                    _clean_session(gate)
+                    if assertion:
+                        for name in self._NAMES:
+                            gate.authorize(
+                                name, user_id="u", role="user", **assertion,
+                            )
+                    for f in gate.audit_action_classes():
+                        if f.suggests_value_carrying:
+                            assert f.requires_human_decision is True, (
+                                f"POLARITY: {f.tool_name} risk={risk} "
+                                f"gate_consequential={gate_conseq} "
+                                f"assertion={assertion}"
+                            )
+
+    def test_value_carrying_is_never_in_a_paste_ready_block(self):
+        gate = AuthorizationGate()
+        for name in self._NAMES:
+            gate.register_tool(name, _lineage_perms(risk_level="high"))
+        out = format_action_class_audit(gate.audit_action_classes())
+        for block in out.split("\n\n"):
+            if "is_value_carrying" in block:
+                assert "paste:" not in block
+
+    def test_suggestion_never_names_value_carrying_alongside_a_value_free_class(self):
+        """ActionClassConfig's validator rejects that combination outright, so
+        a suggestion producing it would be un-pasteable."""
+        gate = AuthorizationGate()
+        for name in self._NAMES:
+            gate.register_tool(name, _lineage_perms(risk_level="high"))
+        for f in gate.audit_action_classes():
+            s = set(f.suggestion or ())
+            if "is_value_carrying" in s:
+                assert not (s & {"is_deletion", "is_membership_change"})
+
+    def test_every_suggestion_is_a_valid_action_class_config(self):
+        """A paste-ready suggestion must actually construct."""
+        gate = AuthorizationGate()
+        for name in self._NAMES:
+            gate.register_tool(name, _lineage_perms(risk_level="critical"))
+        for f in gate.audit_action_classes():
+            if f.suggestion:
+                cfg = ActionClassConfig(**{s: True for s in f.suggestion})
+                assert cfg is not None
+
+
+# ---------------------------------------------------------------------------
+# The audit is inert. It observes gating; it never changes it.
+# ---------------------------------------------------------------------------
+
+
+def _fingerprint(r):
+    """Everything about a decision except its nondeterministic identifiers."""
+    return (
+        r.allowed,
+        r.decision,
+        None if r.denial is None else {
+            k: v for k, v in r.denial.items() if k != "audit_id"
+        },
+        r.needs_approval,
+        r.approval_channel,
+        r.session_gate_shadow,
+        tuple(r.transformations_applied),
+    )
+
+
+class TestAuditChangesNoGatingDecision:
+    @staticmethod
+    def _sequence(gate):
+        out = []
+        for flags in (
+            {"is_consequential": True},
+            {"is_deletion": True},
+            {},
+            {"is_membership_change": True, "is_consequential": True},
+        ):
+            out.append(
+                _fingerprint(
+                    gate.authorize(
+                        "delete_channel", user_id="u", role="user",
+                        parameters={"channel": "#general"}, **flags,
+                    )
+                )
+            )
+        return out
+
+    def test_identical_results_with_audit_interleaved(self):
+        """Byte-identical AuthResults whether or not audit_action_classes()
+        runs between calls."""
+        g1 = AuthorizationGate()
+        g1.register_tool("delete_channel", _lineage_perms(gate_consequential=False))
+        _tainted_session(g1)
+        baseline = self._sequence(g1)
+
+        g2 = AuthorizationGate()
+        g2.register_tool("delete_channel", _lineage_perms(gate_consequential=False))
+        _tainted_session(g2)
+        with_audit = []
+        for flags in (
+            {"is_consequential": True},
+            {"is_deletion": True},
+            {},
+            {"is_membership_change": True, "is_consequential": True},
+        ):
+            g2.audit_action_classes()  # between every decision
+            with_audit.append(
+                _fingerprint(
+                    g2.authorize(
+                        "delete_channel", user_id="u", role="user",
+                        parameters={"channel": "#general"}, **flags,
+                    )
+                )
+            )
+            g2.audit_action_classes()
+
+        assert baseline == with_audit
+
+    def test_observation_inertness_under_heavy_traffic(self):
+        """Heavy observed traffic asserting every class, then an undeclared
+        tool with action_class=None still gates identically on taint.
+
+        Proves observations never leak into the disjunct: the tally is large
+        and screams "deletion", and the gate ignores it completely.
+        """
+        quiet = AuthorizationGate()
+        quiet.register_tool("delete_channel", _lineage_perms(gate_consequential=False))
+        _tainted_session(quiet)
+        quiet_result = _fingerprint(
+            quiet.authorize("delete_channel", user_id="u", role="user")
+        )
+
+        noisy = AuthorizationGate()
+        noisy.register_tool("delete_channel", _lineage_perms(gate_consequential=False))
+        _tainted_session(noisy)
+        for _ in range(50):
+            noisy.authorize(
+                "delete_channel", user_id="u", role="user",
+                is_deletion=True, is_membership_change=True,
+                is_consequential=True,
+            )
+        audit = noisy.audit_action_classes()
+        f = _by_name(audit)["delete_channel"]
+        assert f.observed["is_deletion"] >= 50  # the evidence is overwhelming
+        assert f.suggestion == ("is_deletion", "is_membership_change")
+
+        noisy_result = _fingerprint(
+            noisy.authorize("delete_channel", user_id="u", role="user")
+        )
+        # ...and it changed nothing. permissions.action_class is still None.
+        assert noisy.get_permissions("delete_channel").action_class is None
+        assert noisy_result == quiet_result
+
+    def test_observed_deletion_does_not_gate_an_undeclared_tool(self):
+        """The residual path stays open despite mountains of observation.
+        Only a human writing action_class closes it."""
+        gate = AuthorizationGate()
+        gate.register_tool("delete_channel", _lineage_perms(gate_consequential=False))
+        _tainted_session(gate)
+        for _ in range(10):
+            gate.authorize(
+                "delete_channel", user_id="u", role="user", is_deletion=True,
+            )
+        gate.audit_action_classes()
+        r = gate.authorize("delete_channel", user_id="u", role="user")
+        assert r.allowed is True  # unchanged residual, per TestResidualUnassertedPath
+
+
+# ---------------------------------------------------------------------------
+# Tier B is load-bearing on the audit record surviving a real backend.
+# ---------------------------------------------------------------------------
+
+
+class TestFileBackendRoundTrip:
+    def test_asserted_classes_survives_minimal_through_file_backend(self, tmp_path):
+        """The full Tier B chain on disk: write at MINIMAL, read back, suggest.
+
+        If AuditLogger stripped metadata at MINIMAL, or FileAuditBackend
+        dropped it on the JSON round trip, Tier B would silently degrade to
+        Tier A on every MINIMAL-logging tool — and report basis="observed_none"
+        as though the tool had simply never been called that way.
+        """
+        path = tmp_path / "audit.jsonl"
+
+        writer = AuthorizationGate(audit_backend=FileAuditBackend(path))
+        writer.register_tool(
+            "add_user_to_channel",
+            _lineage_perms(risk_level="medium", log_level=AuditLogLevel.MINIMAL),
+        )
+        _clean_session(writer)
+        for _ in range(2):
+            writer.authorize(
+                "add_user_to_channel", user_id="u", role="user",
+                is_consequential=True,
+            )
+
+        # Read back through a fresh gate: nothing survives but the file.
+        reader = AuthorizationGate(audit_backend=FileAuditBackend(path))
+        reader.register_tool(
+            "add_user_to_channel",
+            _lineage_perms(risk_level="medium", log_level=AuditLogLevel.MINIMAL),
+        )
+        f = _by_name(reader.audit_action_classes())["add_user_to_channel"]
+        assert f.observed["is_consequential"] >= 2
+        assert f.basis is SuggestionBasis.OBSERVED
+        assert f.suggestion == ("is_membership_change",)
+
+    def test_raw_record_on_disk_carries_asserted_classes(self, tmp_path):
+        import json
+
+        path = tmp_path / "audit.jsonl"
+        gate = AuthorizationGate(audit_backend=FileAuditBackend(path))
+        gate.register_tool(
+            "remove_user",
+            _lineage_perms(log_level=AuditLogLevel.MINIMAL),
+        )
+        _clean_session(gate)
+        gate.authorize("remove_user", user_id="u", role="user", is_deletion=True)
+
+        lines = [json.loads(x) for x in path.read_text().splitlines() if x.strip()]
+        assert any(
+            r.get("metadata", {}).get("asserted_classes") == ["is_deletion"]
+            for r in lines
+        )
+
+
+# ---------------------------------------------------------------------------
+# KNOWN DEFECT, pre-existing, NOT fixed on this branch.
+#
+# policy.py:489, :537, :589 compare `permissions.version >= "1.3"` as STRINGS.
+# "1.10" >= "1.3" is False, so a v1.10 permission block silently skips the
+# session write-gate, parameter lineage, and novel lineage — all three fail
+# OPEN. Latent only because SCHEMA_VERSION is currently "1.3".
+#
+# These tests PIN the current behaviour rather than assert it is correct. The
+# report deliberately mirrors the defect: a report that parsed the version
+# properly would tell an operator that a v1.10 tool is taint-gated when the
+# gate in fact skips it. When policy.py is fixed, these tests must be updated
+# in the SAME commit, and they exist so that fix cannot land silently.
+# ---------------------------------------------------------------------------
+
+
+class TestKnownVersionComparisonDefect:
+    def test_lexicographic_compare_is_what_policy_does(self):
+        assert ("1.10" >= "1.3") is False
+        assert ("1.9" >= "1.3") is True
+
+    def test_report_mirrors_the_gate_rather_than_correcting_it(self):
+        """The report must never claim coverage the gate does not provide."""
+        gate = AuthorizationGate()
+        gate.register_tool("v1_9", _lineage_perms(version="1.9"))
+        gate.register_tool("v1_10", _lineage_perms(version="1.10"))
+        found = _by_name(gate.audit_action_classes())
+        assert found["v1_9"].lineage_mode is LineageMode.UNIFORM
+        # Wrong in an ideal world; RIGHT about what the gate actually does.
+        assert found["v1_10"].lineage_mode is LineageMode.INERT
+        assert found["v1_10"].status is FindingStatus.NOT_COVERED
+
+    def test_v1_10_actually_fails_open_at_the_gate(self):
+        """Not a report artefact. The gate really does skip the taint check."""
+        gate = AuthorizationGate()
+        gate.register_tool(
+            "delete_channel",
+            _lineage_perms(version="1.10", decision="deny"),
+        )
+        _tainted_session(gate)
+        r = gate.authorize(
+            "delete_channel", user_id="u", role="user", is_consequential=True,
+        )
+        assert r.allowed is True  # <-- fail-open. Pre-existing. Flagged, not fixed.
+
+    def test_v1_9_is_correctly_gated(self):
+        gate = AuthorizationGate()
+        gate.register_tool(
+            "delete_channel",
+            _lineage_perms(version="1.9", decision="deny"),
+        )
+        _tainted_session(gate)
+        r = gate.authorize(
+            "delete_channel", user_id="u", role="user", is_consequential=True,
+        )
+        assert r.allowed is False
+        assert r.denial["reason"] == "untrusted_lineage"
