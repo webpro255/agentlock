@@ -29,7 +29,6 @@ Example::
 from __future__ import annotations
 
 import time
-import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -125,6 +124,12 @@ _ASSERTED_CLASS_FLAGS: tuple[str, ...] = (
     # The class flags a caller may assert on ``authorize()``, in a stable
     # report order.  Recorded as decision provenance in the audit record;
     # see ``_asserted_classes`` below.
+    #
+    # ``is_value_carrying`` is DELIBERATELY ABSENT and must stay absent: it is
+    # gating-REMOVING, so it is declarable only in the trusted permission block
+    # and has no ``authorize()`` kwarg to record.  Adding it here would imply a
+    # caller can assert it — the exact bypass the polarity rule closes.  See
+    # ActionClassConfig's "THE POLARITY RULE" in schema.py.
     "is_bulk",
     "is_external",
     "is_financial",
@@ -218,40 +223,22 @@ class AuthorizationGate:
             permissions = AgentLockPermissions(**permissions)
         self._tools[tool_name] = permissions
 
-        # Defense in depth for the residual "unasserted-entirely" path: the
-        # fail-closed inversion in policy.py only rescues a call that asserts
+        # The residual "unasserted-entirely" path is still real: the fail-closed
+        # inversion in policy.py only rescues a call that asserts
         # is_consequential.  A tool that declares no class at all, and whose
         # caller asserts none, matches no disjunct and is never taint-gated.
-        # The inversion cannot close that; make it LOUD instead of silent.
-        # A warning, not an error — an undeclared tool may be a benign read.
         #
-        # Aimed at the class that actually admits the hazard: only a tool that
-        # is plausibly consequential (high/critical risk) under *selective*
-        # gating (gate_consequential=False) with no declared class.  A low-risk
-        # undeclared tool is almost certainly a read, and warning on it would
-        # train operators to ignore the warning that matters.
+        # This used to raise a UserWarning here.  It no longer does.  A warning
+        # fired at registration cannot see how the tool is actually called, so
+        # it necessarily guessed from name and risk level, went off in every
+        # importing application, and under `-W error::UserWarning` turned a
+        # registration into a raise.  The signal is now delivered on demand and
+        # with evidence: `audit_action_classes()` reports every tool with
+        # lineage_policy.enabled, partitions declared from undeclared, and backs
+        # its suggestions with what callers were actually observed asserting.
         #
-        # NOTE: RiskLevel is a plain str-Enum, so `risk_level >= HIGH` compares
-        # LEXICOGRAPHICALLY ("critical" < "high" < "low") and would silently
-        # EXCLUDE critical tools.  Membership test, never an ordering test.
-        _lp = permissions.lineage_policy
-        if (
-            _lp is not None
-            and _lp.enabled
-            and not _lp.gate_consequential
-            and permissions.action_class is None
-            and permissions.risk_level in (RiskLevel.HIGH, RiskLevel.CRITICAL)
-        ):
-            warnings.warn(
-                f"Tool '{tool_name}' ({permissions.risk_level.value} risk) is "
-                f"registered with gate_consequential=False but declares no "
-                f"action_class. Consequential calls stay gated (fail-closed), "
-                f"but a call asserting no class at all is never taint-gated. "
-                f"Declare ActionClassConfig(is_value_carrying=True) to recover "
-                f"utility, or is_deletion / is_membership_change to gate it.",
-                UserWarning,
-                stacklevel=2,
-            )
+        # Removing the warning changed no gating behaviour whatsoever — see the
+        # guard in tests/test_v14_failclosed.py.
 
         # Pre-build redaction engine if data policy has prohibited types
         dp = permissions.data_policy

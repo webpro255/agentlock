@@ -5,6 +5,16 @@ All notable changes to AgentLock will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+
+- **The `register_tool()` undeclared-tool `UserWarning` is gone.** Registering a high/critical-risk tool with `gate_consequential=False` and no `action_class` no longer emits a `UserWarning`. A registration-time warning cannot see how a tool is actually called, so it guessed from name and risk level, fired in every importing application, and could not be acted on with evidence. **Behaviour change for strict callers:** applications running under `-W error::UserWarning` previously saw such a registration *raise*; it now returns normally. This is intended. Applications that relied on the raise as a fail-fast configuration check should call `gate.audit_action_classes()` at startup and assert on the result instead. **No gating decision changed** — the warning was pure side effect, and the disjunct `C ∧ (G ∨ ¬V)` never consulted risk level.
+
+### Added
+
+- **Decision provenance in the audit record** — every `authorize()` exit path now records the class flags the caller asserted under `AuditRecord.metadata["asserted_classes"]`. Descriptive only: written strictly after the decision, never read back by the gate, and never placed in `PolicyContext.metadata`. The key is omitted entirely when nothing was asserted. It survives `log_level=MINIMAL`, as `trust_ceiling` already does.
+
 ## [1.3.0] - 2026-07-06
 
 ### Changed

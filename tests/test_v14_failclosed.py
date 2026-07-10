@@ -20,7 +20,6 @@ deployment flag. That is the proof, and the table below is its enumeration.
 from __future__ import annotations
 
 import hashlib
-import warnings
 
 import pytest
 from pydantic import ValidationError
@@ -60,10 +59,13 @@ def _perms(
 
 
 def _register(gate, name, perms):
-    """Register, suppressing the undeclared-tool warning (asserted separately)."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", UserWarning)
-        gate.register_tool(name, perms)
+    """Register a tool.
+
+    Once wrapped ``warnings.catch_warnings()`` to suppress the undeclared-tool
+    UserWarning that ``register_tool()`` used to emit.  That warning is gone;
+    the helper stays so the call sites below read as they did when it existed.
+    """
+    gate.register_tool(name, perms)
 
 
 def _tainted_session(gate) -> str:
@@ -297,63 +299,31 @@ class TestPolarityRuleTrustedBlockOnly:
 
 
 # ---------------------------------------------------------------------------
-# Defense in depth: the residual "unasserted-entirely" path is LOUD.
+# The residual "unasserted-entirely" path, and the boundary of the inversion.
+#
+# A UserWarning at register_tool() used to stand here as defense in depth. It
+# was removed: a registration-time warning cannot see how a tool is actually
+# called, so it guessed from name and risk level, fired in every importing
+# application, and raised under `-W error::UserWarning`. The signal moved to
+# the on-demand `gate.audit_action_classes()` report, which reads back what
+# callers were observed asserting.
+#
+# The two tests below are the guard on that removal. Their gating assertions
+# are unchanged from when the warning existed (commit ca4a473) and must stay
+# that way: together they prove that quieting the warning quieted nothing else.
+# The first shows the gate still holds where the warning used to be silent
+# (low risk); the second pins the one path that was, and remains, open.
 # ---------------------------------------------------------------------------
 
 
-class TestUndeclaredToolWarning:
-    def test_warns_when_ungating_flag_set_and_no_action_class(self):
-        gate = AuthorizationGate()
-        with pytest.warns(UserWarning, match="declares no action_class"):
-            gate.register_tool("reserve", _perms(gate_consequential=False))
-
-    def test_warns_for_high_risk_undeclared_tool(self):
-        """Aimed at the class that admits the hazard."""
-        gate = AuthorizationGate()
-        with pytest.warns(UserWarning, match="high risk"):
-            gate.register_tool(
-                "delete_channel",
-                _perms(gate_consequential=False, risk_level="high"),
-            )
-
-    def test_warns_for_critical_risk_undeclared_tool(self):
-        """Guards a real trap: RiskLevel is a str-Enum, so `>= HIGH` is a
-        LEXICOGRAPHIC compare and "critical" < "high" — an ordering test would
-        silently skip the highest-risk tools. Membership test, not ordering.
-        """
-        gate = AuthorizationGate()
-        with pytest.warns(UserWarning, match="critical risk"):
-            gate.register_tool(
-                "wipe_db",
-                _perms(gate_consequential=False, risk_level="critical"),
-            )
-
-    def test_does_not_warn_for_low_risk_undeclared_tool(self):
-        """A low-risk undeclared tool is almost certainly a benign read.
-
-        Warning on it would train operators to ignore the warning that matters.
-        """
-        gate = AuthorizationGate()
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", UserWarning)
-            gate.register_tool(
-                "read_doc",
-                _perms(gate_consequential=False, risk_level="low"),
-            )
-
-    def test_does_not_warn_for_medium_risk_undeclared_tool(self):
-        gate = AuthorizationGate()
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", UserWarning)
-            gate.register_tool(
-                "list_items",
-                _perms(gate_consequential=False, risk_level="medium"),
-            )
-
+class TestResidualUnassertedPath:
     def test_risk_level_tightening_does_not_weaken_gating(self):
-        """Warning-emission only: a LOW-risk undeclared consequential call
-        still fails CLOSED under taint. Quieting the warning must not quiet
-        the gate.
+        """A LOW-risk undeclared consequential call still fails CLOSED.
+
+        The removed warning deliberately ignored low-risk tools. This proves
+        that exemption was never load-bearing: gating is decided by the
+        disjunct C ∧ (G ∨ ¬V), which never consulted risk level at all.
+        Quieting the warning must not quiet the gate.
         """
         gate = AuthorizationGate()
         _register(
@@ -367,32 +337,14 @@ class TestUndeclaredToolWarning:
         assert r.allowed is False
         assert r.denial["reason"] == "untrusted_lineage"
 
-    def test_no_warning_when_action_class_declared(self):
-        gate = AuthorizationGate()
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", UserWarning)
-            gate.register_tool(
-                "reserve",
-                _perms(
-                    gate_consequential=False,
-                    action_class=ActionClassConfig(is_value_carrying=True),
-                ),
-            )
-
-    def test_no_warning_when_bucket_still_gated(self):
-        """A default deployment never sees this warning."""
-        gate = AuthorizationGate()
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", UserWarning)
-            gate.register_tool("reserve", _perms(gate_consequential=True))
-
     def test_residual_path_unasserted_call_is_not_gated(self):
         """Honest boundary: the inversion does NOT close this path.
 
         A tool declaring no class, called asserting no class, matches no
-        disjunct and executes under taint. The warning above is why it is not
-        silent. Documented as plan §2 path 4; closing it needs a separate
-        mechanism (require_action_class / default_consequential).
+        disjunct and executes under taint. Documented as plan §2 path 4;
+        closing it needs a separate mechanism (require_action_class /
+        default_consequential). `audit_action_classes()` is how an operator
+        now finds such a tool before an attacker does.
         """
         gate = AuthorizationGate()
         _register(gate, "delete_channel", _perms(gate_consequential=False))
@@ -401,4 +353,4 @@ class TestUndeclaredToolWarning:
             "delete_channel", user_id="u", role="user",
             parameters={"channel": "#general"},
         )
-        assert r.allowed is True  # known residual, made loud at registration
+        assert r.allowed is True  # known residual, surfaced by the audit report
