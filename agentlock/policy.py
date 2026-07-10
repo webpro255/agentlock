@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agentlock.context import ContextState
-from agentlock.schema import AgentLockPermissions
+from agentlock.schema import AgentLockPermissions, version_at_least
 from agentlock.types import (
     ApprovalThreshold,
     DataBoundary,
@@ -486,7 +486,7 @@ class PolicyEngine:
         if (
             _lp is not None
             and _lp.param_lineage_enabled
-            and permissions.version >= "1.3"
+            and version_at_least(permissions.version, (1, 3))
         ):
             pmatch = context.metadata.get("param_lineage")
             if pmatch is not None:
@@ -534,7 +534,7 @@ class PolicyEngine:
         if (
             _lp is not None
             and _lp.novel_lineage_enabled
-            and permissions.version >= "1.3"
+            and version_at_least(permissions.version, (1, 3))
         ):
             nmatch = context.metadata.get("novel_lineage")
             if nmatch is not None:
@@ -586,7 +586,7 @@ class PolicyEngine:
         if (
             lineage_policy is not None
             and lineage_policy.enabled
-            and permissions.version >= "1.3"
+            and version_at_least(permissions.version, (1, 3))
         ):
             # v1.4 — resolve the value-free action classes against the TRUSTED
             # per-tool permission block before consulting the caller's kwarg.
@@ -711,7 +711,10 @@ class PolicyEngine:
         # These run independently of both filters above.  Trust degradation
         # fires based on session state from notify_context_write(), not
         # from parameter content or PII classification.
-        if permissions.version >= "1.1" and context.context_state is not None:
+        if (
+            version_at_least(permissions.version, (1, 1))
+            and context.context_state is not None
+        ):
             cs = context.context_state
 
             # 10. Trust degradation

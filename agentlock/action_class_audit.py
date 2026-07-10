@@ -15,8 +15,9 @@ per report — never during a decision.
 Coverage is defined to match ``policy.py`` exactly, not approximately.  Three
 structural facts drive it, and the report would lie if it ignored any of them:
 
-1. The lineage block is skipped entirely when ``permissions.version < "1.3"``,
-   however the policy is configured.  Such a tool is ``inert``.
+1. The lineage block is skipped entirely when the permission block predates
+   v1.3, however the policy is configured.  Such a tool is ``inert``.
+   Compared NUMERICALLY via ``schema.version_at_least`` — never as strings.
 2. ``session_write_gate=False`` computes the decision but never blocks — it
    records a shadow and falls through.  Such a tool is ``shadow``.
 3. ``is_value_carrying`` weakens ONLY the residual ``is_consequential``
@@ -31,6 +32,8 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
+
+from agentlock.schema import version_at_least
 
 if TYPE_CHECKING:  # pragma: no cover
     from agentlock.audit import AuditRecord
@@ -88,7 +91,8 @@ class FindingStatus(str, Enum):
 class LineageMode(str, Enum):
     """How the lineage policy treats this tool's residual bucket."""
 
-    #: ``permissions.version < "1.3"`` — the policy block is skipped entirely.
+    #: The permission block predates v1.3 (numeric compare) — policy.py skips
+    #: the lineage block entirely.
     INERT = "inert"
     #: ``session_write_gate=False`` — decision computed, never enforced.
     SHADOW = "shadow"
@@ -231,7 +235,6 @@ def declared_classes(permissions: AgentLockPermissions) -> tuple[str, ...]:
 def _lineage_mode(permissions: AgentLockPermissions) -> LineageMode:
     lp = permissions.lineage_policy
     assert lp is not None  # caller filters on lp.enabled
-    # Mirrors policy.py's own guard: `permissions.version >= "1.3"`.
     if not _version_ok(permissions):
         return LineageMode.INERT
     if not lp.session_write_gate:
@@ -240,25 +243,19 @@ def _lineage_mode(permissions: AgentLockPermissions) -> LineageMode:
 
 
 def _version_ok(permissions: AgentLockPermissions) -> bool:
-    """Does policy.py consider this permission block v1.3+?
+    """Does the gate consider this permission block v1.3+?
 
-    DELIBERATELY reproduces policy.py's LEXICOGRAPHIC string comparison,
-    bug and all, rather than parsing the version properly.
+    Calls the SAME ``version_at_least`` the gate calls.  The report must never
+    claim coverage the gate does not provide, so this shares the predicate
+    rather than reimplementing it — a second implementation is a second thing
+    to drift.
 
-    KNOWN DEFECT, pre-existing, NOT fixed here (policy.py:489, :537, :589):
-    ``permissions.version >= "1.3"`` compares strings, so ``"1.10" >= "1.3"``
-    is False.  A v1.10 permission block silently skips the session write-gate,
-    parameter lineage, AND novel lineage — all three fail OPEN.  Same trap
-    class as ``RiskLevel``'s str-Enum ordering.  It is latent today only
-    because SCHEMA_VERSION is "1.3"; it detonates at "1.10".
-
-    This function must keep mirroring the defect until policy.py is fixed.
-    A report that "helpfully" parsed the version would tell an operator that a
-    v1.10 tool is covered by the taint gate when the gate in fact skips it —
-    trading a real bug for a report that lies about it, which is strictly
-    worse.  When policy.py is fixed, fix this in the SAME commit.
+    (This function once deliberately mirrored a lexicographic string compare,
+    bug and all, because a report that "helpfully" parsed versions would have
+    told operators a v1.10 tool was taint-gated while the gate skipped it.
+    The gate is fixed; the mirror now points at the fix.)
     """
-    return bool(permissions.version >= "1.3")
+    return version_at_least(permissions.version, (1, 3))
 
 
 def describe(
@@ -422,7 +419,8 @@ _VALUE_CARRYING_VERBS = frozenset(
 #: Tier A fires only for these risk levels.  MEMBERSHIP TEST, never an
 #: ordering test: RiskLevel is a plain str-Enum, so `risk >= "high"` compares
 #: LEXICOGRAPHICALLY and "critical" < "high" would silently exclude the
-#: highest-risk tools.  Same trap as policy.py's `version >= "1.3"`.
+#: highest-risk tools.  Same trap class as the lexicographic version compare
+#: that `schema.version_at_least` now exists to prevent.
 _ELEVATED_RISK = frozenset({"high", "critical"})
 
 #: Named (gating-ADDING) classes, in schema order.

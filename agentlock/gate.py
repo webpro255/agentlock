@@ -62,7 +62,7 @@ from agentlock.policy import PolicyEngine, RequestContext
 from agentlock.rate_limit import RateLimiter
 from agentlock.receipts import ReceiptSigner, SignedReceipt
 from agentlock.redaction import RedactionEngine, RedactionResult
-from agentlock.schema import AgentLockPermissions
+from agentlock.schema import AgentLockPermissions, version_at_least
 from agentlock.session import Session, SessionStore
 from agentlock.signals.combos import ComboConfig, ComboDetector
 from agentlock.signals.velocity import VelocityConfig, VelocityDetector
@@ -540,7 +540,7 @@ class AuthorizationGate:
         # Resolve context state for v1.1
         resolved_session_id = session.session_id if session else ""
         context_state = None
-        if permissions.version >= "1.1" and resolved_session_id:
+        if version_at_least(permissions.version, (1, 1)) and resolved_session_id:
             context_state = self._context_tracker.get(resolved_session_id)
             # Apply restrict_scope effect
             if (
@@ -563,7 +563,7 @@ class AuthorizationGate:
         # v1.3 lineage: the gate owns this read; callers cannot supply it.
         # A worst-case taint summary of the session's provenance log is
         # attached so the policy engine can gate purely on provenance.
-        if permissions.version >= "1.3" and resolved_session_id:
+        if version_at_least(permissions.version, (1, 3)) and resolved_session_id:
             request_metadata["lineage"] = self._context_tracker.lineage_summary(
                 resolved_session_id
             )

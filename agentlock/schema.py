@@ -31,6 +31,8 @@ from agentlock.types import (
 
 __all__ = [
     "AgentLockPermissions",
+    "parse_version",
+    "version_at_least",
     "ScopeConfig",
     "RateLimitConfig",
     "DataPolicyConfig",
@@ -53,6 +55,44 @@ __all__ = [
 ]
 
 SCHEMA_VERSION = "1.3"
+
+
+def parse_version(version: str) -> tuple[int, ...] | None:
+    """Parse a dotted schema version into an integer tuple.
+
+    ``None`` when the version is not a plain dotted-integer string.  Callers
+    must treat that as "unknown", never as "old".
+
+    NEVER compare version strings directly.  ``"1.10" >= "1.3"`` is ``False``
+    lexicographically, because ``"1"`` sorts before ``"3"``.  That comparison
+    was live at three sites in policy.py and silently disabled the session
+    write-gate, parameter lineage, and novel lineage for any ``1.10+`` block.
+    """
+    parts = version.strip().split(".")
+    out: list[int] = []
+    for part in parts:
+        if not part.isdigit():  # rejects "", "-1", "1a", "beta"
+            return None
+        out.append(int(part))
+    return tuple(out) if out else None
+
+
+def version_at_least(version: str, minimum: tuple[int, ...]) -> bool:
+    """Is ``version`` at least ``minimum``?  Numeric, component-wise.
+
+    FAILS CLOSED.  An unparseable version returns ``True``, so a malformed
+    permission block still runs the lineage gate rather than skipping it.
+    The guards this feeds are all of the form
+    ``if policy_enabled and version_at_least(...)`` — enforcement, not
+    exemption — so "unknown version" must mean "enforce", never "skip".
+    """
+    parsed = parse_version(version)
+    if parsed is None:
+        return True
+    width = max(len(parsed), len(minimum))
+    padded = parsed + (0,) * (width - len(parsed))
+    floor = minimum + (0,) * (width - len(minimum))
+    return padded >= floor
 
 
 class ScopeConfig(BaseModel):

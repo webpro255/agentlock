@@ -38,6 +38,7 @@ from agentlock import (
     format_action_class_audit,
 )
 from agentlock.action_class_audit import VALUE_CARRYING_QUESTION
+from agentlock.schema import parse_version, version_at_least
 
 
 def _h(s: str) -> str:
@@ -1138,39 +1139,61 @@ class TestFileBackendRoundTrip:
 
 
 # ---------------------------------------------------------------------------
-# KNOWN DEFECT, pre-existing, NOT fixed on this branch.
+# Version comparison. Was a lexicographic string compare at SIX sites; now
+# numeric via schema.version_at_least. Found by the action-class audit during
+# its own development, because the report had to reproduce the gate's coverage
+# rule exactly and the rule turned out to be wrong.
 #
-# policy.py:489, :537, :589 compare `permissions.version >= "1.3"` as STRINGS.
-# "1.10" >= "1.3" is False, so a v1.10 permission block silently skips the
-# session write-gate, parameter lineage, and novel lineage — all three fail
-# OPEN. Latent only because SCHEMA_VERSION is currently "1.3".
-#
-# These tests PIN the current behaviour rather than assert it is correct. The
-# report deliberately mirrors the defect: a report that parsed the version
-# properly would tell an operator that a v1.10 tool is taint-gated when the
-# gate in fact skips it. When policy.py is fixed, these tests must be updated
-# in the SAME commit, and they exist so that fix cannot land silently.
+# "1.10" >= "1.3" is False as strings. A v1.10 permission block silently
+# skipped the session write-gate, parameter lineage, and novel lineage — all
+# three failing OPEN. These tests now assert the FIXED behaviour.
 # ---------------------------------------------------------------------------
 
 
-class TestKnownVersionComparisonDefect:
-    def test_lexicographic_compare_is_what_policy_does(self):
-        assert ("1.10" >= "1.3") is False
-        assert ("1.9" >= "1.3") is True
+class TestVersionParsing:
+    def test_the_ordering_that_string_compare_got_wrong(self):
+        assert parse_version("1.3") < parse_version("1.10") < parse_version("2.0")
+        # ...and the string compare that used to decide this:
+        assert ("1.3" < "1.10") is False  # the bug, preserved as documentation
 
-    def test_report_mirrors_the_gate_rather_than_correcting_it(self):
-        """The report must never claim coverage the gate does not provide."""
-        gate = AuthorizationGate()
-        gate.register_tool("v1_9", _lineage_perms(version="1.9"))
-        gate.register_tool("v1_10", _lineage_perms(version="1.10"))
-        found = _by_name(gate.audit_action_classes())
-        assert found["v1_9"].lineage_mode is LineageMode.UNIFORM
-        # Wrong in an ideal world; RIGHT about what the gate actually does.
-        assert found["v1_10"].lineage_mode is LineageMode.INERT
-        assert found["v1_10"].status is FindingStatus.NOT_COVERED
+    def test_parses_dotted_integers(self):
+        assert parse_version("1.3") == (1, 3)
+        assert parse_version("1.10") == (1, 10)
+        assert parse_version("2") == (2,)
+        assert parse_version("1.3.1") == (1, 3, 1)
+        assert parse_version(" 1.4 ") == (1, 4)
 
-    def test_v1_10_actually_fails_open_at_the_gate(self):
-        """Not a report artefact. The gate really does skip the taint check."""
+    def test_malformed_versions_parse_to_none(self):
+        for bad in ("", "banana", "1.x", "1..3", "-1", "1.3-beta", "v1.3"):
+            assert parse_version(bad) is None, bad
+
+    def test_numeric_ordering_across_the_boundary(self):
+        for v, expected in [
+            ("1.2", False), ("1.3", True), ("1.3.0", True), ("1.9", True),
+            ("1.10", True), ("1.11", True), ("1.29", True), ("2.0", True),
+            ("10.0", True), ("0.9", False),
+        ]:
+            assert version_at_least(v, (1, 3)) is expected, v
+
+    def test_component_padding(self):
+        assert version_at_least("1.3", (1, 3, 0)) is True
+        assert version_at_least("1.3", (1, 3, 1)) is False
+        assert version_at_least("2", (1, 3)) is True
+
+    def test_unparseable_version_fails_closed(self):
+        """An unknown version must ENFORCE, never exempt.
+
+        Every caller is `if policy_enabled and version_at_least(...)` — a
+        guard on enforcement. Returning False for a malformed version would
+        SKIP the lineage block, which is exactly backwards.
+        """
+        for bad in ("", "banana", "v1.3", "1.3-beta"):
+            assert version_at_least(bad, (1, 3)) is True, bad
+
+
+class TestVersionComparisonFixed:
+    def test_v1_10_is_gated_under_taint(self):
+        """The regression that used to fail open."""
         gate = AuthorizationGate()
         gate.register_tool(
             "delete_channel",
@@ -1180,9 +1203,10 @@ class TestKnownVersionComparisonDefect:
         r = gate.authorize(
             "delete_channel", user_id="u", role="user", is_consequential=True,
         )
-        assert r.allowed is True  # <-- fail-open. Pre-existing. Flagged, not fixed.
+        assert r.allowed is False
+        assert r.denial["reason"] == "untrusted_lineage"
 
-    def test_v1_9_is_correctly_gated(self):
+    def test_v1_9_is_still_gated(self):
         gate = AuthorizationGate()
         gate.register_tool(
             "delete_channel",
@@ -1194,3 +1218,64 @@ class TestKnownVersionComparisonDefect:
         )
         assert r.allowed is False
         assert r.denial["reason"] == "untrusted_lineage"
+
+    def test_pre_v13_is_still_inert(self):
+        """The fix must not accidentally start gating v1.2 blocks."""
+        gate = AuthorizationGate()
+        gate.register_tool(
+            "delete_channel",
+            _lineage_perms(version="1.2", decision="deny"),
+        )
+        _tainted_session(gate)
+        r = gate.authorize(
+            "delete_channel", user_id="u", role="user", is_consequential=True,
+        )
+        assert r.allowed is True
+
+    def test_malformed_version_is_gated_not_skipped(self):
+        """Fail CLOSED: an unparseable version must not skip the lineage block."""
+        gate = AuthorizationGate()
+        gate.register_tool(
+            "delete_channel",
+            _lineage_perms(version="banana", decision="deny"),
+        )
+        _tainted_session(gate)
+        r = gate.authorize(
+            "delete_channel", user_id="u", role="user", is_consequential=True,
+        )
+        assert r.allowed is False
+        assert r.denial["reason"] == "untrusted_lineage"
+
+    def test_report_agrees_with_the_fixed_gate(self):
+        """The report shares the gate's predicate; it never reimplements it."""
+        gate = AuthorizationGate()
+        gate.register_tool("v1_2", _lineage_perms(version="1.2"))
+        gate.register_tool("v1_9", _lineage_perms(version="1.9"))
+        gate.register_tool("v1_10", _lineage_perms(version="1.10"))
+        gate.register_tool("v2_0", _lineage_perms(version="2.0"))
+        found = _by_name(gate.audit_action_classes())
+        assert found["v1_2"].lineage_mode is LineageMode.INERT
+        assert found["v1_2"].status is FindingStatus.NOT_COVERED
+        for name in ("v1_9", "v1_10", "v2_0"):
+            assert found[name].lineage_mode is LineageMode.UNIFORM, name
+            assert found[name].status is FindingStatus.UNDECLARED, name
+
+    def test_no_raw_string_version_compare_remains_in_the_package(self):
+        """Guards against the trap being reintroduced anywhere in agentlock/."""
+        import pathlib
+        import re as _re
+
+        root = pathlib.Path(__file__).resolve().parent.parent / "agentlock"
+        offenders = []
+        pattern = _re.compile(r'\.version\s*[<>]=?\s*["\']')
+        for py in root.rglob("*.py"):
+            for i, line in enumerate(py.read_text().splitlines(), 1):
+                stripped = line.strip()
+                if stripped.startswith("#") or stripped.startswith("*"):
+                    continue  # prose in comments/docstrings may quote the bug
+                if pattern.search(line):
+                    offenders.append(f"{py.name}:{i}: {stripped}")
+        assert not offenders, (
+            "raw string version comparison reintroduced; use "
+            "schema.version_at_least:\n" + "\n".join(offenders)
+        )
