@@ -102,6 +102,123 @@ class PolicyDecision:
 
 
 # ---------------------------------------------------------------------------
+# The lineage gating predicate — ONE definition, TWO enforcement points.
+# ---------------------------------------------------------------------------
+# This is the single source of truth for "does session taint block this
+# action?".  It is consulted at CALL time by ``PolicyEngine.evaluate`` and at
+# COMMIT time by ``AuthorizationGate.resolve_deferred_commits``.
+#
+# It MUST NOT be duplicated.  A deferred write is authorized twice — once when
+# the agent asks for it and once at end-of-turn against the complete taint
+# state — and if the two sites compute gating differently, a policy that
+# un-gates at call time can be silently re-gated at commit time (or, worse,
+# the reverse).  That divergence is exactly the defect this module closes:
+# before v1.4-defer-policy the commit path denied on taint alone, ignoring
+# ``permissions.action_class`` entirely, which made ``gate_consequential=False``
+# inert whenever deferred commit was enabled.
+
+
+@dataclass(frozen=True, slots=True)
+class ActionFlags:
+    """The caller-asserted action classes for one tool call.
+
+    These are the ``is_*`` kwargs of ``authorize()``, captured so the
+    commit-time re-decision can evaluate the SAME disjunct the call-time path
+    evaluated.  A deferred record that carries no ActionFlags is treated as
+    fail-closed (gated), preserving pre-v1.4 behavior exactly.
+
+    Note the asymmetry, per the polarity rule in ``ActionClassConfig``:
+    every field here is gating-ADDING.  ``is_value_carrying`` is absent by
+    design — it is gating-REMOVING and is readable only from the trusted
+    permission block.
+    """
+
+    is_financial: bool = False
+    is_external: bool = False
+    is_bulk: bool = False
+    is_account_modification: bool = False
+    is_consequential: bool = False
+    is_deletion: bool = False
+    is_membership_change: bool = False
+
+
+def active_lineage_policy(permissions: AgentLockPermissions):
+    """The tool's lineage policy if it is live, else ``None``.
+
+    Live means: present, ``enabled``, and on a v1.3+ permission block.  Both
+    enforcement points gate on this identical condition.
+    """
+    lp = permissions.lineage_policy
+    if (
+        lp is not None
+        and lp.enabled
+        and version_at_least(permissions.version, (1, 3))
+    ):
+        return lp
+    return None
+
+
+def resolve_action_classes(
+    permissions: AgentLockPermissions, flags: ActionFlags
+) -> tuple[bool, bool, bool]:
+    """Resolve ``(is_deletion, is_membership_change, is_value_carrying)``.
+
+    Monotone OR for the gating-ADDING classes: the trusted per-tool
+    declaration is OR-ed with the caller's assertion, so a declaration can
+    only ever ADD gating and an omitted kwarg can never escape a class the
+    tool itself declares.
+
+    ``is_value_carrying`` is read ONLY from the trusted block — never from the
+    caller — because it is gating-REMOVING.
+    """
+    ac = permissions.action_class
+    is_deletion = bool(ac and ac.is_deletion) or flags.is_deletion
+    is_membership_change = (
+        bool(ac and ac.is_membership_change) or flags.is_membership_change
+    )
+    value_carrying = bool(ac and ac.is_value_carrying)
+    return is_deletion, is_membership_change, value_carrying
+
+
+def lineage_gated_action(
+    lineage_policy, permissions: AgentLockPermissions, flags: ActionFlags
+) -> bool:
+    """Is this action subject to the session-taint gate?
+
+    ``is_consequential`` is the RESIDUAL bucket, not a class, so
+    ``gate_consequential=False`` would un-gate an open-ended set: every
+    consequential tool nobody classified.  Inverted as ``C and (G or not V)``,
+    an unclassified consequential action fails CLOSED — un-gating needs BOTH
+    the deployment flag AND a positive per-tool ``is_value_carrying``
+    declaration.  With ``gate_consequential=True`` this reduces to
+    ``is_consequential``, exactly as before v1.4.
+
+    The value-free classes (deletion, membership change) are gated
+    independently of ``gate_consequential``: they admit no attacker-chosen
+    parameter value for per-value lineage to trace, so session taint is the
+    only signal that catches them.
+    """
+    is_deletion, is_membership_change, value_carrying = resolve_action_classes(
+        permissions, flags
+    )
+    return (
+        (lineage_policy.gate_financial and flags.is_financial)
+        or (lineage_policy.gate_external and flags.is_external)
+        or (lineage_policy.gate_bulk and flags.is_bulk)
+        or (
+            lineage_policy.gate_account_modification
+            and flags.is_account_modification
+        )
+        or (
+            flags.is_consequential
+            and (lineage_policy.gate_consequential or not value_carrying)
+        )
+        or (lineage_policy.gate_deletion and is_deletion)
+        or (lineage_policy.gate_membership_change and is_membership_change)
+    )
+
+
+# ---------------------------------------------------------------------------
 # Injection filter patterns
 # ---------------------------------------------------------------------------
 # These patterns detect adversarial parameter content: reconnaissance,
@@ -582,65 +699,26 @@ class PolicyEngine:
         # external / bulk) is blocked when untrusted content has entered
         # context.  Inert unless a lineage_policy is present, enabled, and
         # the permission block is v1.3+.
-        lineage_policy = permissions.lineage_policy
-        if (
-            lineage_policy is not None
-            and lineage_policy.enabled
-            and version_at_least(permissions.version, (1, 3))
-        ):
-            # v1.4 — resolve the value-free action classes against the TRUSTED
-            # per-tool permission block before consulting the caller's kwarg.
-            # Monotone OR: a declaration can only ADD gating, never cancel it.
-            # This closes the surface that selective gating would otherwise
-            # open — with gate_consequential off, a caller who merely omits
-            # is_deletion must not thereby escape the taint gate.  A tool
-            # registered as a deletion/membership tool carries that class
-            # itself, so the assertion lives on the trusted side.
-            _ac = permissions.action_class
-            is_deletion = bool(_ac and _ac.is_deletion) or context.is_deletion
-            is_membership_change = (
-                bool(_ac and _ac.is_membership_change)
-                or context.is_membership_change
+        lineage_policy = active_lineage_policy(permissions)
+        if lineage_policy is not None:
+            # v1.4 — the gating disjunct lives in ``lineage_gated_action`` and
+            # is shared verbatim with the commit-time re-decision in
+            # ``AuthorizationGate.resolve_deferred_commits``.  Do not inline it
+            # here again: two copies WILL drift, and a deferred write is
+            # decided at both sites.
+            _flags = ActionFlags(
+                is_financial=context.is_financial,
+                is_external=context.is_external,
+                is_bulk=context.is_bulk,
+                is_account_modification=context.is_account_modification,
+                is_consequential=context.is_consequential,
+                is_deletion=context.is_deletion,
+                is_membership_change=context.is_membership_change,
             )
-
-            # Gating-REMOVING signal: read ONLY from the trusted block, never
-            # from `context`.  There is deliberately no is_value_carrying
-            # kwarg on authorize() — a caller able to assert it could un-gate
-            # a deletion, which is the bypass this whole design closes.
-            value_carrying = bool(_ac and _ac.is_value_carrying)
-
-            gated_action = (
-                (lineage_policy.gate_financial and context.is_financial)
-                or (lineage_policy.gate_external and context.is_external)
-                or (lineage_policy.gate_bulk and context.is_bulk)
-                or (
-                    lineage_policy.gate_account_modification
-                    and context.is_account_modification
-                )
-                # `is_consequential` is the RESIDUAL bucket, not a class, so
-                # gate_consequential=False would un-gate an open-ended set:
-                # every consequential tool nobody classified.  Inverted, an
-                # unclassified consequential action fails CLOSED — un-gating
-                # needs BOTH the deployment flag AND a positive per-tool
-                # is_value_carrying declaration.  With gate_consequential=True
-                # this reduces to `is_consequential`, exactly as before.
-                or (
-                    context.is_consequential
-                    and (
-                        lineage_policy.gate_consequential
-                        or not value_carrying
-                    )
-                )
-                # Value-free classes (§7): no attacker-chosen parameter value
-                # for per-value lineage to trace, so session taint is the only
-                # signal that catches them.  Gated independently of
-                # gate_consequential.
-                or (lineage_policy.gate_deletion and is_deletion)
-                or (
-                    lineage_policy.gate_membership_change
-                    and is_membership_change
-                )
+            is_deletion, is_membership_change, _ = resolve_action_classes(
+                permissions, _flags
             )
+            gated_action = lineage_gated_action(lineage_policy, permissions, _flags)
             summary = context.metadata.get("lineage")
             if gated_action and summary is not None:
                 if lineage_policy.require_post_authoritative:

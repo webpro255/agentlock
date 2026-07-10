@@ -17,8 +17,12 @@ from __future__ import annotations
 
 import secrets
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:  # pragma: no cover - typing only, no runtime import cycle
+    from agentlock.policy import ActionFlags
 
 __all__ = ["DeferralManager", "DeferralRecord"]
 
@@ -47,6 +51,12 @@ class DeferralRecord:
     # v1.3 Feature 1 (deferred commit): taint snapshots at call vs commit.
     taint_at_call: dict[str, Any] | None = None
     taint_at_commit: dict[str, Any] | None = None
+    # v1.4 (defer-policy): the caller-asserted action classes, captured at
+    # queue time so the commit-time re-decision can evaluate the same gating
+    # disjunct the call-time path did.  ``None`` means the caller recorded
+    # nothing, which the gate treats as FAIL-CLOSED (gated on taint) — the
+    # exact pre-v1.4 behavior.
+    action_flags: ActionFlags | None = None
 
     @property
     def is_resolved(self) -> bool:
@@ -226,11 +236,16 @@ class DeferralManager:
         parameters: dict[str, Any] | None,
         *,
         taint_at_call: dict[str, Any] | None = None,
+        action_flags: ActionFlags | None = None,
     ) -> DeferralRecord:
         """Queue a consequential action for end-of-turn commit/deny.
 
         Snapshots the taint state at call time; the resolution against the
         COMPLETE episode taint happens later in :meth:`resolve_commit_queue`.
+
+        ``action_flags`` records the caller-asserted action classes so the
+        commit-time re-decision can consult the tool's trusted permission
+        block.  Omitting it is fail-closed.
         """
         record = DeferralRecord(
             tool_name=tool_name,
@@ -239,6 +254,7 @@ class DeferralManager:
             trigger="deferred_commit",
             reason=f"'{tool_name}' deferred for end-of-turn commit review.",
             taint_at_call=taint_at_call,
+            action_flags=action_flags,
         )
         self._deferrals[record.deferral_id] = record
         self._commit_queue.setdefault(session_id, []).append(record)
@@ -248,22 +264,26 @@ class DeferralManager:
         self,
         session_id: str,
         *,
-        deny: bool,
+        deny: bool | Callable[[DeferralRecord], bool],
         taint_at_commit: dict[str, Any] | None = None,
     ) -> list[DeferralRecord]:
         """Resolve every queued action for a session, in original order.
 
         Args:
-            deny: if True, taint is present at commit -> DENY all; else commit.
+            deny: either a single bool applied to every record (pre-v1.4
+                behavior), or a per-record predicate.  The gate passes a
+                predicate so each queued action is re-decided against its own
+                permission block; this manager stays policy-free.
             taint_at_commit: the complete-episode taint snapshot (for logging).
 
         Returns the resolved records (queue is emptied).
         """
         queued = self._commit_queue.pop(session_id, [])
         now = time.time()
+        decide = deny if callable(deny) else (lambda _record, _d=deny: _d)
         for record in queued:
             record.taint_at_commit = taint_at_commit
-            record.resolution = "denied" if deny else "committed"
+            record.resolution = "denied" if decide(record) else "committed"
             record.resolved_at = now
             record.resolved_by = "deferred_commit"
         return queued

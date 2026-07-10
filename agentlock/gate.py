@@ -58,7 +58,13 @@ from agentlock.hardening import (
 )
 from agentlock.memory_gate import MemoryDecision, MemoryGate, MemoryStore
 from agentlock.modify import ModifyEngine
-from agentlock.policy import PolicyEngine, RequestContext
+from agentlock.policy import (
+    ActionFlags,
+    PolicyEngine,
+    RequestContext,
+    active_lineage_policy,
+    lineage_gated_action,
+)
 from agentlock.rate_limit import RateLimiter
 from agentlock.receipts import ReceiptSigner, SignedReceipt
 from agentlock.redaction import RedactionEngine, RedactionResult
@@ -1587,6 +1593,14 @@ class AuthorizationGate:
         parameters: dict[str, Any] | None,
         *,
         require_post_authoritative: bool = True,
+        is_financial: bool = False,
+        is_external: bool = False,
+        is_bulk: bool = False,
+        is_account_modification: bool = False,
+        is_consequential: bool = False,
+        is_deletion: bool = False,
+        is_membership_change: bool = False,
+        record_action_flags: bool = False,
     ) -> DeferralRecord:
         """Queue a consequential tool call for end-of-turn commit review.
 
@@ -1594,12 +1608,36 @@ class AuthorizationGate:
         suspended with a snapshot of the taint state.  Returns the
         DeferralRecord (the gate owns the taint read, so callers cannot
         forge the snapshot).
+
+        v1.4: pass ``record_action_flags=True`` together with the same
+        ``is_*`` classes given to :meth:`authorize` so the end-of-turn
+        re-decision evaluates the SAME gating disjunct the call-time path
+        evaluated.  Without it the record carries no flags and the commit-time
+        re-decision falls back to FAIL-CLOSED (denied on taint), which is
+        exactly the pre-v1.4 behavior.
         """
         summary = self._context_tracker.lineage_summary(session_id)
         key = "post_authoritative_taint" if require_post_authoritative else "tainted"
         taint_at_call = {**summary, "gated_on": key}
+        action_flags = (
+            ActionFlags(
+                is_financial=is_financial,
+                is_external=is_external,
+                is_bulk=is_bulk,
+                is_account_modification=is_account_modification,
+                is_consequential=is_consequential,
+                is_deletion=is_deletion,
+                is_membership_change=is_membership_change,
+            )
+            if record_action_flags
+            else None
+        )
         return self._deferral_manager.queue_commit(
-            session_id, tool_name, parameters, taint_at_call=taint_at_call,
+            session_id,
+            tool_name,
+            parameters,
+            taint_at_call=taint_at_call,
+            action_flags=action_flags,
         )
 
     def resolve_deferred_commits(
@@ -1610,7 +1648,30 @@ class AuthorizationGate:
     ) -> list[DeferralRecord]:
         """Resolve every queued consequential action against the COMPLETE
         episode taint state.  Native decision: DENY if taint is present at
-        commit (even if it arrived after the call), else COMMIT, in order.
+        commit (even if it arrived after the call) AND the action is gated by
+        this tool's own policy, else COMMIT, in order.
+
+        v1.4 (defer-policy): the taint read is unchanged — it is still the
+        complete end-of-turn state.  What is new is that each queued record is
+        re-decided against ITS OWN permission block through
+        :func:`lineage_gated_action`, the same predicate ``authorize()`` uses.
+        Previously this path denied on taint alone, ignoring
+        ``permissions.action_class`` entirely, which made
+        ``gate_consequential=False`` inert whenever deferred commit was on: a
+        write un-gated at call time was silently re-gated at end of turn.
+
+        Fail-closed at every unknown.  A record is gated (i.e. denied on
+        taint) when:
+
+        * the tool is no longer in the registry at commit time — it cannot be
+          re-decided, so it is not committed;
+        * the tool has no active lineage policy;
+        * the record carries no ``action_flags`` (queued without them).
+
+        Un-gating therefore requires a positively declared, still-registered
+        tool whose live policy says taint does not gate it.  With no
+        declarations anywhere this reduces to ``deny = tainted``, byte-identical
+        to the pre-v1.4 path.
 
         Returns the resolved DeferralRecords; execution of committed actions
         is left to the caller.
@@ -1619,8 +1680,25 @@ class AuthorizationGate:
         key = "post_authoritative_taint" if require_post_authoritative else "tainted"
         tainted = bool(summary.get(key))
         taint_at_commit = {**summary, "gated_on": key}
+
+        def _should_deny(record: DeferralRecord) -> bool:
+            # No taint at commit -> nothing to gate on; commit, as before.
+            if not tainted:
+                return False
+            permissions = self._tools.get(record.tool_name)
+            if permissions is None:
+                return True  # fail closed: unregistered at commit time
+            lineage_policy = active_lineage_policy(permissions)
+            if lineage_policy is None:
+                return True  # fail closed: no live policy to consult
+            if record.action_flags is None:
+                return True  # fail closed: caller recorded no classes
+            return lineage_gated_action(
+                lineage_policy, permissions, record.action_flags
+            )
+
         return self._deferral_manager.resolve_commit_queue(
-            session_id, deny=tainted, taint_at_commit=taint_at_commit,
+            session_id, deny=_should_deny, taint_at_commit=taint_at_commit,
         )
 
     def clear_deferred_commits(self, session_id: str) -> None:
