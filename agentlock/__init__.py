@@ -36,6 +36,15 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 __version__ = "1.3.0"
 
+from agentlock.action_class_audit import (
+    ActionClassAudit,
+    ActionClassFinding,
+    Confidence,
+    FindingStatus,
+    LineageMode,
+    SuggestionBasis,
+    format_action_class_audit,
+)
 from agentlock.audit import AuditLogger, AuditRecord, FileAuditBackend, InMemoryAuditBackend
 from agentlock.chain import GENESIS_HASH, ChainedContextEntry, ContextChain
 from agentlock.context import ContextProvenance, ContextState, ContextTracker
@@ -196,6 +205,14 @@ __all__ = [
     "AuditRecord",
     "FileAuditBackend",
     "InMemoryAuditBackend",
+    # v1.4 action-class audit
+    "ActionClassAudit",
+    "ActionClassFinding",
+    "Confidence",
+    "FindingStatus",
+    "LineageMode",
+    "SuggestionBasis",
+    "format_action_class_audit",
     # Rate limiting
     "RateLimiter",
     # Redaction

@@ -33,6 +33,15 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from agentlock.action_class_audit import (
+    ActionClassAudit,
+    ActionClassFinding,
+    FindingStatus,
+    classify_tool,
+    declared_classes,
+    describe,
+    tally_observations,
+)
 from agentlock.audit import AuditBackend, AuditLogger, InMemoryAuditBackend
 from agentlock.context import ContextProvenance, ContextTracker
 from agentlock.defer import DeferralManager, DeferralRecord
@@ -205,6 +214,12 @@ class AuthorizationGate:
         self._stepup_manager = StepUpManager()
         # Signed receipts (AARM R5)
         self._receipt_signer = receipt_signer
+        # Monotonic count of authorize() decisions issued.  A HEALTH CHECK for
+        # audit_action_classes()'s readback probe and nothing else: it is never
+        # read by the gate, never reaches PolicyEngine, and never influences a
+        # decision.  Exactly one decision per authorize() call; audit RECORDS
+        # may outnumber it, since some paths log twice.
+        self._decisions_issued = 0
 
     # -- Registration -------------------------------------------------------
 
@@ -255,6 +270,87 @@ class AuthorizationGate:
     def registered_tools(self) -> list[str]:
         """List all registered tool names."""
         return list(self._tools.keys())
+
+    # -- Action-class audit (on demand, never on a hot path) ----------------
+
+    def audit_action_classes(
+        self, *, observation_limit: int = 100_000
+    ) -> ActionClassAudit:
+        """Report every tool whose ``lineage_policy`` is enabled.
+
+        The on-demand replacement for the register-time hazard warning.  Pure:
+        reads the tool registry and the audit log, mutates no gate state, and
+        returns immutable findings.
+
+        Reports independently of ``gate_consequential`` — a tool is worth
+        naming whether or not this particular deployment has un-gated the
+        residual bucket, because the declaration outlives the deployment flag.
+
+        ``query()`` is called EXACTLY ONCE here, and from nowhere else in the
+        gate.  It is never touched by ``authorize()`` or ``execute()``.  A
+        single unfiltered query is used rather than one per tool: a
+        ``FileAuditBackend`` re-reads the whole log on every call.
+
+        Returns:
+            An ``ActionClassAudit`` (a ``list[ActionClassFinding]``) also
+            carrying report-level facts: whether observation readback worked,
+            and observations for tools absent from the registry.
+        """
+        # Observation readback probe.  The gate knows how many decisions it
+        # has logged; if the log reads back empty despite that, observation is
+        # UNAVAILABLE, which is categorically different from a tool simply
+        # having no assertions.  Never conflate the two — one is a broken
+        # backend, the other is evidence.
+        try:
+            records = self._audit.query(limit=observation_limit)
+        except Exception:
+            # A backend that cannot be read must not take the report down;
+            # it must make its own failure loud.
+            records = []
+
+        observation_available = bool(records) or self._decisions_issued == 0
+        tally = tally_observations(records)
+
+        findings: list[ActionClassFinding] = []
+        for tool_name, permissions in self._tools.items():
+            lp = permissions.lineage_policy
+            if lp is None or not lp.enabled:
+                continue
+            mode, status = classify_tool(permissions)
+            declared = declared_classes(permissions)
+            findings.append(
+                ActionClassFinding(
+                    tool_name=tool_name,
+                    risk_level=permissions.risk_level.value,
+                    lineage_mode=mode,
+                    status=status,
+                    declared=declared,
+                    observed=dict(tally.get(tool_name, {})),
+                    rationale=describe(permissions, mode, status, declared),
+                    # Only an UNDECLARED tool poses a declaration question.
+                    # A DECLARED tool needs nothing; a NOT_COVERED one has a
+                    # deployment-flag or schema-version issue that the
+                    # rationale states plainly.  Phase 4 refines this per
+                    # suggestion, and may only ever RAISE it for a
+                    # value-carrying suggestion, never lower it.
+                    requires_human_decision=(
+                        status is FindingStatus.UNDECLARED
+                    ),
+                )
+            )
+
+        unregistered = {
+            name: sum(flags.values())
+            for name, flags in tally.items()
+            if name not in self._tools
+        }
+
+        return ActionClassAudit(
+            findings,
+            decisions_issued=self._decisions_issued,
+            observation_available=observation_available,
+            unregistered_observations=unregistered,
+        )
 
     # -- Session management -------------------------------------------------
 
@@ -346,6 +442,7 @@ class AuthorizationGate:
             AuthResult with token if allowed, denial details if denied.
         """
         start = time.time()
+        self._decisions_issued += 1
         permissions = self._tools.get(tool_name)
 
         # Decision provenance for the on-demand action-class audit.  Computed
