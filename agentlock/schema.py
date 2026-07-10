@@ -54,7 +54,7 @@ __all__ = [
     "ToolDefinition",
 ]
 
-SCHEMA_VERSION = "1.3"
+SCHEMA_VERSION = "1.4"
 
 
 def parse_version(version: str) -> tuple[int, ...] | None:

@@ -277,19 +277,20 @@ class TestModifyAudit:
 
 
 class TestSchemaVersion:
-    """Test v1.2 schema version."""
+    """The current schema version, and the permission block's default."""
 
-    def test_schema_version_is_1_2(self):
+    def test_schema_version_is_current(self):
         from agentlock.schema import SCHEMA_VERSION
-        assert SCHEMA_VERSION == "1.3"
+        assert SCHEMA_VERSION == "1.4"
 
-    def test_permissions_default_version_1_2(self):
+    def test_permissions_default_version_is_schema_version(self):
+        from agentlock.schema import SCHEMA_VERSION
         perms = AgentLockPermissions(
             risk_level="high",
             requires_auth=True,
             allowed_roles=["admin"],
         )
-        assert perms.version == "1.3"
+        assert perms.version == SCHEMA_VERSION
 
     def test_v11_permissions_still_valid(self):
         """v1.1 permissions block with explicit version still validates."""
