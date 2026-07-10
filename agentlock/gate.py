@@ -121,6 +121,40 @@ class AuthResult:
             )
 
 
+_ASSERTED_CLASS_FLAGS: tuple[str, ...] = (
+    # The class flags a caller may assert on ``authorize()``, in a stable
+    # report order.  Recorded as decision provenance in the audit record;
+    # see ``_asserted_classes`` below.
+    "is_bulk",
+    "is_external",
+    "is_financial",
+    "is_account_modification",
+    "is_consequential",
+    "is_deletion",
+    "is_membership_change",
+)
+
+
+def _asserted_classes(**flags: bool) -> list[str]:
+    """Names of the class flags the caller actually asserted, in report order.
+
+    Purely DESCRIPTIVE.  The returned list is written into
+    ``AuditRecord.metadata["asserted_classes"]`` strictly *after* a decision
+    has been made, and is read back only by the on-demand
+    ``audit_action_classes()`` report.  It is never an input to any gating
+    decision.
+
+    It must never reach ``PolicyContext.metadata`` (the ``request_metadata``
+    dict): ``PolicyEngine`` reads that dict for ``param_lineage`` /
+    ``novel_lineage`` / ``lineage``, and ``InjectionFilter`` scans its values
+    as attacker-controlled text.  Observation data belongs in the audit
+    record, on the far side of the decision.  The caller-asserted flags reach
+    the policy layer as named ``RequestContext`` fields instead, which is the
+    boundary that keeps the two uses separate.
+    """
+    return [name for name in _ASSERTED_CLASS_FLAGS if flags.get(name)]
+
+
 class AuthorizationGate:
     """Central authorization enforcement point.
 
@@ -327,6 +361,25 @@ class AuthorizationGate:
         start = time.time()
         permissions = self._tools.get(tool_name)
 
+        # Decision provenance for the on-demand action-class audit.  Computed
+        # here only so every exit path can attach it; it is written into the
+        # audit record *after* the decision and never read back by the gate.
+        # A fresh dict per record — audit backends may retain the reference.
+        _asserted = _asserted_classes(
+            is_bulk=is_bulk,
+            is_external=is_external,
+            is_financial=is_financial,
+            is_account_modification=is_account_modification,
+            is_consequential=is_consequential,
+            is_deletion=is_deletion,
+            is_membership_change=is_membership_change,
+        )
+
+        def _class_meta() -> dict[str, Any] | None:
+            """Audit-only metadata.  ``None`` when the caller asserted nothing,
+            so the key is omitted from the record entirely."""
+            return {"asserted_classes": list(_asserted)} if _asserted else None
+
         # Resolve session ID for hardening signal tracking
         _session = self._session_store.get_by_user(user_id) if user_id else None
         hardening_session_id = _session.session_id if _session else (
@@ -355,6 +408,7 @@ class AuthorizationGate:
                 action="denied",
                 reason="no_permissions",
                 risk_level="unknown",
+                metadata=_class_meta(),
             )
             return AuthResult(
                 allowed=False,
@@ -536,6 +590,7 @@ class AuthorizationGate:
                     parameters=parameters,
                     duration_ms=duration_ms,
                     session_id=ctx.session_id,
+                    metadata=_class_meta(),
                 )
                 directive = (
                     self._hardening_engine.evaluate(hardening_session_id)
@@ -598,6 +653,7 @@ class AuthorizationGate:
                 parameters=parameters,
                 duration_ms=duration_ms,
                 session_id=ctx.session_id,
+                metadata=_class_meta(),
             )
             return AuthResult(
                 allowed=False,
@@ -654,6 +710,7 @@ class AuthorizationGate:
                 parameters=parameters,
                 duration_ms=duration_ms,
                 session_id=ctx.session_id,
+                metadata=_class_meta(),
             )
             return AuthResult(
                 allowed=False,
@@ -745,6 +802,7 @@ class AuthorizationGate:
                         log_level=effective_log_level,
                         session_id=ctx.session_id,
                         duration_ms=duration_ms,
+                        metadata=_class_meta(),
                     )
                     return AuthResult(
                         allowed=False,
@@ -789,6 +847,7 @@ class AuthorizationGate:
                         log_level=effective_log_level,
                         session_id=ctx.session_id,
                         duration_ms=duration_ms,
+                        metadata=_class_meta(),
                     )
                     return AuthResult(
                         allowed=False,
@@ -850,6 +909,7 @@ class AuthorizationGate:
                             log_level=effective_log_level,
                             session_id=ctx.session_id,
                             duration_ms=duration_ms,
+                            metadata=_class_meta(),
                         )
                         return AuthResult(
                             allowed=False,
@@ -930,6 +990,7 @@ class AuthorizationGate:
                         log_level=effective_log_level,
                         session_id=ctx.session_id,
                         duration_ms=duration_ms,
+                        metadata=_class_meta(),
                     )
                     return AuthResult(
                         allowed=False,
@@ -1028,6 +1089,7 @@ class AuthorizationGate:
                                 parameters=parameters,
                                 session_id=ctx.session_id,
                                 duration_ms=duration_ms,
+                                metadata=_class_meta(),
                             )
                             blocked = ", ".join(param_result.blocked_fields)
                             auth_result = AuthResult(
@@ -1071,6 +1133,7 @@ class AuthorizationGate:
                 token_id=token.token_id,
                 session_id=ctx.session_id,
                 duration_ms=duration_ms,
+                metadata=_class_meta(),
                 **audit_kwargs,
             )
 
@@ -1100,6 +1163,7 @@ class AuthorizationGate:
                 parameters=parameters,
                 session_id=ctx.session_id,
                 duration_ms=duration_ms,
+                metadata=_class_meta(),
             )
 
             auth_result = AuthResult(

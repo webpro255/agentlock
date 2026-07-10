@@ -244,7 +244,16 @@ class AuditLogger:
 
         # Filter fields based on log level
         if log_level == AuditLogLevel.MINIMAL:
-            # name + timestamp + outcome only
+            # name, timestamp, outcome, and decision provenance.
+            #
+            # ``metadata`` survives MINIMAL, as ``trust_ceiling`` already does:
+            # both describe *why* a decision came out the way it did, and are
+            # bounded, non-sensitive, caller-independent.  MINIMAL sheds the
+            # unbounded, caller-controlled fields (parameters, response bodies)
+            # and the identity fields — not the provenance of the decision.
+            # ``audit_action_classes()`` reads ``metadata["asserted_classes"]``
+            # back out, so stripping it here would silently blind the audit
+            # report on any tool logging at MINIMAL.
             record.parameters = None
             record.response_summary = ""
             record.user_id = ""
