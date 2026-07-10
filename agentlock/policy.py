@@ -603,6 +603,12 @@ class PolicyEngine:
                 or context.is_membership_change
             )
 
+            # Gating-REMOVING signal: read ONLY from the trusted block, never
+            # from `context`.  There is deliberately no is_value_carrying
+            # kwarg on authorize() — a caller able to assert it could un-gate
+            # a deletion, which is the bypass this whole design closes.
+            value_carrying = bool(_ac and _ac.is_value_carrying)
+
             gated_action = (
                 (lineage_policy.gate_financial and context.is_financial)
                 or (lineage_policy.gate_external and context.is_external)
@@ -611,9 +617,19 @@ class PolicyEngine:
                     lineage_policy.gate_account_modification
                     and context.is_account_modification
                 )
+                # `is_consequential` is the RESIDUAL bucket, not a class, so
+                # gate_consequential=False would un-gate an open-ended set:
+                # every consequential tool nobody classified.  Inverted, an
+                # unclassified consequential action fails CLOSED — un-gating
+                # needs BOTH the deployment flag AND a positive per-tool
+                # is_value_carrying declaration.  With gate_consequential=True
+                # this reduces to `is_consequential`, exactly as before.
                 or (
-                    lineage_policy.gate_consequential
-                    and context.is_consequential
+                    context.is_consequential
+                    and (
+                        lineage_policy.gate_consequential
+                        or not value_carrying
+                    )
                 )
                 # Value-free classes (§7): no attacker-chosen parameter value
                 # for per-value lineage to trace, so session taint is the only

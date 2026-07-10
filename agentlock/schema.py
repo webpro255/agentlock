@@ -364,14 +364,64 @@ class ActionClassConfig(BaseModel):
     block to switch a class *off*; ``gate_*`` on ``LineagePolicyConfig`` is
     the knob for that, and it lives in trusted config too.
 
-    Only the value-free classes are declarable today.  The same pattern
-    extends to the value-carrying ones if they ever need it.
+    THE POLARITY RULE — the invariant future contributors must not break:
+
+    * **Gating-ADDING** signals (``is_deletion``, ``is_membership_change``)
+      may originate from the trusted block OR the caller's ``authorize()``
+      kwarg, and combine by OR.  A wrong or missing one can only under-gate
+      the tool relative to a correct one, and the caller can always add.
+    * **Gating-REMOVING** signals (``is_value_carrying``) may originate
+      **ONLY** from the trusted block — never a caller kwarg — and may weaken
+      **ONLY** the residual ``is_consequential`` disjunct, never a named
+      class.  Admitting a removing signal from the caller, or letting one
+      reach the deletion / membership terms, reintroduces exactly the bypass
+      this design closes.
+
+    Classify every future action class into one polarity before adding it.
+
+    ``is_value_carrying`` is a positive, trusted, auditable claim that this
+    tool's consequential effect is fully determined by an attacker-choosable
+    parameter value — so parameter/novel lineage already covers it and
+    session taint need not.  It exists because ``is_consequential`` is not a
+    class but the *residual bucket* ("consequential, but none of the named
+    classes"), which makes ``gate_consequential=False`` un-gate an open-ended
+    set: every consequential tool nobody got around to classifying.  Requiring
+    a positive declaration to un-gate means an unclassified consequential
+    action fails CLOSED (stays gated, costing recoverable utility) rather
+    than OPEN (a silent hole on precisely the value-free classes for which
+    session taint is the only available signal).
+
+    Un-gating therefore takes two affirmative acts: the deployment sets
+    ``gate_consequential=False``, and the tool declares
+    ``is_value_carrying=True``.  Omitting either leaves the action gated.
     """
 
     is_deletion: bool = False
     is_membership_change: bool = False
+    is_value_carrying: bool = False
 
     model_config = {"extra": "forbid"}
+
+    @model_validator(mode="after")
+    def _value_carrying_excludes_value_free(self) -> ActionClassConfig:
+        """A value-free class cannot also be value-carrying.
+
+        Catches the mislabel at ``register_tool()`` — a startup
+        ``ValidationError`` instead of a runtime fail-open.
+        """
+        if self.is_value_carrying and (
+            self.is_deletion or self.is_membership_change
+        ):
+            contradicts = "is_deletion" if self.is_deletion else (
+                "is_membership_change"
+            )
+            raise ValueError(
+                f"action_class declares is_value_carrying=True together with "
+                f"{contradicts}=True. A value-free class has no "
+                f"attacker-chosen parameter value for lineage to trace, so it "
+                f"cannot be value-carrying. Declare exactly one."
+            )
+        return self
 
 
 class AgentLockPermissions(BaseModel):

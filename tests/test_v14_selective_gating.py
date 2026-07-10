@@ -125,7 +125,33 @@ class TestSelectiveGatingRecoversUtility:
     """gate_consequential=False un-gates value-carrying writes only."""
 
     def test_value_carrying_reserve_allowed_under_taint(self):
-        """Utility: the reserve executes despite taint — param lineage covers it."""
+        """Utility: the reserve executes despite taint — param lineage covers it.
+
+        This test PREVIOUSLY encoded the fail-open hazard: it registered a
+        consequential tool with NO action_class and asserted the write was
+        allowed once gate_consequential=False.  That is exactly the omission
+        that silently un-gated unclassified deletions.  Utility recovery is
+        now conditioned on the tool POSITIVELY declaring itself value-carrying
+        in the trusted block; the un-declared case is covered below.
+        """
+        gate = AuthorizationGate()
+        gate.register_tool(
+            "reserve",
+            _perms(
+                gate_consequential=False,
+                action_class=ActionClassConfig(is_value_carrying=True),
+            ),
+        )
+        _tainted_session(gate)
+        r = gate.authorize(
+            "reserve", user_id="u", role="user",
+            parameters={"restaurant": "Luigi's", "date": "2026-07-10"},
+            is_consequential=True,
+        )
+        assert r.allowed is True
+
+    def test_undeclared_reserve_denied_under_taint(self):
+        """The same call WITHOUT the declaration fails closed."""
         gate = AuthorizationGate()
         gate.register_tool("reserve", _perms(gate_consequential=False))
         _tainted_session(gate)
@@ -134,7 +160,8 @@ class TestSelectiveGatingRecoversUtility:
             parameters={"restaurant": "Luigi's", "date": "2026-07-10"},
             is_consequential=True,
         )
-        assert r.allowed is True
+        assert r.allowed is False
+        assert r.denial["reason"] == "untrusted_lineage"
 
     def test_value_free_deletion_still_denied_under_taint(self):
         """Security: deletion stays gated even with consequential un-gated."""

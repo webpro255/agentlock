@@ -29,6 +29,7 @@ Example::
 from __future__ import annotations
 
 import time
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -182,6 +183,30 @@ class AuthorizationGate:
         if isinstance(permissions, dict):
             permissions = AgentLockPermissions(**permissions)
         self._tools[tool_name] = permissions
+
+        # Defense in depth for the residual "unasserted-entirely" path: the
+        # fail-closed inversion in policy.py only rescues a call that asserts
+        # is_consequential.  A tool that declares no class at all, and whose
+        # caller asserts none, matches no disjunct and is never taint-gated.
+        # The inversion cannot close that; make it LOUD instead of silent.
+        # A warning, not an error — an undeclared tool may be a benign read.
+        _lp = permissions.lineage_policy
+        if (
+            _lp is not None
+            and _lp.enabled
+            and not _lp.gate_consequential
+            and permissions.action_class is None
+        ):
+            warnings.warn(
+                f"Tool '{tool_name}' is registered with "
+                f"gate_consequential=False but declares no action_class. "
+                f"Consequential calls stay gated (fail-closed), but a call "
+                f"asserting no class at all is never taint-gated. Declare "
+                f"ActionClassConfig(is_value_carrying=True) to recover "
+                f"utility, or is_deletion / is_membership_change to gate it.",
+                UserWarning,
+                stacklevel=2,
+            )
 
         # Pre-build redaction engine if data policy has prohibited types
         dp = permissions.data_policy
