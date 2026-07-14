@@ -9,9 +9,11 @@ this branch: lineage evidence on lineage-gated denials, a session id on the
 taint-introduction record, an audit record for the resolution of a deferred
 action, and the population of `context_provenance_ids`, which had been declared
 in the schema since v1.1 and passed by no call site. A fifth commit makes the
-cited lineage token deterministic across processes. None of it touches a
-decision path: the evidence is built after the decision, from values the gate
-had already computed, and nothing in the gate reads an audit record back.
+cited lineage token deterministic across processes. Two further gaps are closed
+in the sections below: execution confirmation (E7), and the basis of a grant
+rather than only of a denial (E10). None of it touches a decision path: the
+evidence is built after the decision, from values the gate had already computed,
+and nothing in the gate reads an audit record back.
 
 ## Method
 
@@ -132,11 +134,107 @@ stating precisely: the replay drives `authorize()`, not `execute()`, so it prove
 the authorization path did not move and says nothing about the execution path,
 which the unit tests cover instead.
 
+## The basis of a grant (E10)
+
+A denial cited what it refused on. A grant said nothing about what it permitted
+on, and the difference is not cosmetic. A reconstruction reading an allowed call
+could observe only that no denial fired. That is evidence that nothing matched.
+It is not evidence that anything was checked, and it is certainly not evidence
+that the call's arguments traced to the user's authoritative request.
+
+So an `allowed` record now carries a `grant_basis`: which lineage checks
+evaluated, what they concluded, and which never ran and why.
+
+The design rule is the whole point, and it is a rule about what NOT to write.
+Record only what the gate actually computed. The two parameter-level checks both
+return a bare `None` for "compared the arguments against untrusted context and
+nothing traced to it" and for "there was nothing to compare against", and those
+are not the same fact. `novel_lineage_check` is worse: it returns the same
+`None` when the session has no authoritative baseline, which is the check
+declining to classify. A record that reported any of these as a clean result
+would be asserting a cleanliness no check ever established. The vocabulary
+therefore separates them, and only one string in it is a strong claim:
+
+| Recorded | Reading |
+|---|---|
+| `no_match` | The check ran its comparison and nothing matched. The only string that supports "the arguments were traced and came back clean." |
+| `no_match:<qualifier>` | It ran and had nothing to compare (no untrusted context, no parameters, no traceable token). Not a claim about the arguments. |
+| `not_classifiable:<qualifier>` | It declined to classify. Novel lineage returns this with no authoritative baseline. Emphatically not a clean result. |
+| `not_run:<reason>` | It never executed: no session, no policy, check disabled, tool below v1.3, or an auto-allow that short-circuited above the gate. |
+| `match:<action>` | It MATCHED and the call was granted anyway, which on this path can only mean the policy action was observe-only. |
+| `no_taint:<predicate>` | A gated action, evaluated against the session's provenance, on a session clean under the predicate named. The one positive basis the engine can honestly report. |
+| `shadow_deny:<predicate>` | A gated action on a tainted session, granted only because the write-gate is disabled. The least clean grant the engine can issue. |
+
+There is deliberately no aggregate verdict in the block, no "clean" flag. The
+engine never computes an overall judgement of a grant, and a record that
+invented one would assert a conclusion no check reached. A reader who wants that
+judgement reads the per-check strings and draws it, which is the honest amount of
+work.
+
+Nothing was added to the decision path to produce any of this. The checks
+already knew why they were returning `None`, and the fact was destroyed at the
+`return`; they now write it to a caller-supplied out-dict, leaving the value the
+policy engine reads untouched. `lineage_gated_action` was already computed inside
+the policy engine and discarded there; it now rides out on the `PolicyDecision`.
+It rides on the return value and not through `context.metadata` for a specific
+reason: `InjectionFilter` scans that dict's values as attacker-controlled text,
+so evidence written into it would be evidence that can change a decision.
+
+### What the grants actually say, which is the finding
+
+Across the 3261 grants in the replayed corpus (3207 call-time allows plus the 54
+deferred actions, which are authorized before being queued):
+
+| Parameter-lineage basis | Grants | Share |
+|---|---|---|
+| `no_match:no_tokens` (arguments carried nothing traceable) | 1724 | 52.9% |
+| `no_match:no_untrusted_context` (nothing to trace to) | 1134 | 34.8% |
+| `no_match:no_parameters` | 274 | 8.4% |
+| **`no_match`** (compared, and clean) | **129** | **4.0%** |
+
+Only 4% of grants support the claim that the arguments were checked against
+untrusted content and came back clean. The other 96% are vacuous no-matches, and
+before this block every one of them was indistinguishable, in the log, from the
+129 that were real. That is exactly the gap: absence of a denial was being read
+as evidence of a clean call, and for 96% of grants it never was.
+
+The session gate tells the same story from the other side: 3251 of the grants are
+`not_gated_action` (the gate never judged them, because they are reads) and 10
+are `no_taint:post_authoritative`. Novel lineage reports `not_run:check_disabled`
+on every grant, because the bench adapter never enables `novel_lineage_enabled`
+and it defaults to off. That is a true statement about these five frozen
+conditions and is not a claim about any other run.
+
+### Volume
+
+The block lands on ~70% of all decisions, so its cost is stated rather than
+waved at. Measured over the same corpus, serialized as a deployment would ship
+it:
+
+| | Before E10 | After E10 |
+|---|---|---|
+| Mean `allowed` record | 555.9 B | 763.5 B (+37.3%) |
+| Mean `grant_basis` | | 193.6 B |
+| Whole decision log | 3161.2 KiB | 3822.3 KiB (+20.9%) |
+
+Literal user values are not in that number and are not in the block. A grant
+issued over a live match cites the match on the same terms a denial does: the
+facts at every level, the literal value only where `include_parameters` allows
+it, dropped by the same rule (`_drop_payload`) at the same boundary.
+
+### Invariance
+
+The A/B replay was re-run with `grant_basis` landing on every allowed call, and
+still shows zero diffs across all 4542 replayable decisions. Adding a record of
+why a call was permitted did not change which calls were permitted. The full
+suite is 1143 tests, 0 failures (1116 before E10, plus 27).
+
 ## What is therefore claimed, and what is not
 
 Claimed: across 4542 decisions replayed from the frozen v1.4 benchmark under
 identical inputs, the v1.5 evidence changes moved zero decisions. Together with
-the full test suite (1074 tests, 0 failures), that is the invariance evidence.
+the full test suite (1143 tests, 0 failures, verified by `pytest` on this
+branch), that is the invariance evidence.
 
 Not claimed: that all 4826 decisions in the frozen logs were verified. 284 of
 them could not be replayed, and no confidence is asserted about them beyond the
