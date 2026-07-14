@@ -45,7 +45,13 @@ from agentlock.action_class_audit import (
     SuggestionBasis,
     format_action_class_audit,
 )
-from agentlock.audit import AuditLogger, AuditRecord, FileAuditBackend, InMemoryAuditBackend
+from agentlock.audit import (
+    AsyncAuditBackend,
+    AuditLogger,
+    AuditRecord,
+    FileAuditBackend,
+    InMemoryAuditBackend,
+)
 from agentlock.auth_providers import AuthProvider, StaticAuthProvider
 from agentlock.chain import GENESIS_HASH, ChainedContextEntry, ContextChain
 from agentlock.context import ContextProvenance, ContextState, ContextTracker
@@ -207,6 +213,7 @@ __all__ = [
     # Audit
     "AuditLogger",
     "AuditRecord",
+    "AsyncAuditBackend",
     "FileAuditBackend",
     "InMemoryAuditBackend",
     # v1.4 action-class audit

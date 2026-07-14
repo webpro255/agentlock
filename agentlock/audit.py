@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import json
 import logging
+import queue
 import secrets
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -19,7 +21,13 @@ from agentlock.types import AuditId, AuditLogLevel
 
 logger = logging.getLogger("agentlock.audit")
 
-__all__ = ["AuditRecord", "AuditLogger", "AuditBackend", "FileAuditBackend"]
+__all__ = [
+    "AuditRecord",
+    "AuditLogger",
+    "AuditBackend",
+    "FileAuditBackend",
+    "AsyncAuditBackend",
+]
 
 
 def _generate_audit_id() -> AuditId:
@@ -185,19 +193,153 @@ class InMemoryAuditBackend:
         return results
 
 
+class AsyncAuditBackend:
+    """Bounded, non-blocking wrapper around any ``AuditBackend``.
+
+    THE TRADE THIS MAKES, STATED PLAINLY.  The gate's execution records are
+    written synchronously by default, because a record that cannot survive a
+    crash cannot describe one: the attempt record is on disk *before* the tool
+    is invoked, so a process killed mid-execution leaves an attempt with no
+    completion, which is exactly the fact a reconstruction needs.
+
+    This wrapper hands records to a bounded queue drained by a background
+    thread.  The calling thread never blocks on the backend.  In exchange:
+
+    * records still in the queue when the process dies are LOST, so an action
+      that was attempted can leave NO attempt record;
+    * a full queue drops records (counted in :attr:`dropped`, never silent).
+
+    So under this backend, the absence of a record is NOT evidence that the
+    thing did not happen.  Every record written through it is stamped
+    ``writer_mode="async"`` and ``durable_before_execution=False`` so a
+    reconstruction reads that limitation out of the log itself rather than out
+    of a config file it does not have.
+
+    Call :meth:`flush` on graceful shutdown to drain what is queued.
+    """
+
+    def __init__(self, backend: AuditBackend, max_queue: int = 10_000) -> None:
+        self._backend = backend
+        self._queue: queue.Queue[AuditRecord] = queue.Queue(maxsize=max_queue)
+        self._dropped = 0
+        self._thread = threading.Thread(
+            target=self._drain, name="agentlock-audit", daemon=True
+        )
+        self._thread.start()
+
+    @property
+    def dropped(self) -> int:
+        """Records dropped because the queue was full.  Never silent."""
+        return self._dropped
+
+    def write(self, record: AuditRecord) -> None:
+        try:
+            self._queue.put_nowait(record)
+        except queue.Full:
+            self._dropped += 1
+            logger.error(
+                "agentlock: audit queue full, record DROPPED (%d dropped total). "
+                "Evidence is incomplete for this deployment.",
+                self._dropped,
+            )
+
+    def _drain(self) -> None:
+        while True:
+            record = self._queue.get()
+            try:
+                self._backend.write(record)
+            except Exception:
+                logger.exception(
+                    "agentlock: audit backend write failed in async writer"
+                )
+            finally:
+                self._queue.task_done()
+
+    def flush(self, timeout: float = 5.0) -> bool:
+        """Drain the queue.  Returns False if it did not finish in time."""
+        deadline = time.time() + timeout
+        while not self._queue.empty() and time.time() < deadline:
+            time.sleep(0.001)
+        return self._queue.empty()
+
+    def query(self, **kwargs: Any) -> list[AuditRecord]:
+        return self._backend.query(**kwargs)
+
+
 class AuditLogger:
     """Central audit logger.
 
     Delegates to a pluggable backend.  Filters records based on the
     tool's configured ``log_level``.
+
+    Two guarantees govern the evidence path, and they are not the same
+    guarantee:
+
+    * **Never break, never alter.**  Absolute, and enforced by tests.  Writing
+      evidence must never break, and must never change the result of, the thing
+      it observes.  ``log_best_effort`` therefore swallows every backend
+      exception at the writer boundary, reports it out of band to the
+      ``agentlock.audit`` logger, and counts it on
+      :attr:`evidence_write_failures`.  A blind evidence layer says so; it does
+      not fail quietly and it does not take the tool call down with it.
+    * **Never block** is a property of the BACKEND a deployment chooses, not of
+      the gate.  A synchronous backend blocks for the duration of its write;
+      that is the deployment's trade, and the default, because durability
+      before execution is what makes an absent completion record mean
+      something.  Deployments that cannot afford the write on the hot path wrap
+      their backend in :class:`AsyncAuditBackend` and accept its weaker absence
+      semantics, which are stamped into every record it writes.
     """
 
     def __init__(self, backend: AuditBackend | None = None) -> None:
         self._backend = backend or FileAuditBackend()
+        self._evidence_write_failures = 0
 
     @property
     def backend(self) -> AuditBackend:
         return self._backend
+
+    @property
+    def writer_mode(self) -> str:
+        """``"sync"`` or ``"async"``.  Stamped into every execution record, so
+        a reader knows whether absence is interpretable."""
+        return "async" if isinstance(self._backend, AsyncAuditBackend) else "sync"
+
+    @property
+    def durable_before_execution(self) -> bool:
+        """Whether an attempt record is on the backend before the tool runs."""
+        return self.writer_mode == "sync"
+
+    @property
+    def evidence_write_failures(self) -> int:
+        """Evidence writes that the backend refused or failed to accept.
+
+        A non-zero value means the log is INCOMPLETE: some record that should
+        exist does not.  Exposed so a deployment (and a reconstruction) can
+        tell a quiet log from a broken one.
+        """
+        return self._evidence_write_failures
+
+    def log_best_effort(self, **kwargs: Any) -> AuditRecord | None:
+        """:meth:`log`, but it can never break its caller.
+
+        Used by every write on the EXECUTION path.  A throwing backend must not
+        break, block, or alter a tool call the gate already authorized: the
+        decision is made, the tool is running or has run, and an audit failure
+        at that point is a failure to observe, never a reason to change what
+        happens.  Returns the record, or ``None`` if the write failed.
+        """
+        try:
+            return self.log(**kwargs)
+        except Exception:
+            self._evidence_write_failures += 1
+            logger.exception(
+                "agentlock: EVIDENCE WRITE FAILED (%d total). The audit log is "
+                "incomplete: a record that should exist does not. The tool call "
+                "is unaffected.",
+                self._evidence_write_failures,
+            )
+            return None
 
     def log(
         self,
@@ -299,6 +441,113 @@ class AuditLogger:
         self._backend.write(record)
         logger.debug("audit: %s %s %s → %s", tool_name, user_id, action, record.audit_id)
         return record
+
+    # -- Execution confirmation (E7) ----------------------------------------
+    #
+    # An "allowed" record is a GRANT.  It is not evidence that anything ran.
+    # These two records are what distinguish a permission from an act:
+    #
+    #   attempt, no completion  -> attempted, never returned (hang, crash, kill)
+    #   attempt + completion    -> ran, and the status says how it ended
+    #   neither                 -> never attempted
+    #
+    # That third reading is only sound when the writer is synchronous (an
+    # attempt record durable BEFORE the tool runs) and the log is contiguous
+    # across the window.  Both conditions are stamped or knowable from the log
+    # itself: ``writer_mode`` and ``durable_before_execution`` ride on every
+    # execution record.  Never make an absence claim without them.
+    #
+    # Both writers are best-effort by construction.  See ``log_best_effort``.
+
+    def _execution_meta(self, extra: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "writer_mode": self.writer_mode,
+            "durable_before_execution": self.durable_before_execution,
+            **extra,
+        }
+
+    def log_execution_attempt(
+        self,
+        *,
+        tool_name: str,
+        user_id: str = "",
+        role: str = "",
+        risk_level: str = "",
+        token_id: str = "",
+        session_id: str = "",
+        parameters: dict[str, Any] | None = None,
+        log_level: AuditLogLevel = AuditLogLevel.STANDARD,
+        include_parameters: bool = True,
+        reported_by: str = "gate",
+        deferral_id: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> AuditRecord | None:
+        """The tool is about to be invoked.  Written BEFORE control leaves the
+        gate, so that a call which never returns still leaves a trace."""
+        extra: dict[str, Any] = {"reported_by": reported_by, **(metadata or {})}
+        if deferral_id:
+            extra["deferral_id"] = deferral_id
+        return self.log_best_effort(
+            tool_name=tool_name,
+            user_id=user_id,
+            role=role,
+            action="execution_attempted",
+            risk_level=risk_level,
+            token_id=token_id,
+            session_id=session_id,
+            parameters=parameters,
+            log_level=log_level,
+            include_parameters=include_parameters,
+            metadata=self._execution_meta(extra),
+        )
+
+    def log_execution_completion(
+        self,
+        *,
+        tool_name: str,
+        status: str,
+        user_id: str = "",
+        role: str = "",
+        risk_level: str = "",
+        token_id: str = "",
+        session_id: str = "",
+        duration_ms: float = 0.0,
+        error_type: str = "",
+        attempt_audit_id: str = "",
+        log_level: AuditLogLevel = AuditLogLevel.STANDARD,
+        reported_by: str = "gate",
+        deferral_id: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> AuditRecord | None:
+        """The tool returned or raised.  ``status`` is "succeeded" or "failed".
+
+        Cites the attempt record's ``audit_id``, so the pair joins by id and a
+        reader can say exactly which record is missing when one of them is.
+        """
+        extra: dict[str, Any] = {
+            "status": status,
+            "reported_by": reported_by,
+            **(metadata or {}),
+        }
+        if error_type:
+            extra["error_type"] = error_type
+        if attempt_audit_id:
+            extra["attempt_audit_id"] = attempt_audit_id
+        if deferral_id:
+            extra["deferral_id"] = deferral_id
+        return self.log_best_effort(
+            tool_name=tool_name,
+            user_id=user_id,
+            role=role,
+            action="execution_completed",
+            reason=status,
+            risk_level=risk_level,
+            token_id=token_id,
+            session_id=session_id,
+            duration_ms=duration_ms,
+            log_level=log_level,
+            metadata=self._execution_meta(extra),
+        )
 
     def query(self, **kwargs: Any) -> list[AuditRecord]:
         """Query audit records.  Delegates to backend."""
