@@ -1837,7 +1837,13 @@ class AuthorizationGate:
             policy=policy,
         )
 
-        # Audit the trust degradation if it just happened
+        # Audit the trust degradation if it just happened.
+        #
+        # E1/E4: this is the one record that names the attacker's content, and
+        # it is the origin of every denial that follows from it.  It MUST carry
+        # the session id, or the record that explains an incident is the one
+        # record that cannot be placed in it, and the link between origin and
+        # consequence degrades to a timestamp correlation.
         state = self._context_tracker.get(session_id)
         if state and state.is_degraded:
             self._audit.log(
@@ -1845,6 +1851,7 @@ class AuthorizationGate:
                 user_id=writer_id,
                 action="trust_degraded",
                 risk_level="",
+                session_id=session_id,
                 trust_ceiling=state.trust_ceiling.value,
                 is_trust_degraded=True,
                 degradation_effects=[e.value for e in state.active_effects],
