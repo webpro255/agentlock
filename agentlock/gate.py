@@ -1440,15 +1440,86 @@ class AuthorizationGate:
 
         Returns:
             The (possibly modified and redacted) tool output.
+
+        Raises:
+            Whatever ``func`` raises.  A failed execution is RECORDED (status
+            "failed") and then re-raised unchanged: the evidence path observes,
+            it never alters.
         """
-        # Validate and consume token (single-use)
+        # Validate and consume token (single-use).  A rejected token means
+        # nothing was attempted, so no attempt record is written: absence here
+        # is correct and means exactly what it says.
         self._token_store.validate_and_consume(
             token.token_id, tool_name, parameters
         )
 
+        permissions = self._tools.get(tool_name)
+
+        # E7: the tool is ABOUT to run.  Written before control leaves the gate,
+        # so an execution that never returns still leaves a trace.  Best-effort
+        # by construction: a throwing or unavailable backend cannot break, block,
+        # or alter a call the gate has already authorized.
+        attempt = self._audit.log_execution_attempt(
+            tool_name=tool_name,
+            user_id=token.user_id,
+            role=token.role,
+            risk_level=(permissions.risk_level.value if permissions else "unknown"),
+            token_id=token.token_id,
+            parameters=parameters,
+            log_level=(
+                permissions.audit.log_level if permissions else AuditLogLevel.STANDARD
+            ),
+            include_parameters=(
+                permissions.audit.include_parameters if permissions else False
+            ),
+            reported_by="gate",
+        )
+
         # Execute
         params = parameters or {}
-        result = func(**params)
+        started = time.time()
+        try:
+            result = func(**params)
+        except BaseException as exc:
+            # An authorized action that was attempted and failed is a THIRD
+            # fact, distinct from denied and from succeeded, and an incident
+            # usually turns on which of the three it was.  Record it, then
+            # re-raise untouched.
+            self._audit.log_execution_completion(
+                tool_name=tool_name,
+                status="failed",
+                user_id=token.user_id,
+                role=token.role,
+                risk_level=(
+                    permissions.risk_level.value if permissions else "unknown"
+                ),
+                token_id=token.token_id,
+                duration_ms=(time.time() - started) * 1000,
+                error_type=type(exc).__name__,
+                attempt_audit_id=(attempt.audit_id if attempt else ""),
+                log_level=(
+                    permissions.audit.log_level
+                    if permissions
+                    else AuditLogLevel.STANDARD
+                ),
+                reported_by="gate",
+            )
+            raise
+
+        self._audit.log_execution_completion(
+            tool_name=tool_name,
+            status="succeeded",
+            user_id=token.user_id,
+            role=token.role,
+            risk_level=(permissions.risk_level.value if permissions else "unknown"),
+            token_id=token.token_id,
+            duration_ms=(time.time() - started) * 1000,
+            attempt_audit_id=(attempt.audit_id if attempt else ""),
+            log_level=(
+                permissions.audit.log_level if permissions else AuditLogLevel.STANDARD
+            ),
+            reported_by="gate",
+        )
 
         # Apply MODIFY output transformation (v1.2) -- runs before redaction
         if modify_output_fn and isinstance(result, str):
@@ -2058,6 +2129,18 @@ class AuthorizationGate:
     @property
     def audit_logger(self) -> AuditLogger:
         return self._audit
+
+    @property
+    def evidence_write_failures(self) -> int:
+        """Evidence writes the audit backend refused or failed to accept.
+
+        Non-zero means the log is INCOMPLETE: a record that should exist does
+        not.  The tool calls themselves are unaffected (the evidence path can
+        never break what it observes), which is exactly why this counter has to
+        be readable: a silent blind spot is the one failure a log cannot report
+        about itself.
+        """
+        return self._audit.evidence_write_failures
 
     @property
     def token_store(self) -> TokenStore:
