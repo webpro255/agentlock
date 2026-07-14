@@ -342,6 +342,37 @@ class AuthorizationGate:
 
         return None
 
+    @staticmethod
+    def _evidence_provenance_ids(evidence: dict[str, Any]) -> list[str] | None:
+        """The context entries a lineage denial rests on, as bare ids.
+
+        ``AuditRecord.context_provenance_ids`` is the join key: it resolves a
+        denial to the taint-introduction records (E4) that caused it, by id
+        rather than by ordering.
+
+        A NOVEL denial gets ``None``, not an empty list dressed up as evidence:
+        a novel token traces to no context entry at all, and inventing a
+        citation for it would be a lie the reconstruction would then repeat.
+        A session-taint denial cites only the entries that satisfy the key it
+        actually gated on.
+        """
+        gate = evidence.get("gate")
+
+        if gate == "param_lineage":
+            pid = evidence.get("untrusted_provenance_id")
+            return [pid] if pid else None
+
+        if gate == "session_lineage":
+            post_only = evidence.get("gated_on") == "post_authoritative_taint"
+            ids = [
+                source["provenance_id"]
+                for source in evidence.get("untrusted_sources", [])
+                if source.get("post_authoritative") or not post_only
+            ]
+            return ids or None
+
+        return None
+
     # -- Action-class audit (on demand, never on a hot path) ----------------
 
     def audit_action_classes(
@@ -1335,9 +1366,11 @@ class AuthorizationGate:
             # what the gate already computed, after the decision, and never
             # read back -- ``evidence`` cannot alter ``decision``.
             denial_meta = _class_meta()
+            provenance_ids = None
             evidence = self._lineage_evidence(denial_reason, ctx, permissions)
             if evidence is not None:
                 denial_meta = {**(denial_meta or {}), "lineage_evidence": evidence}
+                provenance_ids = self._evidence_provenance_ids(evidence)
 
             record = self._audit.log(
                 tool_name=tool_name,
@@ -1352,6 +1385,7 @@ class AuthorizationGate:
                 session_id=ctx.session_id,
                 duration_ms=duration_ms,
                 metadata=denial_meta,
+                context_provenance_ids=provenance_ids,
             )
 
             auth_result = AuthResult(
@@ -1802,6 +1836,20 @@ class AuthorizationGate:
         permissions = self._tools.get(record.tool_name)
         flags = record.action_flags
 
+        # The untrusted entries the commit-time re-decision saw, cited by id so
+        # a denial at commit resolves to the reads that caused it -- including
+        # the ones that arrived AFTER the action was queued, which is the case
+        # deferred commit exists to catch.  Cite only what was gated on.
+        commit_taint = record.taint_at_commit or {}
+        post_only = commit_taint.get("gated_on") == "post_authoritative_taint"
+        provenance_ids = [
+            source["provenance_id"]
+            for source in self._context_tracker.untrusted_sources(
+                record.session_id or session_id
+            )
+            if source["post_authoritative"] or not post_only
+        ]
+
         self._audit.log(
             tool_name=record.tool_name,
             user_id=record.user_id,
@@ -1825,6 +1873,7 @@ class AuthorizationGate:
             ),
             parameters=record.parameters,
             session_id=record.session_id or session_id,
+            context_provenance_ids=provenance_ids or None,
             metadata={
                 "deferral_id": record.deferral_id,
                 "resolution": record.resolution,
@@ -1922,6 +1971,9 @@ class AuthorizationGate:
                 trust_ceiling=state.trust_ceiling.value,
                 is_trust_degraded=True,
                 degradation_effects=[e.value for e in state.active_effects],
+                # The id of the entry that just entered.  A downstream lineage
+                # denial cites this same id, so origin and consequence join.
+                context_provenance_ids=[provenance.provenance_id],
                 metadata={"source": source.value, "content_hash": content_hash},
             )
 
