@@ -330,29 +330,44 @@ class ContextTracker:
             return None
         untrusted_blobs = [(e, e.content.lower()) for e in untrusted_entries]
 
+        # Most-specific-first, like ``novel_lineage_check``, and for the same
+        # reason: ``extract_lineage_tokens`` returns a SET, so iterating it
+        # directly reports whichever token happened to come out first, which
+        # varies with PYTHONHASHSEED across processes.  The DECISION never did
+        # (a match is a match, and its existence is order independent), but the
+        # cited token did, and a citation that changes between runs is not one.
+        # Ordering is total: kind, then length, then the token, then the path.
+        kind_rank = {"email": 0, "url": 1, "str": 2}
+        candidates: list[tuple[int, int, str, str, str, str]] = []
         for path, value in _iter_param_leaves(parameters):
             for kind, tok in extract_lineage_tokens(value, min_len):
                 if not tok:
                     continue
-                # Authoritative FIRST -- clean if the user's own request has it.
-                if tok in auth_blob:
-                    continue
-                for entry, blob in untrusted_blobs:
-                    if tok in blob:
-                        return {
-                            "matched_param": path,
-                            "matched_value": (str(value)[:120]),
-                            "matched_kind": kind,
-                            "matched_token": tok[:120],
-                            "untrusted_source_ref": (
-                                f"{entry.tool_name or entry.source.value}"
-                                f":{entry.provenance_id}"
-                            ),
-                            # The id on its own, so an evidence consumer can
-                            # join this match to the taint-introduction record
-                            # without parsing ``untrusted_source_ref``.
-                            "untrusted_provenance_id": entry.provenance_id,
-                        }
+                candidates.append(
+                    (kind_rank.get(kind, 3), -len(tok), tok, path, kind, str(value)),
+                )
+        candidates.sort()
+
+        for _rank, _neglen, tok, path, kind, value in candidates:
+            # Authoritative FIRST -- clean if the user's own request has it.
+            if tok in auth_blob:
+                continue
+            for entry, blob in untrusted_blobs:
+                if tok in blob:
+                    return {
+                        "matched_param": path,
+                        "matched_value": value[:120],
+                        "matched_kind": kind,
+                        "matched_token": tok[:120],
+                        "untrusted_source_ref": (
+                            f"{entry.tool_name or entry.source.value}"
+                            f":{entry.provenance_id}"
+                        ),
+                        # The id on its own, so an evidence consumer can
+                        # join this match to the taint-introduction record
+                        # without parsing ``untrusted_source_ref``.
+                        "untrusted_provenance_id": entry.provenance_id,
+                    }
         return None
 
     def untrusted_sources(self, session_id: str) -> list[dict[str, Any]]:
