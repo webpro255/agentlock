@@ -77,6 +77,61 @@ The surplus is a property of the benchmark artifacts, not of this milestone. It
 is written up separately, outside this repository, as a benchmark
 artifact-integrity finding.
 
+## Execution confirmation (E7), and the invariant that governs it
+
+An `allowed` record is a grant of permission. It is not evidence that anything
+ran. The gate now writes an attempt record before a tool is invoked and a
+completion record when it returns or raises, so three facts that used to be one
+indistinguishable state are now three readable ones:
+
+| Evidence | Reading |
+|---|---|
+| attempt, then completion | ran, and the status says how it ended |
+| attempt, no completion | attempted, never returned (hang, crash, kill) |
+| neither, with a grant | authorized, never attempted |
+
+Callers that own their own execution (an MCP server, an async tool, any
+framework with its own executor) report through the public `begin_execution` and
+`confirm_execution`, bound to the grant by token id, or by deferral id for an
+action committed at end of turn. Those calls verify; they never authorize. They
+issue no token, consume none, extend no TTL, consult no policy, and write nothing
+that `authorize()` reads.
+
+**The invariant, stated exactly.** Never break and never alter are absolute, and
+they are enforced by tests: a backend that throws on every write, on the attempt
+only, or on the completion only cannot break, block, or change a tool call the
+gate has already authorized. The failure is swallowed at the writer boundary,
+reported out of band to the `agentlock.audit` logger, and counted on
+`gate.evidence_write_failures`, so a blind evidence layer says so rather than
+failing quietly.
+
+Never block is **not** a property of the gate. It is a property of the audit
+backend the deployment chooses. Synchronous is the default because a record that
+cannot survive a crash cannot describe one: the attempt record is durable before
+control leaves the gate, which is what makes an orphaned attempt mean anything.
+`AsyncAuditBackend` is available for deployments that cannot afford the write on
+the hot path. It never blocks, drops loudly when its queue is full, and loses
+queued records if the process dies, so under it the absence of a record is not
+evidence that the thing did not happen. Every record it writes is stamped
+`writer_mode` and `durable_before_execution`, so a reconstruction reads that
+limitation out of the log rather than out of a config file it does not have.
+
+One scope note, asserted in a test rather than left implicit: the non-fatal rule
+covers the execution path. On the authorize path a backend failure still
+propagates and no token is issued, so the call fails closed. That polarity is
+deliberate. An unrecordable decision must not become an unrecorded permission.
+
+An absent completion record supports the conclusion "attempted, never returned"
+only where the log is contiguous across that action's window. In a rotated,
+filtered, or partially exported log, the completion may simply sit in a segment
+the reader does not hold. Absence claims must be coverage-qualified.
+
+The invariance replay above was re-run after execution confirmation landed and
+still shows zero diffs across all 4542 replayable decisions. Its scope is worth
+stating precisely: the replay drives `authorize()`, not `execute()`, so it proves
+the authorization path did not move and says nothing about the execution path,
+which the unit tests cover instead.
+
 ## What is therefore claimed, and what is not
 
 Claimed: across 4542 decisions replayed from the frozen v1.4 benchmark under
