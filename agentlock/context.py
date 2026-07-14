@@ -89,6 +89,33 @@ def _generate_provenance_id() -> str:
     return f"cprov_{secrets.token_hex(8)}"
 
 
+def _note_outcome(
+    outcome: dict[str, Any] | None,
+    result: str,
+    qualifier: str = "",
+) -> None:
+    """Record WHY a lineage check returned what it returned (E10).
+
+    Write-only, into a caller-supplied dict.  Nothing in the engine reads this
+    back, and no check consults it: it is evidence, on the far side of the
+    value the policy engine actually decides on.  It adds no computation to the
+    decision path.  Every branch it records was already being taken; the fact
+    was simply thrown away at the ``return``.
+
+    ``result`` is one of ``match``, ``no_match``, ``not_classifiable``.  The
+    distinction that matters is between a ``no_match`` with no qualifier (the
+    check ran its comparison and nothing matched, which is the strong claim)
+    and one with a qualifier (the check had nothing to compare, which is not a
+    claim about the arguments at all).
+    """
+    if outcome is None:
+        return
+    outcome["ran"] = True
+    outcome["result"] = result
+    if qualifier:
+        outcome["qualifier"] = qualifier
+
+
 @dataclass(slots=True)
 class ContextProvenance:
     """Attribution for a single context entry."""
@@ -297,6 +324,7 @@ class ContextTracker:
         parameters: dict[str, Any] | None,
         *,
         min_len: int = 6,
+        outcome: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """Check whether any tool-call parameter value originated in UNTRUSTED
         context but not in the AUTHORITATIVE user request/config (v1.3 F2).
@@ -309,11 +337,23 @@ class ContextTracker:
         or ``None`` if every parameter value is clean.  The authoritative
         allowlist is checked FIRST: a value present in the user's own request
         is clean regardless of any untrusted echo.
+
+        ``outcome`` (E10) is an optional out-dict recording WHY this returned
+        what it returned.  The return value is unchanged, so no decision can
+        move; this only stops discarding a fact the method already had.  It
+        exists because ``None`` here is overloaded: it means "compared the
+        parameters against untrusted context and nothing traced to it", but it
+        ALSO means "there was nothing to compare against".  A grant record that
+        reported both as a clean result would be asserting a cleanliness the
+        check never established.  A bare ``no_match`` is therefore the strong
+        claim; every vacuous case carries a qualifier that says so.
         """
         if not parameters:
+            _note_outcome(outcome, "no_match", "no_parameters")
             return None
         state = self._states.get(session_id)
         if state is None or not state.provenance_log:
+            _note_outcome(outcome, "no_match", "no_provenance_log")
             return None
 
         auth_blob = " ".join(
@@ -327,6 +367,7 @@ class ContextTracker:
             if e.authority == ContextAuthority.UNTRUSTED and e.content
         ]
         if not untrusted_entries:
+            _note_outcome(outcome, "no_match", "no_untrusted_context")
             return None
         untrusted_blobs = [(e, e.content.lower()) for e in untrusted_entries]
 
@@ -348,12 +389,20 @@ class ContextTracker:
                 )
         candidates.sort()
 
+        if not candidates:
+            # The parameters carry no token distinctive enough to trace.  The
+            # loop below would return None anyway; saying so is the difference
+            # between "nothing traced" and "nothing was traceable".
+            _note_outcome(outcome, "no_match", "no_tokens")
+            return None
+
         for _rank, _neglen, tok, path, kind, value in candidates:
             # Authoritative FIRST -- clean if the user's own request has it.
             if tok in auth_blob:
                 continue
             for entry, blob in untrusted_blobs:
                 if tok in blob:
+                    _note_outcome(outcome, "match")
                     return {
                         "matched_param": path,
                         "matched_value": value[:120],
@@ -368,6 +417,10 @@ class ContextTracker:
                         # without parsing ``untrusted_source_ref``.
                         "untrusted_provenance_id": entry.provenance_id,
                     }
+        # Compared every traceable token against the untrusted context and none
+        # of them traced to it.  This, and only this, is the strong result: it
+        # carries no qualifier.
+        _note_outcome(outcome, "no_match")
         return None
 
     def untrusted_sources(self, session_id: str) -> list[dict[str, Any]]:
@@ -410,6 +463,7 @@ class ContextTracker:
         parameters: dict[str, Any] | None,
         *,
         min_len: int = 6,
+        outcome: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """Classify a tool call's target tokens as trusted / untrusted / NOVEL
         (v1.4).  Sibling of :meth:`parameter_lineage_check`.
@@ -431,11 +485,21 @@ class ContextTracker:
         or ``None`` when every distinctive token is accounted for.  Returns
         ``None`` when the session has no authoritative content, since without
         a baseline nothing can be classified.
+
+        ``outcome`` (E10) is an optional out-dict recording WHY.  The return
+        value is unchanged, so no decision can move.  It matters more here than
+        it does for :meth:`parameter_lineage_check`, because the no-baseline
+        case above is the check DECLINING TO CLASSIFY, and it returns the same
+        ``None`` as a clean result.  It is reported as ``not_classifiable``,
+        never as ``no_match``: a grant record must not claim the target was
+        accounted for when nothing could be classified at all.
         """
         if not parameters:
+            _note_outcome(outcome, "no_match", "no_parameters")
             return None
         state = self._states.get(session_id)
         if state is None or not state.provenance_log:
+            _note_outcome(outcome, "no_match", "no_provenance_log")
             return None
 
         # EXACT token sets -- not blobs.  Compare on the normalized token
@@ -458,6 +522,7 @@ class ContextTracker:
 
         # No authoritative baseline -> cannot classify anything as novel.
         if not auth_tokens:
+            _note_outcome(outcome, "not_classifiable", "no_authoritative_baseline")
             return None
 
         # Most-specific-first so the reported token is deterministic across
@@ -473,17 +538,24 @@ class ContextTracker:
                 )
         candidates.sort()
 
+        if not candidates:
+            _note_outcome(outcome, "no_match", "no_tokens")
+            return None
+
         for _rank, _neglen, tok, path, value in candidates:
             if tok in auth_tokens:
                 continue                      # trusted
             if tok in untrusted_tokens:
                 continue                      # untrusted -> param_lineage's job
+            _note_outcome(outcome, "match")
             return {
                 "matched_param": path,
                 "matched_value": value[:120],
                 "classification": "novel",
                 "matched_token": tok[:120],
             }
+        # Every distinctive token was accounted for, against a real baseline.
+        _note_outcome(outcome, "no_match")
         return None
 
     def record_unattributed(self, session_id: str) -> None:
