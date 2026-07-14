@@ -28,6 +28,7 @@ Requires: ``mcp`` (``pip install mcp``)
 from __future__ import annotations
 
 import functools
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -177,8 +178,37 @@ class AgentLockMCPServer:
                         auth.token.token_id, name, arguments or None
                     )
 
-                    # Delegate to the original handler
-                    result = await handler(name, arguments)
+                    # E7: the MCP server owns execution, so the gate learns the
+                    # outcome only because we report it.  Attempt first, outcome
+                    # after, so an absent completion means "attempted, never
+                    # returned" rather than nothing.  Neither call can raise.
+                    attempt = gate.begin_execution(
+                        name,
+                        token_id=auth.token.token_id,
+                        parameters=arguments or None,
+                    )
+                    started = time.time()
+                    try:
+                        result = await handler(name, arguments)
+                    except BaseException as exc:
+                        gate.confirm_execution(
+                            name,
+                            status="failed",
+                            token_id=auth.token.token_id,
+                            parameters=arguments or None,
+                            duration_ms=(time.time() - started) * 1000,
+                            error_type=type(exc).__name__,
+                            attempt_audit_id=(attempt.audit_id if attempt else ""),
+                        )
+                        raise
+                    gate.confirm_execution(
+                        name,
+                        status="succeeded",
+                        token_id=auth.token.token_id,
+                        parameters=arguments or None,
+                        duration_ms=(time.time() - started) * 1000,
+                        attempt_audit_id=(attempt.audit_id if attempt else ""),
+                    )
 
                     # Apply redaction
                     if isinstance(result, str):

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import time
 from collections.abc import Callable
 from typing import Any, TypeVar
 
@@ -135,7 +136,39 @@ def agentlock(
                 # Execute: await the async function directly, then run
                 # through the gate's redaction/audit via execute()
                 # We wrap in a sync callable for gate.execute() compatibility
-                captured_result = await func(*args, **kwargs)
+                #
+                # E7: this wrapper owns execution (it awaits the coroutine
+                # itself), so the gate sees the grant and never the act unless
+                # we report it.  The attempt goes out BEFORE the await, so a
+                # coroutine that never returns still leaves its trace, and the
+                # outcome goes out after.  Neither call can raise.
+                attempt = gate.begin_execution(
+                    tool_name,
+                    token_id=auth_result.token.token_id,
+                    parameters=kwargs,
+                )
+                started = time.time()
+                try:
+                    captured_result = await func(*args, **kwargs)
+                except BaseException as exc:
+                    gate.confirm_execution(
+                        tool_name,
+                        status="failed",
+                        token_id=auth_result.token.token_id,
+                        parameters=kwargs,
+                        duration_ms=(time.time() - started) * 1000,
+                        error_type=type(exc).__name__,
+                        attempt_audit_id=(attempt.audit_id if attempt else ""),
+                    )
+                    raise
+                gate.confirm_execution(
+                    tool_name,
+                    status="succeeded",
+                    token_id=auth_result.token.token_id,
+                    parameters=kwargs,
+                    duration_ms=(time.time() - started) * 1000,
+                    attempt_audit_id=(attempt.audit_id if attempt else ""),
+                )
 
                 # Apply redaction if configured
                 redacted = gate.redact_output(tool_name, captured_result) \

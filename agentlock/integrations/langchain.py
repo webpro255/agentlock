@@ -24,6 +24,7 @@ Requires: ``langchain-core`` (``pip install langchain-core``)
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from agentlock.gate import AuthorizationGate
@@ -225,7 +226,37 @@ class AgentLockToolWrapper:
             auth.token.token_id, tool_name, clean_kwargs or None
         )
 
-        result = await self._inner_tool._arun(*args, **clean_kwargs)
+        # E7: this integration owns its own execution, so the gate cannot see
+        # the outcome unless we tell it.  Report the attempt BEFORE awaiting the
+        # tool, and the outcome after, so an absent completion means "attempted,
+        # never returned" rather than nothing at all.  Neither call can raise.
+        attempt = self._gate.begin_execution(
+            tool_name,
+            token_id=auth.token.token_id,
+            parameters=clean_kwargs or None,
+        )
+        started = time.time()
+        try:
+            result = await self._inner_tool._arun(*args, **clean_kwargs)
+        except BaseException as exc:
+            self._gate.confirm_execution(
+                tool_name,
+                status="failed",
+                token_id=auth.token.token_id,
+                parameters=clean_kwargs or None,
+                duration_ms=(time.time() - started) * 1000,
+                error_type=type(exc).__name__,
+                attempt_audit_id=(attempt.audit_id if attempt else ""),
+            )
+            raise
+        self._gate.confirm_execution(
+            tool_name,
+            status="succeeded",
+            token_id=auth.token.token_id,
+            parameters=clean_kwargs or None,
+            duration_ms=(time.time() - started) * 1000,
+            attempt_audit_id=(attempt.audit_id if attempt else ""),
+        )
 
         # Apply redaction if configured
         redaction = self._gate.redact_output(tool_name, str(result))
