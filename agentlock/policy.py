@@ -100,6 +100,19 @@ class PolicyDecision:
     needs_approval: bool = False
     approval_channel: str = ""
 
+    # E10 -- what the session-lineage gate (step 10.5) actually concluded, for
+    # the audit record of a GRANT.  It is the one basis the gate cannot rebuild
+    # for itself: ``lineage_gated_action`` is computed here and was discarded
+    # here, so an allowed call could not say whether it had even been in the
+    # gated class, let alone that it cleared the gate on a clean session.
+    #
+    # Carried on the RETURN VALUE and never through ``context.metadata``.  That
+    # dict is scanned by ``InjectionFilter`` as attacker-controlled text (see
+    # the note on ``_asserted_classes`` in gate.py), so writing evidence into it
+    # is a way to change a decision by recording one.  A field on the decision
+    # cannot be read by any check that has already run.
+    session_lineage_basis: str = ""
+
 
 # ---------------------------------------------------------------------------
 # The lineage gating predicate -- ONE definition, TWO enforcement points.
@@ -452,7 +465,11 @@ class PolicyEngine:
         """
         # 1. Risk level none → auto-allow with minimal logging
         if permissions.risk_level == RiskLevel.NONE:
-            return PolicyDecision(allowed=True)
+            # Short-circuits above the lineage gate: it did not run, and the
+            # grant record has to say that rather than imply a clean result.
+            return PolicyDecision(
+                allowed=True, session_lineage_basis="not_run:risk_level_none"
+            )
 
         # 2. Authentication
         if permissions.requires_auth and not context.is_authenticated:
@@ -699,6 +716,12 @@ class PolicyEngine:
         # external / bulk) is blocked when untrusted content has entered
         # context.  Inert unless a lineage_policy is present, enabled, and
         # the permission block is v1.3+.
+        # E10: the basis of a grant, recorded as the gate reaches it.  Every
+        # assignment below sits on a branch the engine was already taking; none
+        # of them is consulted by anything downstream.  Default: no policy is
+        # live for this tool, so this gate never ran at all.
+        session_lineage_basis = "not_run:no_active_lineage_policy"
+
         lineage_policy = active_lineage_policy(permissions)
         if lineage_policy is not None:
             # v1.4 -- the gating disjunct lives in ``lineage_gated_action`` and
@@ -720,13 +743,36 @@ class PolicyEngine:
             )
             gated_action = lineage_gated_action(lineage_policy, permissions, _flags)
             summary = context.metadata.get("lineage")
+
+            # E10.  Both of these are grants the gate did NOT examine, and a
+            # reconstruction must not read either as a clean result: the first
+            # was never in the gated class, and the second had no taint summary
+            # to gate on (no session, or a pre-v1.3 permission block).
+            if not gated_action:
+                session_lineage_basis = "not_gated_action"
+            elif summary is None:
+                session_lineage_basis = "not_run:no_lineage_summary"
+
             if gated_action and summary is not None:
                 if lineage_policy.require_post_authoritative:
                     taint = bool(summary.get("post_authoritative_taint"))
                     taint_kind = "post-authoritative untrusted"
+                    taint_predicate = "post_authoritative"
                 else:
                     taint = bool(summary.get("tainted"))
                     taint_kind = "untrusted"
+                    taint_predicate = "any_untrusted"
+
+                if not taint:
+                    # The one positive basis this gate can honestly report: a
+                    # gated action, evaluated against the session's provenance,
+                    # on a session carrying no taint under the predicate named.
+                    # The predicate is part of the claim, not decoration --
+                    # "clean" under post_authoritative is a weaker statement
+                    # than "clean" under any_untrusted, and a record that hid
+                    # which one ran would overstate the stronger reading.
+                    session_lineage_basis = f"no_taint:{taint_predicate}"
+
                 if taint:
                     if context.is_financial:
                         action_kind = "financial"
@@ -757,6 +803,13 @@ class PolicyEngine:
                     if not lineage_policy.session_write_gate:
                         context.metadata["session_gate_shadow"] = "DENY"
                         context.metadata["session_gate_shadow_detail"] = detail
+                        # E10.  This grant was issued OVER a live gate hit: the
+                        # session was tainted and the action was gated, and it
+                        # went through only because the write-gate is disabled.
+                        # An allow like this one is the least clean grant the
+                        # engine can issue, and until now the audit record was
+                        # indistinguishable from that of a spotless call.
+                        session_lineage_basis = f"shadow_deny:{taint_predicate}"
                     elif lineage_policy.decision == "deny":
                         return PolicyDecision(
                             allowed=False,
@@ -854,4 +907,6 @@ class PolicyEngine:
                     ),
                 )
 
-        return PolicyDecision(allowed=True)
+        return PolicyDecision(
+            allowed=True, session_lineage_basis=session_lineage_basis
+        )
