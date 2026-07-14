@@ -86,16 +86,52 @@ class AuditRecord:
 # parameter, the token, and the source provenance id.
 _PAYLOAD_METADATA_KEYS = ("matched_value",)
 
+# E10 -- the citations inside a grant basis.  A grant can be issued OVER a live
+# lineage match (when the policy action is observe-only), and when it is, it
+# cites the match exactly as a denial does.
+_GRANT_MATCH_KEYS = ("param_lineage_match", "novel_lineage_match")
+
+
+def _strip_payload(citation: Any) -> Any:
+    """Drop literal user content from ONE citation dict, keeping the facts."""
+    if not isinstance(citation, dict):
+        return citation
+    if not any(k in citation for k in _PAYLOAD_METADATA_KEYS):
+        return citation
+    return {k: v for k, v in citation.items() if k not in _PAYLOAD_METADATA_KEYS}
+
 
 def _drop_payload(metadata: dict[str, Any]) -> dict[str, Any]:
-    """Strip raw user content from ``lineage_evidence``, keeping the facts."""
-    evidence = metadata.get("lineage_evidence")
-    if not isinstance(evidence, dict):
-        return metadata
-    if not any(k in evidence for k in _PAYLOAD_METADATA_KEYS):
-        return metadata
-    stripped = {k: v for k, v in evidence.items() if k not in _PAYLOAD_METADATA_KEYS}
-    return {**metadata, "lineage_evidence": stripped}
+    """Strip raw user content from every lineage citation, keeping the facts.
+
+    Covers the denial citation (``lineage_evidence``, E5) and the match
+    citations inside ``grant_basis`` (E10).  One rule, deliberately not two: a
+    value lifted out of untrusted content is the same disclosure whether the
+    gate refused on it or granted over it.
+
+    The per-check outcome strings in a grant basis are never touched.  They are
+    the gate's own findings and carry no user content: dropping them would
+    delete the decision-relevant facts and leave only the payload rule's shadow.
+    """
+    out = metadata
+
+    evidence = out.get("lineage_evidence")
+    stripped = _strip_payload(evidence)
+    if stripped is not evidence:
+        out = {**out, "lineage_evidence": stripped}
+
+    basis = out.get("grant_basis")
+    if isinstance(basis, dict):
+        rebuilt = basis
+        for key in _GRANT_MATCH_KEYS:
+            match = rebuilt.get(key)
+            scrubbed = _strip_payload(match)
+            if scrubbed is not match:
+                rebuilt = {**rebuilt, key: scrubbed}
+        if rebuilt is not basis:
+            out = {**out, "grant_basis": rebuilt}
+
+    return out
 
 
 @runtime_checkable

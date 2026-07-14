@@ -386,6 +386,109 @@ class AuthorizationGate:
 
         return None
 
+    @staticmethod
+    def _check_basis(outcome: dict[str, Any], action: str = "") -> str:
+        """Render ONE lineage check's outcome for a grant record (E10).
+
+        Flat, because the grant record lands on ~70% of all decisions and every
+        byte here is paid on every allowed call.  The grammar is
+        ``result[:qualifier]`` and it is meant to be read literally:
+
+        * ``no_match`` -- the check ran its comparison and nothing matched.
+          The strong claim, and the ONLY string in this vocabulary that
+          supports the reading "the arguments were traced and came back clean".
+        * ``no_match:<qualifier>`` -- it ran and found nothing to compare (no
+          untrusted context, no parameters, no traceable token).  NOT a claim
+          about the arguments.
+        * ``not_classifiable:<qualifier>`` -- it declined to classify.  Novel
+          lineage returns this with no authoritative baseline to classify
+          against.  Emphatically not a clean result.
+        * ``not_run:<reason>`` -- it never executed.
+        * ``match:<action>`` -- it MATCHED and the call was granted anyway,
+          which on this path can only mean the policy action was observe-only;
+          a gating action would have returned a denial and never reached here.
+        """
+        if not outcome.get("ran"):
+            return f"not_run:{outcome.get('reason', 'unknown')}"
+        result = outcome.get("result", "unknown")
+        if result == "match":
+            return f"match:{action or 'log'}"
+        qualifier = outcome.get("qualifier")
+        return f"{result}:{qualifier}" if qualifier else result
+
+    def _grant_basis(
+        self,
+        permissions: AgentLockPermissions,
+        ctx: RequestContext,
+        param_outcome: dict[str, Any],
+        novel_outcome: dict[str, Any],
+        session_basis: str,
+    ) -> dict[str, Any]:
+        """What a GRANT was decided on, for the audit record (E10).
+
+        The gate cited what it refused on and said nothing about what it
+        permitted on.  A reconstruction could observe that no denial fired,
+        which is not the same claim as "the arguments traced to the
+        authoritative request": absence of a denial is evidence that nothing
+        matched, not evidence that anything was checked.
+
+        So this reports only what the gate actually computed, and it reports
+        the difference between a check that ran and passed and a check that
+        never ran.  It SYNTHESIZES NOTHING.  There is no aggregate verdict
+        here, no "clean" flag, and there deliberately is not one: the engine
+        never computes an overall judgement of a grant, and a record that
+        invented one would be asserting a conclusion no check reached.  A
+        reader who wants that judgement must read the per-check strings and
+        draw it, which is the honest amount of work.
+
+        Built after the decision, from values already in hand, and never read
+        back by the gate.
+        """
+        lp = permissions.lineage_policy
+        if lp is None:
+            # This tool is not lineage-governed, so no lineage check was ever
+            # applicable to it.  Said in ~30 bytes, rather than left for a
+            # reader to infer from an ABSENT block -- absence is ambiguous with
+            # an old record, a filtered log, or an engine that predates E10.
+            return {"lineage_policy": "none"}
+
+        basis: dict[str, Any] = {
+            # ``declared_disabled`` disables the SESSION gate only.  Parameter
+            # and novel lineage run off their own flags and can still be live,
+            # which is why they are reported independently below.
+            "lineage_policy": "active" if lp.enabled else "declared_disabled",
+            "param_lineage": self._check_basis(
+                param_outcome, lp.param_lineage_action
+            ),
+            "novel_lineage": self._check_basis(
+                novel_outcome, lp.novel_lineage_action
+            ),
+            "session_lineage": session_basis or "not_run:unknown",
+        }
+
+        # The taint summary the gate actually read.  Omitted, never defaulted
+        # to False, when no summary was computed: a fabricated "tainted: false"
+        # on a call the gate never looked at is the exact failure this block
+        # exists to prevent.
+        summary = ctx.metadata.get("lineage")
+        if summary is not None:
+            basis["tainted"] = bool(summary.get("tainted"))
+            basis["post_authoritative_taint"] = bool(
+                summary.get("post_authoritative_taint")
+            )
+
+        # A grant issued over a LIVE match cites what it matched, on the same
+        # terms a denial does (E5): the facts at every level, the literal value
+        # only where ``include_parameters`` allows it.
+        pmatch = ctx.metadata.get("param_lineage")
+        if pmatch is not None:
+            basis["param_lineage_match"] = {"gate": "param_lineage", **pmatch}
+        nmatch = ctx.metadata.get("novel_lineage")
+        if nmatch is not None:
+            basis["novel_lineage_match"] = {"gate": "novel_lineage", **nmatch}
+
+        return basis
+
     # -- Action-class audit (on demand, never on a hot path) ----------------
 
     def audit_action_classes(
@@ -677,22 +780,41 @@ class AuthorizationGate:
         # v1.3 lineage: the gate owns this read; callers cannot supply it.
         # A worst-case taint summary of the session's provenance log is
         # attached so the policy engine can gate purely on provenance.
-        if version_at_least(permissions.version, (1, 3)) and resolved_session_id:
+        _lp = permissions.lineage_policy
+        _v13 = version_at_least(permissions.version, (1, 3))
+
+        # E10 -- what each parameter-level lineage check concluded, or why it
+        # never ran.  LOCALS, deliberately: these must NOT be written into
+        # ``request_metadata``.  ``InjectionFilter`` scans that dict's values as
+        # attacker-controlled text, so evidence placed there is evidence that
+        # can change a decision.  These are read on the far side of the
+        # decision, by the audit path, and by nothing else.
+        _param_outcome: dict[str, Any] = {}
+        _novel_outcome: dict[str, Any] = {}
+
+        if _v13 and resolved_session_id:
             request_metadata["lineage"] = self._context_tracker.lineage_summary(
                 resolved_session_id
             )
+            if _lp is None:
+                _no_policy = {"ran": False, "reason": "no_lineage_policy"}
+                _param_outcome.update(_no_policy)
+                _novel_outcome.update(_no_policy)
+
             # v1.3 Feature 2 -- parameter lineage. Gate-owned read: does any
             # parameter value trace to untrusted context but not the user's
             # authoritative request?  Attached for the policy engine.
-            _lp = permissions.lineage_policy
             if _lp is not None and _lp.param_lineage_enabled:
                 _match = self._context_tracker.parameter_lineage_check(
                     resolved_session_id,
                     parameters,
                     min_len=_lp.param_lineage_min_len,
+                    outcome=_param_outcome,
                 )
                 if _match is not None:
                     request_metadata["param_lineage"] = _match
+            elif _lp is not None:
+                _param_outcome.update({"ran": False, "reason": "check_disabled"})
 
             # v1.4 -- novel lineage. Gate-owned read: does any parameter token
             # trace to NEITHER the authoritative nor the untrusted context?
@@ -701,9 +823,20 @@ class AuthorizationGate:
                 _novel = self._context_tracker.novel_lineage_check(
                     resolved_session_id,
                     parameters,
+                    outcome=_novel_outcome,
                 )
                 if _novel is not None:
                     request_metadata["novel_lineage"] = _novel
+            elif _lp is not None:
+                _novel_outcome.update({"ran": False, "reason": "check_disabled"})
+        else:
+            # Neither check ran, and the two reasons are not the same fact.  A
+            # grant issued with no session was never examined for parameter
+            # lineage at all, and its record has to say so rather than present
+            # an unexamined call as a clean one.
+            _reason = "no_session" if _v13 else "tool_below_v1_3"
+            _param_outcome.update({"ran": False, "reason": _reason})
+            _novel_outcome.update({"ran": False, "reason": _reason})
 
         # Build request context
         ctx = RequestContext(
@@ -1342,6 +1475,28 @@ class AuthorizationGate:
                     if modify_output_fn or transformations_applied:
                         modify_decision = DecisionType.MODIFY
 
+            # E10: a grant records the basis it was granted on, not merely the
+            # fact that nothing denied it.  Built from what the gate and the
+            # policy engine already computed, after the decision, and never read
+            # back -- ``grant_basis`` cannot alter ``decision``.
+            grant_basis = self._grant_basis(
+                permissions,
+                ctx,
+                _param_outcome,
+                _novel_outcome,
+                decision.session_lineage_basis,
+            )
+            allow_meta = {**(_class_meta() or {}), "grant_basis": grant_basis}
+
+            # A grant issued over a live parameter-lineage match resolves to the
+            # taint-introduction record that match came from, by the same join
+            # key a denial uses (E5/E4).  A novel match cites nothing, because a
+            # novel token traces to no context entry at all.
+            grant_provenance_ids = None
+            pmatch = grant_basis.get("param_lineage_match")
+            if pmatch is not None:
+                grant_provenance_ids = self._evidence_provenance_ids(pmatch)
+
             record = self._audit.log(
                 tool_name=tool_name,
                 user_id=user_id,
@@ -1354,7 +1509,8 @@ class AuthorizationGate:
                 token_id=token.token_id,
                 session_id=ctx.session_id,
                 duration_ms=duration_ms,
-                metadata=_class_meta(),
+                metadata=allow_meta,
+                context_provenance_ids=grant_provenance_ids,
                 **audit_kwargs,
             )
 
