@@ -278,6 +278,69 @@ class AuthorizationGate:
         """List all registered tool names."""
         return list(self._tools.keys())
 
+    # -- Lineage evidence (audit-only, never read back) ----------------------
+
+    def _lineage_evidence(
+        self,
+        reason: str,
+        ctx: RequestContext,
+        permissions: AgentLockPermissions,
+    ) -> dict[str, Any] | None:
+        """The facts a lineage denial was decided on, for the audit record.
+
+        A lineage gate has ALREADY computed the parameter, the value, and the
+        source that justified its denial: that computation is what produced the
+        denial.  This routes that evidence into the record instead of
+        discarding it, so the denial states the causal chain rather than
+        asserting it.
+
+        Purely a read of what ``authorize()`` already attached to
+        ``ctx.metadata`` (plus, for a session-taint denial, a read-only lookup
+        of the untrusted entries in the provenance log).  It runs AFTER the
+        decision and its result is never read back by the gate: it cannot
+        change what was decided.
+
+        Returns ``None`` for any non-lineage denial reason.
+        """
+        if reason == DenialReason.PARAM_LINEAGE.value:
+            match = ctx.metadata.get("param_lineage")
+            if not isinstance(match, dict):
+                return None
+            return {"gate": "param_lineage", **match}
+
+        if reason == DenialReason.NOVEL_LINEAGE.value:
+            match = ctx.metadata.get("novel_lineage")
+            if not isinstance(match, dict):
+                return None
+            # A novel token traces to NO source, authoritative or untrusted.
+            # That absence is the finding, so there is no source ref to cite
+            # and none is invented here.
+            return {"gate": "novel_lineage", **match}
+
+        if reason == DenialReason.UNTRUSTED_LINEAGE.value:
+            summary = ctx.metadata.get("lineage")
+            if not isinstance(summary, dict):
+                return None
+            lp = active_lineage_policy(permissions)
+            gated_on = (
+                "post_authoritative_taint"
+                if lp is not None and lp.require_post_authoritative
+                else "tainted"
+            )
+            return {
+                "gate": "session_lineage",
+                "gated_on": gated_on,
+                "tainted": bool(summary.get("tainted")),
+                "post_authoritative_taint": bool(
+                    summary.get("post_authoritative_taint")
+                ),
+                "untrusted_sources": self._context_tracker.untrusted_sources(
+                    ctx.session_id
+                ),
+            }
+
+        return None
+
     # -- Action-class audit (on demand, never on a hot path) ----------------
 
     def audit_action_classes(
@@ -1265,19 +1328,30 @@ class AuthorizationGate:
                 auth_result, tool_name, user_id, role, parameters,
             )
         else:
+            denial_reason = (
+                decision.reason.value if decision.reason else "unknown"
+            )
+            # E5: a lineage denial cites the data that gated it.  Built from
+            # what the gate already computed, after the decision, and never
+            # read back -- ``evidence`` cannot alter ``decision``.
+            denial_meta = _class_meta()
+            evidence = self._lineage_evidence(denial_reason, ctx, permissions)
+            if evidence is not None:
+                denial_meta = {**(denial_meta or {}), "lineage_evidence": evidence}
+
             record = self._audit.log(
                 tool_name=tool_name,
                 user_id=user_id,
                 role=role,
                 action="denied",
-                reason=decision.reason.value if decision.reason else "unknown",
+                reason=denial_reason,
                 risk_level=permissions.risk_level.value,
                 log_level=permissions.audit.log_level,
                 include_parameters=permissions.audit.include_parameters,
                 parameters=parameters,
                 session_id=ctx.session_id,
                 duration_ms=duration_ms,
-                metadata=_class_meta(),
+                metadata=denial_meta,
             )
 
             auth_result = AuthResult(

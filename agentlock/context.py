@@ -348,8 +348,46 @@ class ContextTracker:
                                 f"{entry.tool_name or entry.source.value}"
                                 f":{entry.provenance_id}"
                             ),
+                            # The id on its own, so an evidence consumer can
+                            # join this match to the taint-introduction record
+                            # without parsing ``untrusted_source_ref``.
+                            "untrusted_provenance_id": entry.provenance_id,
                         }
         return None
+
+    def untrusted_sources(self, session_id: str) -> list[dict[str, Any]]:
+        """The untrusted entries in a session's provenance log, in order.
+
+        Read-only, and read by the audit path only: this is the evidence
+        behind a session-taint denial, never an input to one.  Each entry is
+        reported as its provenance id, a human-readable source ref, its
+        content hash, and whether it entered after the last authoritative
+        entry (the fact ``post_authoritative_taint`` is computed from).
+        """
+        state = self._states.get(session_id)
+        if state is None or not state.provenance_log:
+            return []
+
+        log = state.provenance_log
+        last_authoritative_idx = -1
+        for i, entry in enumerate(log):
+            if entry.authority == ContextAuthority.AUTHORITATIVE:
+                last_authoritative_idx = i
+
+        return [
+            {
+                "provenance_id": entry.provenance_id,
+                "source_ref": (
+                    f"{entry.tool_name or entry.source.value}"
+                    f":{entry.provenance_id}"
+                ),
+                "source": entry.source.value,
+                "content_hash": entry.content_hash,
+                "post_authoritative": i > last_authoritative_idx,
+            }
+            for i, entry in enumerate(log)
+            if entry.authority == ContextAuthority.UNTRUSTED
+        ]
 
     def novel_lineage_check(
         self,

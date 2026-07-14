@@ -68,6 +68,28 @@ class AuditRecord:
         return d
 
 
+# Metadata keys that carry raw user content rather than a fact about the
+# decision.  Evidence completeness and payload disclosure are two axes, not
+# one: which gate fired, which parameter carried the value, and which source it
+# traced to are decision facts and are recorded at every log level.  The literal
+# value is user data (an email, an IBAN, a message fragment), so it follows the
+# same disclosure rule as ``parameters`` and is dropped wherever they are.
+# Dropping it never weakens the citation: the record still names the gate, the
+# parameter, the token, and the source provenance id.
+_PAYLOAD_METADATA_KEYS = ("matched_value",)
+
+
+def _drop_payload(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Strip raw user content from ``lineage_evidence``, keeping the facts."""
+    evidence = metadata.get("lineage_evidence")
+    if not isinstance(evidence, dict):
+        return metadata
+    if not any(k in evidence for k in _PAYLOAD_METADATA_KEYS):
+        return metadata
+    stripped = {k: v for k, v in evidence.items() if k not in _PAYLOAD_METADATA_KEYS}
+    return {**metadata, "lineage_evidence": stripped}
+
+
 @runtime_checkable
 class AuditBackend(Protocol):
     """Protocol for pluggable audit storage."""
@@ -218,7 +240,9 @@ class AuditLogger:
             duration_ms: Execution duration in milliseconds.
             log_level: The tool's configured audit level.
             include_parameters: Whether to include parameters in the record.
-            metadata: Additional context.
+            metadata: Additional context.  Raw user content carried under
+                ``lineage_evidence`` obeys the same disclosure rule as
+                ``parameters``; the decision facts around it do not.
 
         Returns:
             The created audit record.
@@ -258,14 +282,18 @@ class AuditLogger:
             record.response_summary = ""
             record.user_id = ""
             record.role = ""
+            record.metadata = _drop_payload(record.metadata)
         elif log_level == AuditLogLevel.STANDARD:
             # + identity + scope
             record.parameters = None
             record.response_summary = ""
+            record.metadata = _drop_payload(record.metadata)
         else:
             # FULL -- include everything
             if include_parameters:
                 record.parameters = parameters
+            else:
+                record.metadata = _drop_payload(record.metadata)
             record.response_summary = response_summary
 
         self._backend.write(record)
