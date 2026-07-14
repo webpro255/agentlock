@@ -29,6 +29,7 @@ Example::
 from __future__ import annotations
 
 import time
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -43,7 +44,12 @@ from agentlock.action_class_audit import (
     suggest,
     tally_observations,
 )
-from agentlock.audit import AuditBackend, AuditLogger, InMemoryAuditBackend
+from agentlock.audit import (
+    AuditBackend,
+    AuditLogger,
+    AuditRecord,
+    InMemoryAuditBackend,
+)
 from agentlock.context import ContextProvenance, ContextTracker
 from agentlock.defer import DeferralManager, DeferralRecord
 from agentlock.exceptions import (
@@ -222,6 +228,13 @@ class AuthorizationGate:
         self._stepup_manager = StepUpManager()
         # Signed receipts (AARM R5)
         self._receipt_signer = receipt_signer
+        # E7 evidence bookkeeping.  BOTH are audit-only and BOUNDED, and neither
+        # is ever read by authorize(): they exist so an execution confirmation
+        # can be verified and so a duplicate can be named as one.  Bounded
+        # because an evidence side-table must not become a memory leak in a
+        # long-lived gate.
+        self._resolved_deferrals: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._confirmed_executions: OrderedDict[str, str] = OrderedDict()
         # Monotonic count of authorize() decisions issued.  A HEALTH CHECK for
         # audit_action_classes()'s readback probe and nothing else: it is never
         # read by the gate, never reaches PolicyEngine, and never influences a
@@ -1552,6 +1565,293 @@ class AuthorizationGate:
 
         return result
 
+    # -- Execution confirmation for callers that own execution (E7) ---------
+    #
+    # Most integrations do NOT hand the gate their execution: a framework with
+    # its own executor (an MCP server, an agent runtime, an async tool) runs the
+    # tool itself and the gate never sees the outcome.  For those callers the
+    # absence of an execution record would mean nothing at all, and a
+    # reconstruction reading absence as "it did not run" would be WRONG.  These
+    # two methods let such a caller report what it did, bound to the grant it
+    # was given, so that absence becomes interpretable everywhere.
+    #
+    # THE HARD LINE: these VERIFY, they never authorize.  They do not issue a
+    # token, do not consume one, do not extend a TTL, do not consult policy, and
+    # nothing they write is ever read by authorize().  A confirmation arrives
+    # after the fact and cannot resurrect a denied call or extend a granted one.
+    # They also never raise: a caller reporting what it did must not be broken by
+    # the reporting, and an unverifiable claim is RECORDED as unverifiable rather
+    # than rejected in silence.
+
+    _MAX_EVIDENCE_ENTRIES = 10_000
+
+    def _remember(self, table: OrderedDict[str, Any], key: str, value: Any) -> None:
+        table[key] = value
+        while len(table) > self._MAX_EVIDENCE_ENTRIES:
+            table.popitem(last=False)
+
+    def _verify_execution_binding(
+        self,
+        tool_name: str,
+        token_id: str,
+        deferral_id: str,
+        parameters: dict[str, Any] | None,
+    ) -> tuple[bool, str, dict[str, Any]]:
+        """Check that a reported execution matches a grant the gate issued.
+
+        Returns ``(verified, reason, facts)``.  ``reason`` is empty when
+        verified, and otherwise names exactly what did not check out, so an
+        unverified confirmation is still evidence of something.
+        """
+        facts: dict[str, Any] = {}
+
+        if deferral_id:
+            resolved = self._resolved_deferrals.get(deferral_id)
+            if resolved is None:
+                return False, "unknown_deferral", facts
+            if resolved["tool_name"] != tool_name:
+                return False, "tool_mismatch", facts
+            facts.update(
+                user_id=resolved["user_id"],
+                role=resolved["role"],
+                session_id=resolved["session_id"],
+                resolution_at_commit=resolved["resolution"],
+            )
+            expected = resolved["parameters_hash"]
+            if (
+                expected
+                and parameters is not None
+                and ExecutionToken.hash_parameters(parameters) != expected
+            ):
+                return False, "parameter_mismatch", facts
+            return True, "", facts
+
+        if token_id:
+            token = self._token_store.get(token_id)
+            if token is None:
+                return False, "unknown_token", facts
+            if token.tool_name != tool_name:
+                return False, "tool_mismatch", facts
+            facts.update(user_id=token.user_id, role=token.role)
+            if (
+                token.parameters_hash
+                and parameters is not None
+                and ExecutionToken.hash_parameters(parameters)
+                != token.parameters_hash
+            ):
+                return False, "parameter_mismatch", facts
+            return True, "", facts
+
+        return False, "no_binding_supplied", facts
+
+    def _execution_log_kwargs(self, tool_name: str) -> dict[str, Any]:
+        permissions = self._tools.get(tool_name)
+        return {
+            "risk_level": (
+                permissions.risk_level.value if permissions else "unknown"
+            ),
+            "log_level": (
+                permissions.audit.log_level
+                if permissions
+                else AuditLogLevel.STANDARD
+            ),
+        }
+
+    def begin_execution(
+        self,
+        tool_name: str,
+        *,
+        token_id: str = "",
+        deferral_id: str = "",
+        parameters: dict[str, Any] | None = None,
+        session_id: str = "",
+    ) -> AuditRecord | None:
+        """Report that a caller-owned execution is ABOUT to run (E7).
+
+        Call this immediately before invoking the tool, and
+        :meth:`confirm_execution` immediately after.  The pair is what makes an
+        absent completion record mean "attempted, never returned" instead of
+        nothing at all.
+
+        Never raises, never authorizes.  Returns the attempt record, whose
+        ``audit_id`` should be passed back as ``attempt_audit_id``, or ``None``
+        if the evidence write failed.
+        """
+        verified, reason, facts = self._verify_execution_binding(
+            tool_name, token_id, deferral_id, parameters
+        )
+        base = self._execution_log_kwargs(tool_name)
+        permissions = self._tools.get(tool_name)
+
+        if not verified:
+            return self._audit.log_best_effort(
+                tool_name=tool_name,
+                action="execution_attempt_unverified",
+                reason=reason,
+                risk_level=base["risk_level"],
+                token_id=token_id,
+                session_id=session_id or facts.get("session_id", ""),
+                metadata={
+                    "writer_mode": self._audit.writer_mode,
+                    "durable_before_execution": (
+                        self._audit.durable_before_execution
+                    ),
+                    "reported_by": "caller",
+                    "verification": reason,
+                    **({"deferral_id": deferral_id} if deferral_id else {}),
+                },
+            )
+
+        return self._audit.log_execution_attempt(
+            tool_name=tool_name,
+            user_id=facts.get("user_id", ""),
+            role=facts.get("role", ""),
+            risk_level=base["risk_level"],
+            token_id=token_id,
+            session_id=session_id or facts.get("session_id", ""),
+            parameters=parameters,
+            log_level=base["log_level"],
+            include_parameters=(
+                permissions.audit.include_parameters if permissions else False
+            ),
+            reported_by="caller",
+            deferral_id=deferral_id,
+        )
+
+    def confirm_execution(
+        self,
+        tool_name: str,
+        *,
+        status: str,
+        token_id: str = "",
+        deferral_id: str = "",
+        parameters: dict[str, Any] | None = None,
+        duration_ms: float = 0.0,
+        error_type: str = "",
+        attempt_audit_id: str = "",
+        session_id: str = "",
+    ) -> AuditRecord | None:
+        """Report the OUTCOME of a caller-owned execution (E7).
+
+        ``status`` is "succeeded" or "failed".  Bound to the grant by token id,
+        or by deferral id for an action committed at end of turn (that path
+        issues no token).
+
+        Duplicates are RECORDED, never resolved.  A second confirmation for the
+        same grant means one of two things, and the gate does not get to decide
+        which: either the integration reported twice for one execution, which is
+        a caller bug, or the action ran twice against a single authorization,
+        which is what single-use tokens exist to prevent.  The duplicate record
+        cites the original's ``audit_id`` and preserves the ambiguity for a human.
+        A legitimate retry is a NEW authorization and therefore a new grant.
+
+        Never raises, never authorizes.
+        """
+        verified, reason, facts = self._verify_execution_binding(
+            tool_name, token_id, deferral_id, parameters
+        )
+        base = self._execution_log_kwargs(tool_name)
+        key = deferral_id or token_id
+        meta_common: dict[str, Any] = {
+            "writer_mode": self._audit.writer_mode,
+            "durable_before_execution": self._audit.durable_before_execution,
+            "reported_by": "caller",
+        }
+
+        if not verified:
+            # An unverifiable claim is not discarded.  A caller asserting an
+            # execution the gate cannot tie to any grant it issued is itself a
+            # finding, and the log is the right place for it.
+            return self._audit.log_best_effort(
+                tool_name=tool_name,
+                action="execution_confirmation_unverified",
+                reason=reason,
+                risk_level=base["risk_level"],
+                token_id=token_id,
+                session_id=session_id or facts.get("session_id", ""),
+                duration_ms=duration_ms,
+                metadata={
+                    **meta_common,
+                    "verification": reason,
+                    "claimed_status": status,
+                    **({"deferral_id": deferral_id} if deferral_id else {}),
+                },
+            )
+
+        if key and key in self._confirmed_executions:
+            return self._audit.log_best_effort(
+                tool_name=tool_name,
+                action="execution_confirmation_duplicate",
+                reason="already_confirmed",
+                risk_level=base["risk_level"],
+                token_id=token_id,
+                user_id=facts.get("user_id", ""),
+                role=facts.get("role", ""),
+                session_id=session_id or facts.get("session_id", ""),
+                duration_ms=duration_ms,
+                metadata={
+                    **meta_common,
+                    "status": status,
+                    "original_audit_id": self._confirmed_executions[key],
+                    **({"deferral_id": deferral_id} if deferral_id else {}),
+                },
+            )
+
+        # A committed action confirmed as executed is ordinary.  An action the
+        # gate DENIED at commit, reported as executed, is not: it is the single
+        # most serious thing this log can carry, and it gets its own action so
+        # that no filter can mistake it for a routine execution.
+        action_override = ""
+        if facts.get("resolution_at_commit") == "denied":
+            action_override = "execution_after_denial"
+
+        if action_override:
+            record = self._audit.log_best_effort(
+                tool_name=tool_name,
+                action=action_override,
+                reason="executed_despite_denial",
+                risk_level=base["risk_level"],
+                user_id=facts.get("user_id", ""),
+                role=facts.get("role", ""),
+                token_id=token_id,
+                session_id=session_id or facts.get("session_id", ""),
+                duration_ms=duration_ms,
+                log_level=base["log_level"],
+                metadata={
+                    **meta_common,
+                    "status": status,
+                    "resolution_at_commit": "denied",
+                    "deferral_id": deferral_id,
+                    **({"attempt_audit_id": attempt_audit_id}
+                       if attempt_audit_id else {}),
+                },
+            )
+        else:
+            record = self._audit.log_execution_completion(
+                tool_name=tool_name,
+                status=status,
+                user_id=facts.get("user_id", ""),
+                role=facts.get("role", ""),
+                risk_level=base["risk_level"],
+                token_id=token_id,
+                session_id=session_id or facts.get("session_id", ""),
+                duration_ms=duration_ms,
+                error_type=error_type,
+                attempt_audit_id=attempt_audit_id,
+                log_level=base["log_level"],
+                reported_by="caller",
+                deferral_id=deferral_id,
+                metadata=(
+                    {"resolution_at_commit": facts["resolution_at_commit"]}
+                    if "resolution_at_commit" in facts
+                    else None
+                ),
+            )
+
+        if key and record is not None:
+            self._remember(self._confirmed_executions, key, record.audit_id)
+        return record
+
     # -- Convenience: authorize + execute in one call -----------------------
 
     def call(
@@ -1881,6 +2181,27 @@ class AuthorizationGate:
         )
         for record in resolved:
             self._audit_commit_resolution(record, session_id)
+            # Retained (bounded, audit-only) so that a caller executing a
+            # committed action can later have its execution confirmation
+            # VERIFIED against what the gate actually decided.  Never read by
+            # authorize(), and it holds the resolution, so a confirmation for an
+            # action the gate DENIED cannot be filed as a routine execution.
+            self._remember(
+                self._resolved_deferrals,
+                record.deferral_id,
+                {
+                    "tool_name": record.tool_name,
+                    "user_id": record.user_id,
+                    "role": record.role,
+                    "session_id": record.session_id or session_id,
+                    "resolution": record.resolution,
+                    "parameters_hash": (
+                        ExecutionToken.hash_parameters(record.parameters)
+                        if record.parameters
+                        else ""
+                    ),
+                },
+            )
         return resolved
 
     def _audit_commit_resolution(

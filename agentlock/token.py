@@ -148,6 +148,17 @@ class TokenStore:
         token.consume()
         return token
 
+    def get(self, token_id: TokenId) -> ExecutionToken | None:
+        """Look a token up WITHOUT validating, consuming, or mutating it.
+
+        Read-only, and used only by the evidence path: an execution
+        confirmation must be able to check what a token was issued for, after
+        the token has already been consumed, without touching its lifecycle.
+        Never call this to decide anything.  Authorization reads tokens through
+        :meth:`validate_and_consume`, which is the only path that may consume.
+        """
+        return self._tokens.get(token_id)
+
     def revoke(self, token_id: TokenId) -> None:
         """Revoke a token."""
         token = self._tokens.get(token_id)
