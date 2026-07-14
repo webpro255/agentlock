@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from agentlock.action_class_audit import (
@@ -75,6 +75,7 @@ from agentlock.signals.velocity import VelocityConfig, VelocityDetector
 from agentlock.stepup import StepUpManager, StepUpRequest
 from agentlock.token import ExecutionToken, TokenStore
 from agentlock.types import (
+    AuditLogLevel,
     ContextSource,
     DataBoundary,
     DataClassification,
@@ -730,7 +731,6 @@ class AuthorizationGate:
             and context_state.is_degraded
             and DegradationEffect.ELEVATE_LOGGING in context_state.active_effects
         ):
-            from agentlock.types import AuditLogLevel
             effective_log_level = AuditLogLevel.FULL
 
         # Rate limiting (checked even if policy passed, before token issuance)
@@ -1771,8 +1771,75 @@ class AuthorizationGate:
                 lineage_policy, permissions, record.action_flags
             )
 
-        return self._deferral_manager.resolve_commit_queue(
+        resolved = self._deferral_manager.resolve_commit_queue(
             session_id, deny=_should_deny, taint_at_commit=taint_at_commit,
+        )
+        for record in resolved:
+            self._audit_commit_resolution(record, session_id)
+        return resolved
+
+    def _audit_commit_resolution(
+        self, record: DeferralRecord, session_id: str
+    ) -> None:
+        """Write the outcome of ONE deferred action (E6).
+
+        A deferral is a two-phase decision and both phases are load bearing.
+        The gate logged the suspension and never logged the fate, so the
+        incident had no ending: the log could not answer whether the dangerous
+        action ultimately went through.
+
+        The action strings are deliberately distinct from the authorize path's
+        ``allowed`` / ``denied`` / ``deferred``, so nothing filtering for a
+        call-time decision mistakes a commit resolution for one.
+
+        ``asserted_classes`` is deliberately NOT emitted here.  The commit-time
+        flags go under their own key: ``tally_observations()`` counts records
+        carrying ``asserted_classes``, and a resolution is not a fresh caller
+        assertion.  Emitting it would move the action-class audit's Tier-B
+        observation counts, which are a report on what callers asserted at
+        authorize() time.
+        """
+        permissions = self._tools.get(record.tool_name)
+        flags = record.action_flags
+
+        self._audit.log(
+            tool_name=record.tool_name,
+            user_id=record.user_id,
+            role=record.role,
+            action=(
+                "deferred_committed"
+                if record.resolution == "committed"
+                else "deferred_denied"
+            ),
+            reason="deferred_commit",
+            risk_level=(
+                permissions.risk_level.value if permissions else "unknown"
+            ),
+            log_level=(
+                permissions.audit.log_level
+                if permissions
+                else AuditLogLevel.STANDARD
+            ),
+            include_parameters=(
+                permissions.audit.include_parameters if permissions else False
+            ),
+            parameters=record.parameters,
+            session_id=record.session_id or session_id,
+            metadata={
+                "deferral_id": record.deferral_id,
+                "resolution": record.resolution,
+                "resolved_by": record.resolved_by,
+                # Both snapshots, so the resolution states WHY it went the way
+                # it did: taint that was absent at call time and present at
+                # commit is the whole point of the deferred-commit mechanism.
+                "taint_at_call": record.taint_at_call,
+                "taint_at_commit": record.taint_at_commit,
+                "action_flags": (asdict(flags) if flags is not None else None),
+                # A tool deregistered between call and commit is denied
+                # fail-closed.  Say so, rather than leaving a denial whose
+                # reason cannot be reconstructed from the registry later.
+                "tool_registered_at_commit": permissions is not None,
+            },
         )
 
     def clear_deferred_commits(self, session_id: str) -> None:
