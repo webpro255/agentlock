@@ -6,7 +6,6 @@ Optional integrations wrap popular frameworks with AgentLock authorization.
 ## Installation
 
 ```bash
-pip install agentlock[langchain]    # LangChain
 pip install agentlock[crewai]       # CrewAI
 pip install agentlock[autogen]      # AutoGen
 pip install agentlock[mcp]          # Model Context Protocol
@@ -17,30 +16,19 @@ pip install agentlock[all]          # Everything
 
 ## LangChain
 
-Wrap any LangChain `BaseTool` with AgentLock authorization:
+The LangChain integration is no longer part of core.  As of v1.5 it is published
+separately as [`langchain-agentlock`](https://github.com/webpro255/langchain-agentlock):
+
+```bash
+pip install langchain-agentlock
+```
 
 ```python
-from langchain_core.tools import Tool
-from agentlock import AuthorizationGate, AgentLockPermissions
-from agentlock.integrations.langchain import AgentLockToolWrapper
-
-gate = AuthorizationGate()
-
-# Your existing LangChain tool
-search_tool = Tool(name="search", func=my_search, description="Search the web")
-
-# Wrap with AgentLock
-protected_tool = AgentLockToolWrapper(
-    tool=search_tool,
-    gate=gate,
-    permissions=AgentLockPermissions(
-        risk_level="low",
-        allowed_roles=["user", "admin"],
-    ),
-    default_user_id="agent_user",
-    default_role="user",
-)
+from langchain_agentlock import wrap_tool
 ```
+
+See that package's README for usage.  `agentlock[langchain]` and
+`agentlock.integrations.langchain` no longer exist.
 
 ## CrewAI
 

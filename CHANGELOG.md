@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **BREAKING: the LangChain integration has left core.** `agentlock.integrations.langchain` and the `agentlock[langchain]` extra are removed in v1.5. The integration is published separately as [`langchain-agentlock`](https://github.com/webpro255/langchain-agentlock). Core now has no LangChain code and no LangChain dependency, optional or otherwise.
+  - **Migration.** Replace `pip install "agentlock[langchain]"` with `pip install langchain-agentlock`, and import `wrap_tool` and `AgentLockToolkit` from `langchain_agentlock` instead of `agentlock.integrations.langchain`.
+  - **Not a drop-in rename.** The standalone package is a distinct implementation, not the relocated module. `wrap_tool` and `AgentLockToolkit` carry over by name but not necessarily by signature; `AgentLockToolWrapper` has no public counterpart, its equivalent being internal to `langchain_agentlock.toolkit`. Callers who constructed `AgentLockToolWrapper` directly must move to `wrap_tool` or the toolkit. Read the standalone README before upgrading rather than assuming the import path is the only change.
+  - The core gate API is untouched. The removed module only ever consumed the public `AuthorizationGate` and `AgentLockPermissions`, both of which stay exactly where they are, so nothing about writing or enforcing a permission block changes.
+
 ## [1.4.0] - 2026-07-10
 
 ### Added
