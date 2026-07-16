@@ -226,15 +226,20 @@ it, dropped by the same rule (`_drop_payload`) at the same boundary.
 
 The A/B replay was re-run with `grant_basis` landing on every allowed call, and
 still shows zero diffs across all 4542 replayable decisions. Adding a record of
-why a call was permitted did not change which calls were permitted. The full
-suite is 1143 tests, 0 failures (1116 before E10, plus 27).
+why a call was permitted did not change which calls were permitted. The suite
+was 1143 tests, 0 failures when E10 landed (1116 before E10, plus 27).
 
 ## What is therefore claimed, and what is not
 
 Claimed: across 4542 decisions replayed from the frozen v1.4 benchmark under
 identical inputs, the v1.5 evidence changes moved zero decisions. Together with
-the full test suite (1143 tests, 0 failures, verified by `pytest` on this
-branch), that is the invariance evidence.
+the full test suite (1141 tests, 0 failures, verified by `pytest` on this branch
+at the 1.5.0 bump), that is the invariance evidence.
+
+The suite is 1141 rather than the 1143 cited above because the two LangChain
+async evidence tests left core with the LangChain integration in v1.5. They test
+that integration's execution reporting, not the engine, and belong in
+`langchain-agentlock`. No engine test was removed or weakened.
 
 Not claimed: that all 4826 decisions in the frozen logs were verified. 284 of
 them could not be replayed, and no confidence is asserted about them beyond the

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-07-16
+
+The evidence release. v1.5 records strictly more and decides identically.
+
+**The guarantee, and its bound.** Across **4542 decisions replayed from the frozen v1.4 benchmark under identical inputs, zero changed.** Every ALLOW, DENY, DEFER, STEP_UP and end-of-turn COMMIT is byte-identical between the v1.4.0 engine and this one. The replay is offline and deterministic, driving a real `AuthorizationGate` from saved transcripts with the model out of the loop, so the engine is the only variable. It is not claimed that all 4826 decisions in the frozen logs were verified: **284 travel-suite decisions could not be replayed at all**, because those runs' decision logs contain more gate calls than their own saved transcripts contain tool calls, so the inputs that produced them were never persisted and no harness can reproduce them. Invariance here is bounded, not total. The surplus is a property of the benchmark artifacts rather than of this release. Method, per-condition results, and limits: [`docs/EVIDENCE_MILESTONE_v15.md`](docs/EVIDENCE_MILESTONE_v15.md).
+
+None of the evidence work touches a decision path. It is built after the decision, from values the gate had already computed, and nothing in the gate reads an audit record back.
+
+Suite: **1141 tests, 0 failures.**
+
+### Added
+
+- **The basis of a grant (E10).** A denial cited what it refused on; a grant said nothing about what it permitted on. A reader of an `allowed` record could observe only that no denial fired, which is evidence that nothing matched, not evidence that anything was checked. An `allowed` record now carries a `grant_basis`: which lineage checks evaluated, what they concluded, and which never ran and why. The vocabulary deliberately separates "ran the comparison and nothing matched" (`no_match`) from "had nothing to compare" (`no_match:<qualifier>`) from "declined to classify" (`not_classifiable:<qualifier>`) from "never executed" (`not_run:<reason>`), because a record that reported these alike would assert a cleanliness no check established. There is no aggregate verdict and no "clean" flag: the engine never computes an overall judgement of a grant, so the record does not invent one.
+  - **The finding.** Across the 3261 grants in the replayed corpus, only **4.0% (129)** support the claim that the arguments were checked against untrusted content and came back clean. The other 96% are vacuous no-matches, and before this block every one was indistinguishable in the log from the 129 that were real.
+  - **Cost, stated rather than waved at.** The block lands on ~70% of decisions. Mean `allowed` record 555.9 B to 763.5 B (+37.3%); whole decision log +20.9%. Literal user values are not in the block except where `include_parameters` already allows them, dropped by the same rule at the same boundary.
+- **Execution confirmation (E7).** An `allowed` record is a grant of permission, not evidence that anything ran. The gate now writes an attempt record before a tool is invoked and a completion record when it returns or raises, so three facts that used to be one indistinguishable state are readable: ran (attempt then completion), attempted but never returned (attempt, no completion), and authorized but never attempted (neither). Callers that own their own execution report through the public `begin_execution` and `confirm_execution`, bound to the grant by token id or deferral id. Those calls verify and never authorize: they issue no token, consume none, extend no TTL, consult no policy, and write nothing `authorize()` reads.
+  - **The invariant.** Never break and never alter are absolute and enforced by tests: an audit backend that throws cannot break, block, or change a call the gate has already authorized. Failures are swallowed at the writer boundary, reported out of band, and counted on `gate.evidence_write_failures`. Never *block* is a property of the chosen backend, not of the gate; `AsyncAuditBackend` never blocks but loses queued records on process death, so records are stamped `writer_mode` and `durable_before_execution` and a reader learns that limitation from the log rather than from a config file it does not have.
+  - **Scope note.** The non-fatal rule covers the execution path only. On the authorize path a backend failure still propagates and no token is issued, so the call fails closed. An unrecordable decision must not become an unrecorded permission.
+- **Provenance on denials (E5/E4).** A lineage-gated denial now cites the lineage it gated on, and the cited token is deterministic across processes. `context_provenance_ids`, declared in the schema since v1.1 and passed by no call site, is now populated, giving denials and context entries a join key. The taint-introduction record carries a session id (E1/E4).
+- **Deferred-resolution logging (E6).** How a deferred action resolved is now an audit record of its own, rather than something a reader had to infer from the absence of one.
+
 ### Removed
 
 - **BREAKING: the LangChain integration has left core.** `agentlock.integrations.langchain` and the `agentlock[langchain]` extra are removed in v1.5. The integration is published separately as [`langchain-agentlock`](https://github.com/webpro255/langchain-agentlock). Core now has no LangChain code and no LangChain dependency, optional or otherwise.
@@ -31,7 +52,7 @@ Adapters are versioned and released separately from the standard, so a framework
 
 Only LangChain and CrewAI were ever part of core; the OpenAI and OpenClaw adapters have always been standalone and nothing moved for them. All four are Apache-2.0 adapters that depend on AGPL-3.0-or-later AgentLock, so combined use is subject to the AGPL. See each package's README.
 
-**Core is not yet free of framework integrations.** `agentlock.integrations.autogen`, `.mcp`, `.fastapi`, and `.flask` still ship in core, with their `agentlock[autogen]`, `[mcp]`, `[fastapi]`, and `[flask]` extras, because no standalone package exists for them yet. They are unchanged in v1.5 and continue to lazily import their own SDKs. Removing them before there is somewhere to migrate to would strand their users, so it is deliberately deferred.
+**Core is not yet free of framework integrations.** `agentlock.integrations.autogen`, `.mcp`, `.fastapi`, and `.flask` **remain in core for this release** and are unchanged, with their `agentlock[autogen]`, `[mcp]`, `[fastapi]`, and `[flask]` extras intact. They will move to standalone packages in a future version. No standalone package exists for them yet, and removing them before there is somewhere to migrate to would strand their users, so it is deliberately deferred rather than quietly left out. Nothing you import from them today breaks in v1.5.
 
 ## [1.4.0] - 2026-07-10
 

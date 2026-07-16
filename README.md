@@ -254,6 +254,7 @@ changelog. That is how we intend to keep working.
 
 | version | highlights | tests |
 |---------|-----------|-------|
+| 1.5.0   | grant basis, execution confirmation, provenance on denials, deferred-resolution logging; LangChain and CrewAI adapters moved out of core | 1141 |
 | 1.4.0   | selective action-class gating, novel lineage, action-class audit, needs_approval surfacing | 1041 |
 | 1.3.0   | provenance-lineage gating, parameter lineage, deferred commit, AgentDojo evaluation | 868 |
 | 1.2.x   | adaptive hardening, decision types (final Apache 2.0 line) | 847 |
