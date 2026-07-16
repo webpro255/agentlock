@@ -47,14 +47,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-crewai = ["crewai>=0.30"]
 autogen = ["pyautogen>=0.2"]
 mcp = ["mcp>=1.0"]
 fastapi = ["fastapi>=0.100", "python-jose[cryptography]>=3.3"]
 flask = ["flask>=2.0"]
 crypto = ["PyNaCl>=1.5.0"]
 all = [
-    "crewai>=0.30",
     "pyautogen>=0.2",
     "mcp>=1.0",
     "fastapi>=0.100",

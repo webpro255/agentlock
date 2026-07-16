@@ -6,11 +6,12 @@ For those callers the absence of an execution record meant nothing at all.  Each
 now reports the attempt before running the tool and the outcome after, bound to
 the token it was granted.
 
-The synchronous paths (gate.call, the sync decorator, CrewAI, AutoGen) go through
+The synchronous paths (gate.call, the sync decorator, AutoGen) go through
 execute() and were already covered there.
 
-The LangChain integration left core in v1.5 and lives in the standalone
-``langchain-agentlock`` package; its async evidence coverage belongs there.
+The LangChain and CrewAI integrations left core in v1.5 and live in the
+standalone ``langchain-agentlock`` and ``crewai-agentlock`` packages; their
+evidence coverage belongs there.
 """
 
 from __future__ import annotations

@@ -14,6 +14,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Not a drop-in rename.** The standalone package is a distinct implementation, not the relocated module. `wrap_tool` and `AgentLockToolkit` carry over by name but not necessarily by signature; `AgentLockToolWrapper` has no public counterpart, its equivalent being internal to `langchain_agentlock.toolkit`. Callers who constructed `AgentLockToolWrapper` directly must move to `wrap_tool` or the toolkit. Read the standalone README before upgrading rather than assuming the import path is the only change.
   - The core gate API is untouched. The removed module only ever consumed the public `AuthorizationGate` and `AgentLockPermissions`, both of which stay exactly where they are, so nothing about writing or enforcing a permission block changes.
 
+- **BREAKING: the CrewAI integration has left core.** `agentlock.integrations.crewai` and the `agentlock[crewai]` extra are removed in v1.5. It is published separately as [`crewai-agentlock`](https://github.com/webpro255/crewai-agentlock). Core now has no CrewAI code and no CrewAI dependency, optional or otherwise.
+  - **Migration.** Replace `pip install "agentlock[crewai]"` with `pip install crewai-agentlock`. As with LangChain this is a reimplementation rather than the relocated module, and the names differ: `wrap_tool` replaces `AgentLockCrewTool`, and `lock_crew` / `lock_tools` replace `protect_crew_tools`. The standalone also adds `lock_agent`, `agentlock_session`, and denial formatters, which core never had. Read its README rather than assuming the import path is the only change.
+  - Unlike the LangChain copy, core's CrewAI copy was working when removed. This is a decoupling, not a repair.
+
+### Agent-framework adapters now live outside core
+
+Adapters are versioned and released separately from the standard, so a framework's breaking change is no longer a core release:
+
+| Framework | Package | Install |
+|---|---|---|
+| LangChain | `langchain-agentlock` | `pip install langchain-agentlock` |
+| CrewAI | `crewai-agentlock` | `pip install crewai-agentlock` |
+| OpenAI Agents | `openai-agentlock` | `pip install openai-agentlock` |
+| OpenClaw | `openclaw-agentlock` | `pip install openclaw-agentlock` |
+
+Only LangChain and CrewAI were ever part of core; the OpenAI and OpenClaw adapters have always been standalone and nothing moved for them. All four are Apache-2.0 adapters that depend on AGPL-3.0-or-later AgentLock, so combined use is subject to the AGPL. See each package's README.
+
+**Core is not yet free of framework integrations.** `agentlock.integrations.autogen`, `.mcp`, `.fastapi`, and `.flask` still ship in core, with their `agentlock[autogen]`, `[mcp]`, `[fastapi]`, and `[flask]` extras, because no standalone package exists for them yet. They are unchanged in v1.5 and continue to lazily import their own SDKs. Removing them before there is somewhere to migrate to would strand their users, so it is deliberately deferred.
+
 ## [1.4.0] - 2026-07-10
 
 ### Added

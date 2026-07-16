@@ -6,7 +6,6 @@ Optional integrations wrap popular frameworks with AgentLock authorization.
 ## Installation
 
 ```bash
-pip install agentlock[crewai]       # CrewAI
 pip install agentlock[autogen]      # AutoGen
 pip install agentlock[mcp]          # Model Context Protocol
 pip install agentlock[fastapi]      # FastAPI
@@ -32,21 +31,22 @@ See that package's README for usage.  `agentlock[langchain]` and
 
 ## CrewAI
 
-Protect all tools in a CrewAI crew:
+The CrewAI integration is no longer part of core.  As of v1.5 it is published
+separately as [`crewai-agentlock`](https://github.com/webpro255/crewai-agentlock):
+
+```bash
+pip install crewai-agentlock
+```
 
 ```python
-from agentlock import AuthorizationGate, AgentLockPermissions
-from agentlock.integrations.crewai import protect_crew_tools
-
-gate = AuthorizationGate()
-
-permissions_map = {
-    "search": AgentLockPermissions(risk_level="low", allowed_roles=["researcher"]),
-    "write_file": AgentLockPermissions(risk_level="high", allowed_roles=["admin"]),
-}
-
-protect_crew_tools(crew, gate, permissions_map)
+from crewai_agentlock import lock_crew, wrap_tool
 ```
+
+See that package's README for usage.  `agentlock[crewai]` and
+`agentlock.integrations.crewai` no longer exist.  The standalone package is a
+reimplementation rather than the relocated module: `wrap_tool` replaces
+`AgentLockCrewTool`, and `lock_crew` / `lock_tools` replace
+`protect_crew_tools`.
 
 ## AutoGen
 

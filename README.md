@@ -112,7 +112,7 @@ pip install agentlock
 Framework integrations and Ed25519 receipts are optional extras:
 
 ```bash
-pip install "agentlock[crewai]"      # also: autogen, mcp, fastapi, flask
+pip install "agentlock[autogen]"     # also: mcp, fastapi, flask
 pip install "agentlock[crypto]"      # Ed25519 signed receipts
 pip install "agentlock[all]"         # everything
 ```
