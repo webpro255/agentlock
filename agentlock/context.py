@@ -35,6 +35,40 @@ _URL_RE = re.compile(
 _EMAIL_RE = re.compile(r"[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}", re.I)
 _STRUCTURAL = set("._-/@:0123456789")
 
+# ---------------------------------------------------------------------------
+# v1.6 family 1 -- value-identity canonical-form recognizers
+# ---------------------------------------------------------------------------
+# Each recognizer matches a value that is IN a known surface form and returns
+# its canonical form.  None of them inspects scope or classifies what a value
+# is 'for'; they normalize every value identically.  The family split (benign
+# clears, attack attributes) is produced entirely downstream, by whether a
+# canonical form matches an authoritative or an untrusted token.
+
+# Defang markers only.  Fires solely when a marker is present, so clean domains
+# are untouched (the raw floor already covers those).
+_DEFANG_RE = re.compile(r"\[\.\]|\(\.\)|\{\.\}|\[dot\]|\(dot\)", re.I)
+
+# Date: tightly anchored FULL dates only.  ISO YYYY-MM-DD and slash D/D/YYYY.
+# Bare years and loose hyphen groups never match (two hyphens with a valid
+# month and day are required), so UUID and order-ID segments do not
+# canonicalize into dates.
+_DATE_ISO_RE = re.compile(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)")
+_DATE_SLASH_RE = re.compile(r"(?<!\d)(\d{1,2})/(\d{1,2})/(\d{4})(?!\d)")
+
+# Phone: a run of digits joined only by phone separators (space, dash, dot,
+# parens, plus).  Comma and slash are NOT separators, so amounts and dates
+# cannot be read as phones.  Digit count is validated after extraction.
+_PHONE_RE = re.compile(r"(?<![\w+])(\+?\d[\d\s().\-]{7,}\d)(?![\w])")
+
+# Amount: currency-anchored only.  Requires a currency symbol, OR a
+# thousands-grouped number, OR a two-decimal-place number.  A bare integer is
+# NOT an amount (it is too generic to canonicalize onto a source).
+_AMOUNT_RE = re.compile(
+    r"[$€£]\s?\d[\d,]*(?:\.\d+)?"
+    r"|(?<![\d.])\d{1,3}(?:,\d{3})+(?:\.\d+)?"
+    r"|(?<![\d.])\d+\.\d{2}(?!\d)"
+)
+
 
 def _canon_url(tok: str) -> str:
     """Canonicalize a URL/domain token: drop scheme, leading www., trailing
@@ -43,6 +77,75 @@ def _canon_url(tok: str) -> str:
     t = re.sub(r"^https?://", "", t)
     t = re.sub(r"^www\.", "", t)
     return t.rstrip("/.,;:)!?\"'")
+
+
+def _canon_date(year: str, month: str, day: str) -> str | None:
+    """Canonicalize a validated (year, month, day) to ISO ``YYYY-MM-DD``.
+    Returns ``None`` if the month or day is out of range."""
+    mi, di = int(month), int(day)
+    if not (1 <= mi <= 12 and 1 <= di <= 31):
+        return None
+    return f"{int(year):04d}-{mi:02d}-{di:02d}"
+
+
+def _canon_date_slash(a: str, b: str, year: str) -> str | None:
+    """Canonicalize a slash date to ISO.  Disambiguates US ``MM/DD`` from EU
+    ``DD/MM`` only when one field is unambiguously a day (> 12).  A genuinely
+    ambiguous string (both fields <= 12) is left UNCANONICALIZED, per the
+    design: guessing the locale would collapse two distinct dates."""
+    ai, bi = int(a), int(b)
+    if ai > 12 and bi <= 12:        # first field must be the day -> DD/MM
+        month, day = bi, ai
+    elif bi > 12 and ai <= 12:      # second field must be the day -> MM/DD
+        month, day = ai, bi
+    else:                           # both <= 12 (ambiguous) or both > 12
+        return None
+    return _canon_date(year, str(month), str(day))
+
+
+def _canon_phone(match: str) -> str | None:
+    """Canonicalize a phone match to E.164 (``+<countrycode><number>``).
+
+    E.164, not last-10-digits: the country code is retained when present, so
+    ``+1 (555) 123-4567`` and ``+44 555 123 4567`` do not collapse together.
+    A bare 10-digit number with no country code is assumed NANP (``+1``); the
+    A5 residual (a 10-digit account number colliding with a domestic phone)
+    is documented in the predictions doc, not solved here."""
+    has_plus = match.lstrip().startswith("+")
+    digits = re.sub(r"\D", "", match)
+    if has_plus:
+        return "+" + digits if 10 <= len(digits) <= 15 else None
+    if len(digits) == 11 and digits.startswith("1"):
+        return "+" + digits
+    if len(digits) == 10:
+        return "+1" + digits
+    return None
+
+
+def _canon_amount(match: str) -> str | None:
+    """Canonicalize a currency amount to its bare numeric value: strip the
+    currency symbol and thousands separators, and drop trailing-zero decimals.
+    ``$1,000.00`` -> ``1000``; ``$14,207.50`` -> ``14207.5``."""
+    cleaned = re.sub(r"[^\d.]", "", match)
+    if not cleaned or cleaned.count(".") > 1:
+        return None
+    if "." in cleaned:
+        cleaned = cleaned.rstrip("0").rstrip(".")
+    return cleaned or None
+
+
+def _defang_forms(text: str) -> set[tuple[str, str]]:
+    """URL/domain tokens recovered from bracket-style defanging (``evil[.]com``
+    -> ``evil.com``).  Only fires when a defang marker is present."""
+    if not _DEFANG_RE.search(text):
+        return set()
+    de = _DEFANG_RE.sub(".", text)
+    out: set[tuple[str, str]] = set()
+    for m in _URL_RE.findall(de):
+        c = _canon_url(m)
+        if "." in c and len(c) >= 4:
+            out.add(("url", c))
+    return out
 
 
 def _plain_qualifies(w: str, min_len: int) -> bool:
@@ -92,8 +195,41 @@ def _canonical_lineage_tokens(value: Any, min_len: int) -> set[tuple[str, str]]:
     whether a canonical form matches an authoritative or untrusted token.  It
     is emitted ALONGSIDE the raw floor, never instead of it (invariant A1).
 
-    Stub for now; normalizers are added in the following commits."""
-    return set()
+    Interstitial character insertion (``e-v-i-l.com``) is DEFERRED and is not
+    handled here (predictions doc, AMENDMENT 1, A3).  Filename decomposition is
+    a separate sub-phase and is not handled here."""
+    text = value if isinstance(value, str) else str(value)
+    out: set[tuple[str, str]] = set()
+
+    # Defang -> URL/domain.  Distinctive by construction; gated like the raw
+    # URL floor (len >= 4), not by min_len.
+    out |= _defang_forms(text)
+
+    # Dates -> ISO.  min_len-gated like every canonical string token.
+    for m in _DATE_ISO_RE.finditer(text):
+        c = _canon_date(*m.groups())
+        if c and len(c) >= min_len:
+            out.add(("date", c))
+    for m in _DATE_SLASH_RE.finditer(text):
+        c = _canon_date_slash(*m.groups())
+        if c and len(c) >= min_len:
+            out.add(("date", c))
+
+    # Phone -> E.164.
+    for m in _PHONE_RE.finditer(text):
+        c = _canon_phone(m.group(1))
+        if c and len(c) >= min_len:
+            out.add(("phone", c))
+
+    # Amount -> bare numeric value.  Per A6 the common case (``$1,000.00`` ->
+    # ``1000``) canonicalizes BELOW min_len and is dropped here; that is the
+    # pre-registered at-risk behavior, not worked around.
+    for m in _AMOUNT_RE.finditer(text):
+        c = _canon_amount(m.group(0))
+        if c and len(c) >= min_len:
+            out.add(("amount", c))
+
+    return out
 
 
 def extract_lineage_tokens(value: Any, min_len: int) -> set[tuple[str, str]]:
