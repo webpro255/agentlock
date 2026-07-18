@@ -22,6 +22,16 @@
 > unaffected. No fix designed or implemented at the time of writing. Full record
 > in [AMENDMENT 2](#amendment-2-2026-07-18-result-soundness-floor-falsified-for-composite-values).
 
+> **AMENDED 2026-07-18 (amendment 3, FIX + RESIDUAL).** The param-side
+> leaf-granular auth-clean is reverted to per-token; the novel-side lift stays.
+> The combined floor is restored to 13/13, probes 1 and 2 byte-identical, P1
+> date/phone still ALLOW, at zero measured cost. RESIDUAL: the floor is restored
+> by PRECEDENCE (param_lineage DENY outranks novel STEP_UP), not by fixing both
+> sides. The novel-side lift still classifies an attack composite as trusted;
+> that laundering is MASKED, not eliminated, and the precedence dependency is
+> now load-bearing. Full record in
+> [AMENDMENT 3](#amendment-3-2026-07-18-fix-and-residual-precedence-is-now-load-bearing).
+
 ## Hypothesis
 A value-identity normalizer, applied to a parameter value and to each recorded
 context token before the lineage comparison, moves BOTH the benign and the
@@ -737,3 +747,95 @@ No fix has been designed or implemented at the time of this amendment. This
 amendment records the falsification and its diagnosis only. The corrected
 aggregation rule, and any regression test that pins these composite rows to a
 blocked verdict, are future work and are not asserted here.
+
+---
+
+## AMENDMENT 3 (2026-07-18): FIX and RESIDUAL, precedence is now load-bearing
+
+This amendment records the fix for the AMENDMENT 2 breach and, in the same
+breath, the residual the fix does NOT remove. AMENDMENT 1 and AMENDMENT 2 are
+preserved intact. The fix was measured before it was written (the reversion
+hypothesis in the B4 diagnosis was confirmed by disabling the param-side lift
+and replaying all three corpora); this amendment records the shipped result.
+
+### C1. The fix
+
+`parameter_lineage_check`'s authoritative-first precedence is reverted from
+leaf-granular back to PER TOKEN: a token in the user's own request is clean; a
+token that is not is scanned against untrusted context on its own. The dead
+`auth_clean_paths` computation is removed. `novel_lineage_check`'s leaf-granular
+lift is left intact.
+
+The two checks now use different granularities ON PURPOSE, and the code says so:
+
+- `parameter_lineage` substring-matches the raw untrusted content. Per-token is
+  the sound granularity there: a raw untrusted token must be caught on its own
+  merits, regardless of a clean sibling in the same leaf. This is exactly what
+  closes the composite breach.
+- `novel_lineage` needs leaf granularity for the opposite reason: a benign
+  format conversion's canonical form must be allowed to clear the leaf even
+  though its raw form is unseen. That check does not substring-scan untrusted
+  content, so a leaf-level clear there cannot launder an untrusted token.
+
+The asymmetry is intentional and is documented in a comment at the param-side
+site so a future reader does not "tidy" the two checks into agreement.
+
+### C2. Measured result (combined corpus)
+
+- **Composite floor: 3/7 -> 7/7.** All four AMENDMENT 2 breaches
+  (`evil.com_2026-03-14.pdf`, `mallory@evil.com 2026-03-14`,
+  `evil[.]com_2026-03-14.pdf`, `evil.com report 03/14/2026`) now DENY on their
+  untrusted token. The two formerly coincidental blocks now block on the
+  untrusted token itself, a principled reason that survives the coincidences.
+- **Combined soundness floor: 9/13 -> 13/13 blocked.**
+- **Probes 1 and 2 byte-identical to the pre-fix result.** P1 date and phone
+  still ALLOW, P2 defang still an attributed DENY, P3 and P4 unchanged, benign
+  FP rate unchanged at 5/9. Zero measured cost.
+- Date clears by two paths (per-token auth-substring in param_lineage, plus the
+  novel-side lift); phone clears by the novel-side lift ALONE (its E.164
+  canonical is not a literal substring of the raw request). Both are pinned by
+  test.
+
+### C3. The residual: the novel-side lift is MASKED, not fixed
+
+State it plainly: the novel-side leaf-granular lift remains permissive on
+composites. For an attack composite such as `evil.com_2026-03-14.pdf`,
+`novel_lineage_check` still classifies the leaf as TRUSTED via the authoritative
+date sibling and returns no_match. The novel-side laundering was never removed.
+
+The floor is restored by PRECEDENCE, not by fixing both sides:
+`param_lineage_action` is `deny` and `novel_lineage_action` is `step_up`, so
+param_lineage's per-token DENY on the untrusted token outranks novel_lineage's
+cleared (non-)verdict. The attack is denied because param_lineage catches it,
+while novel_lineage is, on the same input, still laundering it.
+
+This masking holds for any composite whose untrusted component appears in the
+RAW untrusted blob, so that param_lineage's substring match can reach it. That
+is the entire measured corpus: every composite attack here wrote its untrusted
+component (`evil.com`, `mallory@evil.com`) in clean form.
+
+The masking would fail only for a composite whose untrusted component ALSO
+evades param_lineage's raw-substring match, for instance untrusted content that
+is itself defanged or otherwise obfuscated. That is not a new gap; it is the
+pre-existing A4 untrusted-side-obfuscation residual, already documented. Family
+1's defang normalizer narrows A4 on the novel side (a defanged untrusted token
+canonicalizes into `untrusted_tokens`), but it does not let param_lineage's raw
+substring reach the obfuscated form, so the interaction with composite
+laundering remains open exactly where A4 is open.
+
+### C4. Consequence: the precedence ordering is now load-bearing
+
+Because the composite floor now rests on `deny` outranking `step_up`, the check
+precedence is a security-critical invariant, not a cosmetic ordering. A future
+change that raised novel_lineage's clear above param_lineage's deny, or lowered
+param_lineage's action to a step-up, or made novel_lineage's leaf clear
+suppress param_lineage, would UNMASK the novel-side laundering and re-open the
+composite breach. The dependency is therefore pinned by test: the combined
+soundness-floor test asserts every composite attack stays non-ALLOW, so any
+change that unmasks the laundering fails loudly.
+
+The clean, both-sides-sound fix (making novel_lineage's leaf clear itself
+refuse to launder a composite that contains an untrusted form) is deferred with
+the filename compositional-attribution work (B5): both require composite-aware
+clearance on the novel side, and neither should be attempted piecemeal. Until
+then, the residual stands as recorded here, guarded by precedence and by test.
