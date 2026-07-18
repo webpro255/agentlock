@@ -247,6 +247,28 @@ def extract_lineage_tokens(value: Any, min_len: int) -> set[tuple[str, str]]:
     )
 
 
+def _canonical_blob_suffix(content: str, min_len: int) -> str:
+    """Canonical forms of a context blob's content, as a text suffix (v1.6).
+
+    Symmetry: param_lineage compares parameter tokens against the raw untrusted
+    and authoritative blobs by substring, but the raw blob is not canonicalized,
+    so a defanged untrusted ``evil[.]com`` never matches a clean ``evil.com``
+    parameter.  novel_lineage already canonicalizes context (its token sets run
+    through :func:`extract_lineage_tokens`); this closes the same gap on the
+    param side.
+
+    ADDITIVE, never replacement: the suffix is appended to the raw lowercased
+    content, so the raw form stays and param_lineage keeps its INDEPENDENT raw
+    substring catch.  A canonical-only (replacement) blob would drop a clean
+    untrusted token that has no canonical of its own (``evil.com`` produces
+    none), making param_lineage miss it; combined with novel-side leaf
+    clearance that is what surfaces the ``evil.com report 03/14/2026``
+    DENY-to-ALLOW flip (AMENDMENT 4, D2).  Additive keeps both the raw catch and
+    the canonical reach."""
+    cs = sorted(t for _kind, t in _canonical_lineage_tokens(content, min_len))
+    return (" " + " ".join(cs)) if cs else ""
+
+
 def _iter_param_leaves(obj: Any, path: str = "") -> Iterator[tuple[str, str]]:
     """Yield (path, str_value) leaves of a (possibly nested) parameter value."""
     if isinstance(obj, dict):
@@ -530,8 +552,13 @@ class ContextTracker:
             _note_outcome(outcome, "no_match", "no_provenance_log")
             return None
 
+        # Symmetry (v1.6): each blob carries its content's canonical forms too,
+        # appended additively (see _canonical_blob_suffix).  Both sides now hold
+        # canonical forms, so a defanged untrusted ``evil[.]com`` is reachable by
+        # a clean ``evil.com`` parameter.  Additive, not replacement: the raw
+        # form stays so param_lineage keeps its independent raw catch (D2).
         auth_blob = " ".join(
-            e.content.lower()
+            e.content.lower() + _canonical_blob_suffix(e.content, min_len)
             for e in state.provenance_log
             if e.authority == ContextAuthority.AUTHORITATIVE and e.content
         )
@@ -543,7 +570,10 @@ class ContextTracker:
         if not untrusted_entries:
             _note_outcome(outcome, "no_match", "no_untrusted_context")
             return None
-        untrusted_blobs = [(e, e.content.lower()) for e in untrusted_entries]
+        untrusted_blobs = [
+            (e, e.content.lower() + _canonical_blob_suffix(e.content, min_len))
+            for e in untrusted_entries
+        ]
 
         # Most-specific-first, like ``novel_lineage_check``, and for the same
         # reason: ``extract_lineage_tokens`` returns a SET, so iterating it
@@ -738,27 +768,37 @@ class ContextTracker:
             _note_outcome(outcome, "no_match", "no_tokens")
             return None
 
-        # A2 (any-form-clears, at value-leaf granularity): a leaf is accounted
-        # for if ANY of its forms -- raw OR canonical -- is a known token.  A
-        # leaf is NOVEL only when NONE of its forms matches the authoritative or
-        # the untrusted set.  This is what lets a benign format conversion clear
-        # on its canonical form even though its raw form is unseen: without it,
-        # the raw form alone would still read NOVEL and no canonicalization
-        # would ever move the benign column.  Authoritative-first precedence is
-        # preserved: a leaf whose forms hit BOTH sets is treated as trusted,
-        # because the trusted check comes first.
-        trusted_paths = {
-            path for _r, _nl, tok, path, _val in candidates if tok in auth_tokens
-        }
-        untrusted_paths = {
-            path for _r, _nl, tok, path, _val in candidates if tok in untrusted_tokens
-        }
+        # A2' composite-aware clearance -- SUPERSEDES A2 any-form-clears
+        # (AMENDMENT 4, D4).  EVERY value-bearing token in a leaf must account
+        # for itself: a token is accounted if it, OR one of its own canonical
+        # forms, is in the authoritative or the untrusted set.  A leaf is NOVEL
+        # if any of its tokens is unaccounted.
+        #
+        # On a SINGLE-value leaf this is identical to any-form-clears (a benign
+        # date's raw ``03/14/2026`` clears because its own canonical
+        # ``2026-03-14`` is authoritative).  It DIVERGES only on multi-value
+        # leaves, where A2 let one accounted sibling launder an untrusted token
+        # (``evil.com 2026-03-14`` cleared on the date) and A2' does not:
+        # ``evil.com`` must account for itself.
+        #
+        # min_len is load-bearing HERE too (D3): a benign component below the
+        # distinctiveness gate (``alice`` in report_alice_2026-03-14.pdf) is
+        # never emitted as a token, so it is not a value-bearing token that must
+        # account for itself, and its leaf can still clear on the tokens that
+        # ARE emitted.  Lowering min_len would turn such short components into
+        # tokens that A2' then requires to be attributable, which is the
+        # RESTRICTIVE direction; raising it would drop real targets.
+        accounted = auth_tokens | untrusted_tokens
+
+        def _token_accounted(tok: str) -> bool:
+            if tok in accounted:
+                return True
+            own = {t for _kind, t in _canonical_lineage_tokens(tok, min_len)}
+            return bool(own & accounted)
 
         for _rank, _neglen, tok, path, value in candidates:
-            if path in trusted_paths:
-                continue                      # trusted (a form matches the request)
-            if path in untrusted_paths:
-                continue                      # untrusted -> param_lineage's job
+            if _token_accounted(tok):
+                continue
             _note_outcome(outcome, "match")
             return {
                 "matched_param": path,
