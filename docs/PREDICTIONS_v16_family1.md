@@ -44,6 +44,18 @@
 > in principle. Fix not implemented at the time of writing. Full record in
 > [AMENDMENT 4](#amendment-4-2026-07-18-results-probes-4-6-a2-superseded).
 
+> **AMENDED 2026-07-18 (amendment 5, IMPLEMENTED + FP characterized).** The
+> probe-6 fix (additive symmetry + A2' composite-aware clearance) landed.
+> Measured: obfuscated attacks 0/8 reach ALLOW with novel ON (was 6/8); 4/8 with
+> novel OFF (was 8/8), because the composite-aware half is novel-dependent while
+> the symmetry half is not. Composites 7/7, probe-1 attacks 7/7, benign FP 5/9,
+> 1237 tests. The one remaining benign FP (scheme-form) is characterized
+> precisely: A2' cannot tell a leaf with multiple distinct VALUES from a leaf
+> with multiple REPRESENTATIONS of one value. The min_len double dependency is
+> recorded as a standing hazard, and the closing inventory of family 1 is given.
+> Full record in
+> [AMENDMENT 5](#amendment-5-2026-07-18-implemented-scheme-form-fp-characterized-family-1-inventory).
+
 ## Hypothesis
 A value-identity normalizer, applied to a parameter value and to each recorded
 context token before the lineage comparison, moves BOTH the benign and the
@@ -1038,3 +1050,165 @@ probe results, supersedes A2, and names the conditional cost of A2'. The
 implementation, the broadening of the coverage predicate to close the scheme-form
 false positive, and a benign multi-token corpus to bound A2's cost are future
 work and are not asserted here.
+
+---
+
+## AMENDMENT 5 (2026-07-18): IMPLEMENTED, scheme-form FP characterized, family 1 inventory
+
+This amendment records the probe-6 implementation as landed, characterizes the
+one remaining measured benign false positive precisely, and inventories the
+closing state of family 1. Amendments 1 to 4 are preserved intact. No mechanism
+changes accompany this amendment.
+
+Two figures used informally in the tasking are corrected here to the measured
+values, per the standing rule that a number of record is verified, not
+propagated: the novel-OFF obfuscated-attack result is 4/8, not 0/8 (the
+composite-aware half is novel-dependent), and the suite is 1237 tests, not 1215.
+The measured values are the ones recorded.
+
+### E1. Implementation result (per configuration, with denominators)
+
+Additive symmetry plus A2' composite-aware clearance landed
+(`_canonical_blob_suffix` on both param_lineage blobs; token-level coverage
+replacing the leaf-granular lift in novel_lineage). Measured across the four
+frozen corpora:
+
+| corpus (denominator) | before fix | after fix |
+|---|---|---|
+| probe 4 obfuscated attacks, **novel ON** (8) | 6/8 reach ALLOW | **0/8 reach ALLOW** |
+| probe 4 obfuscated attacks, **novel OFF** (8) | 8/8 reach ALLOW | **4/8 reach ALLOW** |
+| probe 3 composites (6) | varies by amendment | **6/6 blocked** |
+| probe 1 attacks (7) | 7/7 blocked | **7/7 blocked** |
+| probe 2 benign FP (9) | 5/9 | **5/9 (unchanged)** |
+
+The two probe-4 configurations differ, and the difference is the finding, not
+noise: the symmetry half is novel-INDEPENDENT, so the four defang rows close via
+param_lineage in both configs; the composite-aware half is novel-DEPENDENT, so
+the four interstitial/base64 rows close only when novel_lineage is ON, and
+breach again with it OFF. Recording a single "0/8 in both configs" would erase
+that dependency; it is 0/8 novel-ON and 4/8 novel-OFF. The filename row clears,
+exactly as D3 measured (its short component `alice` is below the distinctiveness
+gate and is never a token that must be accounted for). Full suite: 1237 tests.
+
+### E2. The scheme-form false positive, characterized correctly
+
+The one remaining measured benign FP (`https://acme.com` reaching STEP_UP when
+the user authored `acme.com`) is NOT a cost of composite-awareness in the
+general sense. It is a narrower, nameable defect.
+
+`https://acme.com` emits two tokens: the URL canonical `acme.com` (via the base
+extractor's scheme-strip) and the raw string `https://acme.com`. Both tokens are
+THE SAME VALUE in two representations. A2' checks each token for its own account
+and fails the leaf because one of the two, the raw `https://acme.com`, is
+unaccounted, even though the value it represents (`acme.com`) is accounted
+through its sibling token.
+
+State the defect precisely: **A2' cannot distinguish a multi-token leaf that
+carries multiple DISTINCT VALUES from a single-value leaf that carries multiple
+REPRESENTATIONS of one value.** Its accounting treats a token and the canonical
+sibling derived from it as two independent units when they are one. On the
+attack composites this is exactly what is wanted (a domain and a date are two
+distinct values, each must account for itself); on a single value in two
+surface forms it is a false positive.
+
+A precise note on the mechanism, so the record is exact: the sibling here
+(`acme.com`) is produced by the BASE extractor's URL canonicalization, and the
+A2' coverage predicate consults only the family-1 canonicals
+(`_canonical_lineage_tokens`), not the base ones, so it does not even see that
+`https://acme.com` has an accounted representation. That is why the FP surfaces
+on scheme forms specifically.
+
+### E3. The implied fix shape (not implemented)
+
+The accounting unit should be the VALUE, not the token: a raw token and the
+canonical form(s) derived FROM IT should count once, so a single value in
+multiple representations clears when any one of its representations is
+accounted, while two distinct values each still account for themselves.
+
+This requires the extractor to record which canonical tokens were derived from
+which raw tokens, that is, provenance WITHIN the parameter value. No such
+structure exists today: `extract_lineage_tokens` returns a flat set of
+`(kind, token)` pairs with no derivation edges, so at accounting time a token
+and its own canonical sibling are indistinguishable from two unrelated tokens.
+
+Whether this is family 1 scope: it is a SEPARATE item. Family 1 is
+value-identity normalization, the set of canonical-form recognizers. This is an
+accounting and data-structure change (derivation provenance within the
+parameter, and a coverage rule that groups by value), not a new normalizer. It
+is adjacent to family 1 and required to make A2' free, but it is not itself a
+family-1 normalizer. This amendment states the shape only and takes no scope
+decision.
+
+### E4. Predictive value: the first cost-LOCATION prediction correct on first attempt
+
+D3 predicted, in advance, that the measured cost of composite-awareness would
+surface on scheme-form authoritative values. It surfaced exactly there, and
+nothing else surfaced in the measured corpora. This is the first prediction in
+this line about the LOCATION of a cost that was correct on the first attempt.
+
+It was correct because it came from probe-6 MEASUREMENT, not from reasoning: D3
+recorded where the measurement had already shown the FP, then the implementation
+reproduced it in the same place. Contrast with the two reasoned diagnoses that
+were wrong (D6): Amendment 3 reasoned the novel-side lift was safe under
+precedence and was wrong about the direction it would unmask (D2), and probe 4's
+first reading misattributed the breach to composite laundering when it was
+untrusted-side obfuscation (D1). Reasoned-ahead diagnoses were wrong twice;
+the measurement-grounded location prediction was right once, on the first try.
+The discipline holds: predict from probes, not from arguments.
+
+### E5. The min_len double dependency (standing hazard)
+
+`min_len=6` is now load-bearing in two OPPOSITE directions at once:
+
+- It makes AMOUNT fail: the canonical of `$1,000.00` is `1000`, four characters,
+  which drops below the gate and is never emitted, so no attribution of the
+  amount is possible (the A6 failure). Lowering the gate would emit it.
+- It makes COMPOSITE-AWARE CLEARANCE free: short benign components such as
+  `alice` (five characters) drop below the gate and are never tokens, so A2'
+  does not require them to be accounted for, and benign multi-token leaves that
+  contain them still clear. Lowering the gate would turn such components into
+  tokens A2' then demands be attributable, the restrictive direction.
+
+A single change to `min_len` moves BOTH at once, in opposite senses: lowering it
+could rescue amount attribution while simultaneously introducing benign
+false positives on short-component leaves. This is not a defect; it is a
+coupling. Record it as a standing hazard: `min_len` must not be changed without
+re-measuring amount attribution AND composite-aware benign clearance together.
+The two directions are pinned by explicit tests so the coupling cannot be
+touched silently.
+
+### E6. Closing inventory of family 1
+
+Stated as an inventory, with no scope decision attached.
+
+**Closed (measured, tested):**
+- Symmetry: context contents canonicalized into both param_lineage blobs,
+  additively, so defanged untrusted content is reachable.
+- Composite soundness: A2' composite-aware clearance; no composite attack in the
+  corpora reaches ALLOW with novel ON, in either the clean or the
+  obfuscated-untrusted configuration.
+- Defang attribution: `evil[.]com` denies as an attributed param_lineage match
+  naming the parent cprov entry (P2), including the untrusted-side-defang case
+  after symmetry.
+- Date and phone identity: format conversions of an authoritative date or phone
+  clear to ALLOW via canonical match (P1).
+
+**Open, each with a named mechanism:**
+- Scheme-form representation-sibling accounting: A2' counts a value's raw and
+  canonical representations as independent units (E2); needs value-level
+  accounting with in-parameter derivation provenance (E3).
+- Amount blocked by min_len: the canonical `1000` drops below the
+  distinctiveness gate, so the amount reformat row cannot be attributed and
+  stays STEP_UP (A6, E5).
+- Defect A, trailing punctuation: prose words with trailing punctuation
+  (`review.`) are still treated as distinctive tokens; deferred as a separate
+  extractor-hygiene change.
+- Interstitial deferred: `e-v-i-l.com` is not canonicalized (hyphen-stripping is
+  unsafe against real hyphenated domains, A3); it stays STEP_UP.
+- Base64 out of scope by family: base64 is directional encoding, a different
+  family, not value-identity normalization; it stays STEP_UP.
+
+The novel-dependency of the composite-aware half (E1: 4/8 obfuscated attacks
+breach with novel_lineage OFF) is a property of the deployment configuration,
+not an open family-1 item, and is recorded here so it is not overlooked when
+novel_lineage is disabled.
