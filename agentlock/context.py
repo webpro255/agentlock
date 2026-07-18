@@ -570,23 +570,31 @@ class ContextTracker:
             _note_outcome(outcome, "no_match", "no_tokens")
             return None
 
-        # A2 (any-form-clears, at value-leaf granularity): a leaf is clean if
-        # ANY of its forms -- raw OR canonical -- is present in the user's own
-        # request.  This lifts the engine's existing authoritative-first
-        # precedence ("a value in the user's request is clean regardless of any
-        # untrusted echo") from the token to the leaf, so that a benign format
-        # conversion whose CANONICAL form matches the request clears even
-        # though its raw form does not.  Additive emission (A1) keeps this sound
-        # in the raw direction: the raw form is still scanned against untrusted
-        # context independently below, so clearing a leaf on a canonical match
-        # never suppresses a raw untrusted match on a DIFFERENT leaf.
-        auth_clean_paths = {
-            path for _r, _nl, tok, path, _kind, _val in candidates if tok in auth_blob
-        }
-
+        # Authoritative-first precedence, PER TOKEN.  A token that appears in
+        # the user's own request is clean; a token that does not is scanned
+        # against untrusted context below.  This is deliberately per-token, NOT
+        # per-leaf, and it is deliberately DIFFERENT from novel_lineage_check's
+        # leaf-granular clearance a few methods down.  The two checks answer
+        # different questions:
+        #
+        #   * param_lineage substring-matches the raw untrusted content.  A raw
+        #     untrusted token must be caught on its own merits, regardless of a
+        #     clean sibling in the same leaf.  Lifting the auth-clean to the leaf
+        #     here (the A2 attempt, reverted per AMENDMENT 2 / AMENDMENT 3) let
+        #     an authoritative sibling launder an untrusted token in a composite
+        #     value -- e.g. ``evil.com_2026-03-14.pdf`` cleared on the date.
+        #     Per-token clearance closes that: ``evil.com`` is denied on itself.
+        #
+        #   * novel_lineage_check needs leaf granularity for the OPPOSITE reason:
+        #     a benign format conversion's CANONICAL form must be allowed to
+        #     clear the leaf even though its raw form is unseen.  That check does
+        #     not substring-scan untrusted content, so it cannot launder an
+        #     untrusted token the way a per-leaf clear does here.
+        #
+        # The asymmetry is intentional; it is not an inconsistency.
         for _rank, _neglen, tok, path, kind, value in candidates:
-            # Authoritative FIRST, at leaf granularity (A2).
-            if path in auth_clean_paths:
+            # Authoritative FIRST, per token.
+            if tok in auth_blob:
                 continue
             for entry, blob in untrusted_blobs:
                 if tok in blob:
