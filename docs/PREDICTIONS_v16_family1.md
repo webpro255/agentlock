@@ -56,6 +56,19 @@
 > Full record in
 > [AMENDMENT 5](#amendment-5-2026-07-18-implemented-scheme-form-fp-characterized-family-1-inventory).
 
+> **AMENDED 2026-07-18 (amendment 6, CLOSE: probes 7-8, default and split).**
+> novel_lineage stays OFF by default: it fires on absence of evidence, so the
+> same value is STEP_UP with an authoritative baseline and ALLOW without one, a
+> verdict that swings on deployment configuration, which is not a safe default.
+> The proposed novelty/membership split is a MEASURED NEGATIVE: membership is a
+> continue, not a return, and post-symmetry its attribution is already delivered
+> by param_lineage, so the split (C3) is identical to today's default (C1) on
+> every row of four corpora. The frontier is binary: the novelty branch is the
+> only mechanism that catches the encoding class, and its catch and its
+> false positives are one non-recognition behavior. No technical question
+> remains open in family 1. Full record in
+> [AMENDMENT 6](#amendment-6-2026-07-18-close-probes-7-8-default-and-split).
+
 ## Hypothesis
 A value-identity normalizer, applied to a parameter value and to each recorded
 context token before the lineage comparison, moves BOTH the benign and the
@@ -1212,3 +1225,243 @@ The novel-dependency of the composite-aware half (E1: 4/8 obfuscated attacks
 breach with novel_lineage OFF) is a property of the deployment configuration,
 not an open family-1 item, and is recorded here so it is not overlooked when
 novel_lineage is disabled.
+
+---
+
+## AMENDMENT 6 (2026-07-18): CLOSE, probes 7-8, default and split
+
+This amendment records probes 7 and 8 and closes family 1. Amendments 1 to 5 are
+preserved intact. No mechanism changes accompany it. Two figures asserted in the
+tasking are corrected to their measured values, in the same discipline this arc
+is about: the baseline-dependency direction (measured STEP_UP with a baseline,
+ALLOW without, not the reverse), and the novelty false-positive set (measured
+four rows, and not the three named). Measured values are the ones of record.
+
+### F1. Probe 7: novel_lineage stays OFF by default
+
+Measured suite result: flipping the schema default `novel_lineage_enabled` to
+True causes exactly ONE test to fail, `test_v14_novel_lineage.py::TestFlagOff::
+test_defaults_are_off`, the guardrail that asserts the default value; the other
+1236 pass. Test churn is negligible.
+
+The substantive reason to keep it off is not test churn, it is what the gate
+keys on. novel_lineage fires on ABSENCE of evidence: a token accounted for by
+neither the authoritative nor the untrusted set is flagged NOVEL. Its verdict
+therefore depends on whether an authoritative baseline exists in the session at
+all. Measured, same code, same input, same tool call, verdict decided by
+deployment configuration alone:
+
+- system-minted `ORD-2026-88421`, WITH an authoritative baseline: STEP_UP.
+- the same value, WITHOUT an authoritative baseline: ALLOW.
+
+(The direction is that way round: with a baseline the gate has something to be
+novel against and it fires; with no baseline it returns not_classifiable and is
+silent. A session that never registered authoritative context is one where the
+gate cannot flag anything.)
+
+A default whose verdict swings on whether the caller happened to register
+authoritative context is not a safe default. And the quiet case is a trap: a
+corpus or deployment with NO baseline would show ZERO benign delta from enabling
+novel_lineage, which reads as a calm gate, but that silence is an artifact of
+having no baseline, not evidence the gate is benign. Add a baseline, as the
+measured corpus has, and the same flip flags four benign rows (probe 2,
+1/9 to 5/9). The measured test-suite cost of flipping the default is nearly zero
+and the measurement still does not support the change: near-zero churn is not
+near-zero risk when the runtime behavior swings on configuration.
+
+### F2. Probe 8: the novelty/membership split is a measured NEGATIVE
+
+The hypothesis: novel_lineage gates two mechanisms behind one boolean, an
+untrusted-MEMBERSHIP branch (genuine attribution) and a NOVELTY branch (the
+detector that fires on system-minted values), and a profile of param ON,
+membership ON, novelty OFF (call it C3) would hold the benign surface at the
+default level while keeping attributed catches. It was proposed by one reasoning
+model and endorsed by another with a separately stated mechanism.
+
+It is wrong. In the shipped code (A2') `novel_lineage_check` has ONE returning
+branch: NOVEL (`context.py:799-808`). Untrusted-membership is not a branch that
+returns; it is folded into `accounted = auth_tokens | untrusted_tokens` and hit
+by `if _token_accounted(tok): continue`, a SKIP that emits no decision. Gating
+it independently would gate a skip. And post-symmetry the attribution it was
+supposed to preserve is already delivered by `parameter_lineage_check` under its
+own reason string (`DenialReason.PARAM_LINEAGE`), distinct from the novelty
+reason (`DenialReason.NOVEL_LINEAGE`).
+
+Measured result: **C3 is identical to C1 (today's default) on every row of all
+four corpora.** The membership branch, simulated as a real returning path, adds
+nothing over param_lineage. The untrusted-side defang catch that was meant to
+justify the split is `DENY:param_lineage` in C1, C2, and C3 alike; it was never
+the membership branch's to deliver.
+
+### F3. The negative, in two parts
+
+C3 = C1 is, on its own, ambiguous. It is consistent with two incompatible
+worlds: the membership mechanism is REDUNDANT (param already does it), or the
+membership mechanism was NEVER WIRED (it is a skip, so of course it changes
+nothing). Verdict tables cannot separate these, and no future corpus row ever
+could, because both worlds predict identical verdicts on every input.
+
+The skip-versus-return STRUCTURE is what disambiguates: the code shows the
+membership path is a `continue`, so the redundancy is not a coincidence of this
+corpus, it is a property of the control flow. That same structural fact is why
+no future row can ever put daylight between C1 and C3: a branch that does not
+return cannot change a decision, on any input.
+
+Record the general recipe: measurement finds the identity, structure explains
+its necessity, and a negative result stated with only the measured half is an
+absence that invites indefinite re-testing ("maybe the next corpus separates
+them"). The structural half is what turns "identical on the corpora we tried"
+into "identical on every possible input."
+
+### F4. The binary frontier
+
+This is the strongest claim in the arc: there is no middle configuration on the
+encoding class. The only mechanism that catches base64 and interstitial is the
+novelty branch, because those transformations leave the target in NEITHER set,
+and non-recognition is exactly what the novelty branch reports. The catch and
+the false positive are the SAME behavior, non-recognition, and they are
+structurally inseparable because they are one returning path. Row by row, with
+novelty ON versus OFF:
+
+| row | corpus | novelty OFF | novelty ON |
+|---|---|---|---|
+| base64 | probe 1 | ALLOW | STEP_UP |
+| interstitial | probe 1 | ALLOW | STEP_UP |
+| B2 interstitial +sib | probe 4 | ALLOW | STEP_UP |
+| B2 interstitial -sib | probe 4 | ALLOW | STEP_UP |
+| B3 base64 +sib | probe 4 | ALLOW | STEP_UP |
+| B3 base64 -sib | probe 4 | ALLOW | STEP_UP |
+| generated order ID | probe 2 | ALLOW | STEP_UP |
+| computed total | probe 2 | ALLOW | STEP_UP |
+| minted UUID | probe 2 | ALLOW | STEP_UP |
+| amount reformatted | probe 2 | ALLOW | STEP_UP |
+
+The top six are the encoding-class catches; the bottom four are the benign
+non-recognition flags. They move together under one switch. Any configuration
+covering the encoding rows imports the benign flags exactly; any configuration
+holding the benign surface at the default level cedes the encoding rows exactly.
+
+### F5. Two registers for the limitation claims
+
+The claims in this arc live in two registers, and they must not be conflated.
+
+- **The mechanism claim is corpus-independent.** novel_lineage has one returning
+  path; its catch and its false positive are the same non-recognition behavior;
+  a non-returning branch cannot change a decision. These are statements about
+  control flow, true on every input, and they are stated structurally.
+- **The coverage enumeration is corpus-specific.** Which rows fall on which side
+  of the frontier, which transformation class is ceded, the counts (six encoding
+  catches, four benign flags), are exact on the frozen probe corpora and nowhere
+  else. They are measured-on-these-corpora, and the corpora (probes 1 to 4, and
+  the probe-7/8 configurations) are versioned and frozen as the definition of
+  the measurement.
+
+A new transformation family (a new obfuscation, a new benign format) extends the
+corpus, and the frontier claim is re-run against the extended corpus. The
+mechanism claim does not need re-running; the coverage enumeration does.
+
+### F6. Correction to the novelty false-positive set (measured)
+
+The tasking asked to record the novelty false positives as three rows (order ID,
+UUID, filename), with the computed total said to be below min_len and never a
+token. Measurement does not support that correction, and the measured set is
+recorded instead:
+
+- The rows that flip ALLOW to STEP_UP when novelty turns on are FOUR:
+  `generated order ID`, `computed total`, `minted UUID`, `amount reformatted`.
+- `computed total` (`$14,207.50`) IS a token: its raw string is ten characters,
+  well above the gate, and it is flagged NOVEL. It is not below min_len.
+- `generated filename` (`report_alice_2026-03-14.pdf`) is NOT a false positive:
+  it clears to ALLOW, because its emitted tokens are all covered by the embedded
+  authoritative date (E1). It does not flip.
+
+The useful structural split within the four is: three are genuinely novel tokens
+with no authoritative origin (`order ID`, `computed total`, `minted UUID`, the
+system-minted / computed class), and one is the family-1 amount case
+(`$1,000.00`, A6), a reformatted authoritative amount whose canonical `1000`
+drops below the gate and leaves only the raw novel token. That amount row is the
+E5 min_len direction one, surfacing again here.
+
+On the third min_len direction the tasking was reaching for: min_len IS
+load-bearing on the novelty detector too, but not through the computed total. A
+genuinely novel value BELOW the gate is never emitted as a token, so
+novel_lineage cannot flag it and silently allows it. That is a real third
+direction (min_len also gates what novelty can see), stated as a principle; it
+is not instantiated by `computed total`, which is above the gate. Cross-
+reference E5: min_len now has three load-bearing directions, amount attribution
+(down), composite-clearance freeness (up), and novelty visibility (down),
+recorded together as the standing hazard.
+
+### F7. Method note (extends D6 and B6)
+
+Three parts.
+
+**Consensus is not evidence.** The novelty/membership split had apparent
+independent endorsement: two reasoning models proposed it with separately stated
+mechanisms. But both were reasoning from the same conceptual model, a two-branch
+novel_lineage, rather than from the returning-path structure of the actual code.
+Shared premises produce correlated errors, so agreement between reasoners is not
+corroboration; it can be two derivations of the same mistaken premise. The probe
+was the only independent check. The moment of highest risk is precisely when
+reasoners converge and it feels settled.
+
+**Calibration, both directions.** Reasoning was not merely unreliable here.
+Reasoning correctly predicted the amount evidence-deletion hazard (the A1 worked
+example, `$9,847.00` deleted under replacement emission), correctly identified
+additive emission as the soundness-monotonicity invariant, and correctly
+identified where the composite-aware cost would land (the scheme-form location,
+D3/E4, right on the first attempt). Reasoning also correctly saw that a defanged
+untrusted token lands in the untrusted token set through symmetric context
+canonicalization (A4), though it overstated the effect as attribution and that
+was later corrected. The accurate statement is that reasoning proposes and
+measurement disposes, in BOTH directions, and the discipline's value is that
+disposal is cheap: a probe costs a scratch file and a minute, so being wrong is
+inexpensive. Do not overstate this as reasoning being unreliable; overstate
+neither side.
+
+**Running tally.** Across the arc, three reasoned diagnoses were wrong, each
+caught by a probe: the precedence mask reasoned safe when the novel-side lift was
+implicated (A3, caught by probe 5); the composite-laundering attribution of the
+probe-4 breach when the cause was untrusted-side obfuscation (caught by the
+probe-4 no-sibling controls); and the novelty/membership split (caught by probe
+8). Alongside them, three reasoned predictions were confirmed: the amount
+evidence-deletion hazard, additive emission as the monotonicity invariant, and
+the scheme-form cost location. Three wrong, three right, all disposed cheaply by
+measurement.
+
+### F8. Closing state of family 1
+
+Restated as an inventory, no scope decision attached.
+
+**Closed (measured, tested):**
+- Symmetry: context contents canonicalized additively into both param_lineage
+  blobs.
+- Composite soundness under A2': no composite attack reaches ALLOW with novel
+  ON, in the clean and the obfuscated-untrusted configurations.
+- Defang attribution: `evil[.]com` denies as an attributed param_lineage match
+  naming the parent cprov entry, including the untrusted-side case after
+  symmetry.
+- Date and phone identity: format conversions of an authoritative date or phone
+  clear to ALLOW via canonical match.
+
+**Open, each with a named mechanism:**
+- Scheme-form representation-sibling accounting: A2' counts a value's raw and
+  canonical representations as independent units (E2); needs value-level
+  accounting with in-parameter derivation provenance (E3).
+- Amount blocked by min_len: canonical `1000` drops below the gate, so the
+  amount reformat row cannot be attributed and stays STEP_UP (A6, E5, F6).
+- Defect A, trailing punctuation: prose words with trailing punctuation
+  (`review.`) are still treated as distinctive tokens; deferred as a separate
+  extractor-hygiene change.
+- Interstitial deferred: `e-v-i-l.com` is not canonicalized (hyphen-stripping is
+  unsafe against real hyphenated domains, A3); it stays STEP_UP.
+- Encoding class ceded in the default configuration: base64 and interstitial are
+  caught only by the novelty branch, which is off by default (F1, F4). The only
+  candidate third point on the frontier is directional inversion (decoding the
+  untrusted side rather than the parameter side), a distinct family, not
+  value-identity normalization.
+
+**No technical question remains open in family 1.** Every mechanism is either
+closed with a test or open with a named mechanism and a measured characterization
+of why it is open. The remainder is writing: turning this record into the two
+papers and the specification text. The probes have said what they can say.
