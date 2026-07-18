@@ -55,9 +55,15 @@ def _plain_qualifies(w: str, min_len: int) -> bool:
     return len(w) >= 12
 
 
-def extract_lineage_tokens(value: Any, min_len: int) -> set[tuple[str, str]]:
-    """Extract distinctive (kind, normalized_value) tokens from a parameter
-    value.  ``kind`` is one of 'email' | 'url' | 'str' (for source labelling)."""
+def _base_lineage_tokens(value: Any, min_len: int) -> set[tuple[str, str]]:
+    """The v1.3 distinctive-token extraction: emails, URLs/domains, and
+    qualifying plain strings.  This is the RAW-token floor.
+
+    v1.6 family 1 layers canonical forms ON TOP of this floor (additive
+    emission, invariant A1); it never removes a token this function produced.
+    Keeping the floor in its own function is what lets the invariant test
+    assert the subset relation structurally: whatever this returns must remain
+    a subset of :func:`extract_lineage_tokens`."""
     text = value if isinstance(value, str) else str(value)
     tokens: set[tuple[str, str]] = set()
     for m in _EMAIL_RE.findall(text):
@@ -71,6 +77,38 @@ def extract_lineage_tokens(value: Any, min_len: int) -> set[tuple[str, str]]:
         if _plain_qualifies(w, min_len):
             tokens.add(("str", w))
     return tokens
+
+
+def _canonical_lineage_tokens(value: Any, min_len: int) -> set[tuple[str, str]]:
+    """Value-identity canonical forms (v1.6 family 1).
+
+    Returns ADDITIONAL (kind, canonical_value) tokens for format conversions
+    and representation variants: the same value in a different surface form.
+    ``kind`` is one of 'date' | 'phone' | 'url' (defang) | 'amount'.
+
+    This is the whole family-1 mechanism.  It does NOT inspect scope or
+    classify what a value 'is for': it normalizes every value identically, and
+    the family split (benign clears, attack attributes) is produced entirely by
+    whether a canonical form matches an authoritative or untrusted token.  It
+    is emitted ALONGSIDE the raw floor, never instead of it (invariant A1).
+
+    Stub for now; normalizers are added in the following commits."""
+    return set()
+
+
+def extract_lineage_tokens(value: Any, min_len: int) -> set[tuple[str, str]]:
+    """Extract distinctive (kind, normalized_value) tokens from a parameter
+    value.  ``kind`` is one of 'email' | 'url' | 'str' (raw v1.3 floor) or a
+    v1.6 canonical kind ('date' | 'phone' | 'amount').
+
+    ADDITIVE EMISSION (invariant A1): the result is the raw-token floor UNION
+    the canonical forms, never a replacement.  Canonicalization can only ADD
+    match opportunities, so no catch that existed before family 1 can be
+    deleted by it.  Both the parameter side and the context side run through
+    this one function, so ``novel_lineage_check`` gets its symmetry for free."""
+    return _base_lineage_tokens(value, min_len) | _canonical_lineage_tokens(
+        value, min_len
+    )
 
 
 def _iter_param_leaves(obj: Any, path: str = "") -> Iterator[tuple[str, str]]:
