@@ -570,9 +570,23 @@ class ContextTracker:
             _note_outcome(outcome, "no_match", "no_tokens")
             return None
 
+        # A2 (any-form-clears, at value-leaf granularity): a leaf is clean if
+        # ANY of its forms -- raw OR canonical -- is present in the user's own
+        # request.  This lifts the engine's existing authoritative-first
+        # precedence ("a value in the user's request is clean regardless of any
+        # untrusted echo") from the token to the leaf, so that a benign format
+        # conversion whose CANONICAL form matches the request clears even
+        # though its raw form does not.  Additive emission (A1) keeps this sound
+        # in the raw direction: the raw form is still scanned against untrusted
+        # context independently below, so clearing a leaf on a canonical match
+        # never suppresses a raw untrusted match on a DIFFERENT leaf.
+        auth_clean_paths = {
+            path for _r, _nl, tok, path, _kind, _val in candidates if tok in auth_blob
+        }
+
         for _rank, _neglen, tok, path, kind, value in candidates:
-            # Authoritative FIRST -- clean if the user's own request has it.
-            if tok in auth_blob:
+            # Authoritative FIRST, at leaf granularity (A2).
+            if path in auth_clean_paths:
                 continue
             for entry, blob in untrusted_blobs:
                 if tok in blob:
@@ -716,10 +730,26 @@ class ContextTracker:
             _note_outcome(outcome, "no_match", "no_tokens")
             return None
 
+        # A2 (any-form-clears, at value-leaf granularity): a leaf is accounted
+        # for if ANY of its forms -- raw OR canonical -- is a known token.  A
+        # leaf is NOVEL only when NONE of its forms matches the authoritative or
+        # the untrusted set.  This is what lets a benign format conversion clear
+        # on its canonical form even though its raw form is unseen: without it,
+        # the raw form alone would still read NOVEL and no canonicalization
+        # would ever move the benign column.  Authoritative-first precedence is
+        # preserved: a leaf whose forms hit BOTH sets is treated as trusted,
+        # because the trusted check comes first.
+        trusted_paths = {
+            path for _r, _nl, tok, path, _val in candidates if tok in auth_tokens
+        }
+        untrusted_paths = {
+            path for _r, _nl, tok, path, _val in candidates if tok in untrusted_tokens
+        }
+
         for _rank, _neglen, tok, path, value in candidates:
-            if tok in auth_tokens:
-                continue                      # trusted
-            if tok in untrusted_tokens:
+            if path in trusted_paths:
+                continue                      # trusted (a form matches the request)
+            if path in untrusted_paths:
                 continue                      # untrusted -> param_lineage's job
             _note_outcome(outcome, "match")
             return {
