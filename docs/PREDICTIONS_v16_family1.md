@@ -32,6 +32,18 @@
 > now load-bearing. Full record in
 > [AMENDMENT 3](#amendment-3-2026-07-18-fix-and-residual-precedence-is-now-load-bearing).
 
+> **AMENDED 2026-07-18 (amendment 4, RESULTS: probes 4-6, A2 SUPERSEDED).**
+> Probe 4 (untrusted-side obfuscation) breaches the floor; the cause is A4
+> untrusted-side obfuscation on its own, not composite laundering, and Amendment
+> 3's prediction that the novel-side lift would unmask here was WRONG. Probe 5
+> (symmetry alone) closes those breaches but the novel-side lift IS implicated
+> once the authoritative side canonicalizes, from a direction A3 did not
+> predict. Probe 6 (symmetry PLUS composite-aware clearance) closes every attack
+> row across all four corpora with benign FP held at 5/9. The A2 aggregation
+> rule is SUPERSEDED. Composite-aware clearance is free on this corpus but NOT
+> in principle. Fix not implemented at the time of writing. Full record in
+> [AMENDMENT 4](#amendment-4-2026-07-18-results-probes-4-6-a2-superseded).
+
 ## Hypothesis
 A value-identity normalizer, applied to a parameter value and to each recorded
 context token before the lineage comparison, moves BOTH the benign and the
@@ -839,3 +851,190 @@ refuse to launder a composite that contains an untrusted form) is deferred with
 the filename compositional-attribution work (B5): both require composite-aware
 clearance on the novel side, and neither should be attempted piecemeal. Until
 then, the residual stands as recorded here, guarded by precedence and by test.
+
+---
+
+## AMENDMENT 4 (2026-07-18): RESULTS, probes 4-6, A2 SUPERSEDED
+
+This amendment records three probes as measured RESULTS and supersedes the A2
+aggregation rule. Amendments 1 to 3 are preserved intact. No fix is implemented
+at the time of writing. Where a measured number below refines a figure used
+informally in an earlier turn, the measured figure is the one of record;
+divergences are stated, not smoothed over.
+
+The probe corpora, all reused from scratch harnesses: probe 1 (attacks +
+must-not-trip), probe 2 (benign surface), probe 3 (composites), probe 4
+(untrusted-side obfuscation: the untrusted component is written into the
+untrusted CONTEXT in an obfuscated form). Probe 4 runs each row twice, with
+novel_lineage ON and OFF.
+
+### D1. Probe 4: the floor is breached by untrusted-side obfuscation, not laundering
+
+Probe 4 breaches the soundness floor. Measured: with novel_lineage ON, 6 of 8
+obfuscated-untrusted attacks reach ALLOW; with novel OFF, 8 of 8. The two clean
+controls DENY throughout.
+
+The breaching rows split into TWO mechanisms, and the controls separate them:
+
+- **Defang (A1, A4), the pure A4 residual.** These breach with AND without an
+  authoritative sibling: the no-sibling control breaches identically to the
+  with-sibling row. So the sibling is NOT doing the laundering; the cause is
+  untrusted-side obfuscation on its own. Both gates miss independently:
+  param_lineage's raw blob holds `evil[.]com`, not `evil.com`, so its substring
+  misses; and `novel_lineage` does not fire either, because family 1's defang
+  canonicalization put `evil.com` into `untrusted_tokens`, so novel classifies
+  it as untrusted and DEFERS to param_lineage rather than flagging it NOVEL.
+  With the untrusted side obfuscated, param cannot see the target and novel has
+  handed it off to param. Nothing denies.
+- **Interstitial and base64 with sibling (B2, B3), composite laundering.** These
+  breach only WITH the sibling; their no-sibling controls block at STEP_UP. Here
+  the sibling IS the cause: novel would flag NOVEL, but the leaf-granular lift
+  clears the leaf on the authoritative date. This is the Amendment 3 masked
+  residual, unmasked.
+
+**Amendment 3's prediction was WRONG for the defang rows.** A3 said the
+novel-side lift would be what unmasks the residual here. It is not: on the
+defang rows novel never fires at all, because with the untrusted side obfuscated
+there is nothing for it to classify as novel (the target is already in
+`untrusted_tokens`, deferred). The reasoned diagnosis exonerated nothing and
+misattributed the cause.
+
+**Family 1 introduced a regression on this class.** Pre-family-1, the defang
+case (`evil.com` param, `evil[.]com` untrusted) returned an unattributed
+STEP_UP: `evil.com` matched nothing, so novel flagged it NOVEL. Family 1's
+one-sided handling (the novel-side token sets canonicalize context, but
+param_lineage's blob does not) moved the defanged `evil.com` into
+`untrusted_tokens`, which turned novel's NOVEL flag into a defer-to-param, while
+the un-canonicalized param blob still could not catch it. STEP_UP became ALLOW.
+One-sided normalization made this attack class WORSE than before family 1
+existed. Record this plainly: a partial normalization is not a partial defense,
+it can be a net regression.
+
+### D2. Probe 5: symmetry closes probe 4 but symmetry and leaf-granular clearance are jointly unsound
+
+Symmetry (canonicalize context contents into both param_lineage blobs, the same
+pass that runs on parameters) closes the probe-4 breaches: the defanged
+untrusted blob now carries canonical `evil.com`, so param_lineage substring-
+matches and DENYs, naming the cprov entry. It also closes the
+false-authoritative-membership concern (`evil.com` is never placed in
+`auth_tokens`; the auth blob's canonical suffix is only phone/date/amount).
+Probes 1 and 2 are byte-identical under symmetry.
+
+The finding to record is about soundness, not a single verdict:
+**symmetry and leaf-granular clearance are individually defensible and JOINTLY
+UNSOUND.** The row `evil.com report 03/14/2026` is the witness. Canonicalizing
+the authoritative blob turns the user's date into `2026-03-14`, matching the
+attacker's canonicalized date, and the novel-side leaf-granular lift then clears
+the WHOLE leaf on that one legitimate half, returning no_match. The novel-side
+lift Amendment 3 left intact IS implicated, and from a direction A3 did not
+predict: A3 reasoned the lift was safe because param_lineage's DENY masks it;
+symmetry is what feeds the lift a match to launder on.
+
+Measurement note, so the record is exact: whether this row's NET flips to ALLOW
+depends on whether param_lineage still catches `evil.com` independently. With an
+ADDITIVE canonical suffix over the raw blob (the implementation measured in
+probe 6 below), the raw `evil.com` remains in the untrusted blob, param still
+DENYs, and the net stays DENY while novel launders underneath. With a
+canonical-REPLACEMENT blob, the clean `evil.com` is absent, param misses, and
+the leaf-granular clearance surfaces the DENY-to-ALLOW flip. Either way the
+novel-side laundering is real and present on this row; the flip is its
+manifestation once param's independent catch is removed. The joint unsoundness
+is the durable finding; the flip is the demonstration.
+
+### D3. Probe 6: symmetry plus composite-aware clearance closes everything
+
+Symmetry PLUS composite-aware clearance was measured across all four corpora
+(additive blob suffix, novel_lineage ON):
+
+- Probe 1: net verdicts byte-identical.
+- Probe 2: benign FP rate 5/9, byte-identical.
+- Probe 3: 7/7 blocked, including `evil.com report 03/14/2026`.
+- Probe 4: 0 of 8 reach ALLOW. Defang closes via param_lineage DENY (symmetry);
+  interstitial and base64 close via novel STEP_UP (composite-aware no longer
+  launders the leaf on the sibling).
+- Full test suite: 1205 passed.
+
+Combined across all four corpora with novel ON, every attack row is blocked.
+(The headline "floor breached before, every row blocked after" is the result;
+exact denominators depend on whether controls and novel-OFF rows are counted.
+Measured breach counts: probe 4 baseline 6/8 with novel ON, closed to 0/8 by
+probe 6.)
+
+### D4. The A2 aggregation rule is SUPERSEDED
+
+AMENDMENT 1's A2 decided any-form-clears at value-leaf granularity: a leaf clears
+if ANY form of ANY of its tokens is accounted. That rule is now SUPERSEDED, not
+refined, by:
+
+> **A2' (composite-aware clearance).** EVERY value-bearing token in a leaf must
+> be accounted for. Any-form matching is permitted PER TOKEN: a token is
+> accounted if it, or one of its own canonical forms, is in the authoritative or
+> the untrusted set. A leaf clears only when every one of its tokens clears.
+
+This is a replacement because A2 is unsound for multi-value leaves, which is the
+defect Amendment 2 diagnosed and Amendment 3 only partially closed (by
+precedence, leaving the novel-side laundering masked). A2' removes the laundering
+at its source: a composite can no longer be cleared by one accounted sibling,
+because each distinct token must account for itself. On a single-value leaf A2
+and A2' coincide; they diverge exactly on the multi-value leaves A2 got wrong.
+
+### D5. The free-ness of A2' is conditional, and the corpus cannot see the cost
+
+Composite-aware clearance is the RESTRICTIVE direction, the deny-everything
+direction family 1 exists to avoid. It cost zero benign rows ON THIS CORPUS, and
+the reason is structural, not lucky: every benign leaf in probe 2 is
+single-token, and on a single-token leaf "every token accounted" and "any form
+matches" are the SAME predicate. A2 and A2' only diverge on multi-token leaves,
+and every multi-token leaf in the corpus is an attack. So the corpus is blind to
+A2's benign cost by construction.
+
+State it plainly: **A2' is free on this corpus, NOT free in principle.** The cost
+surfaces on a benign multi-token leaf that should clear but has a token that
+cannot account for itself. Two named cases:
+
+- **Measured (probe 6): scheme-form of an authoritative domain.** With the user's
+  own `acme.com` in context, the value `https://acme.com` clears under A2 (ALLOW)
+  but is flagged STEP_UP under A2', because it extracts two tokens, url `acme.com`
+  (accounted) and str `https://acme.com` (not accounted, since the coverage
+  predicate consulted only the family-1 canonicals and not the base
+  scheme-stripping canonicalization). This is a genuine benign false positive
+  A2' introduces, invisible to probes 1 to 4 because none carries a benign
+  scheme-form value.
+- **Named, still open: the filename gap.** A benign composite such as
+  `report_alice_2026-03-14.pdf` requires every value-bearing component
+  attributable. Where a component cannot be (for instance a name below the
+  `min_len` distinctiveness gate, so it is never even a token to attribute, or a
+  component with no authoritative match), A2' will not clear the leaf. This is
+  the already-open filename compositional-attribution gap (B5), now with a named
+  mechanism: it is A2' being unable to attribute a legitimate component. The
+  corpus cannot currently show this cost because it contains no benign
+  multi-token leaf that SHOULD clear on its own components.
+
+The scheme-form false positive looks like a fixable gap in the coverage
+predicate (broaden it from the family-1 canonicals to the full extractor,
+including base canonicalization), but that broadening is unmeasured and is not
+asserted here. Until A2' is measured against a benign corpus that includes
+multi-token leaves that should clear, its cost is named but not bounded.
+
+### D6. Method note (extends B6): reasoned fixes were wrong twice, measurement was right
+
+The diagnosis chain ran probe 4 (a wrong diagnosis: it read the breach as the
+composite laundering of Amendment 3 and, for the defang rows, exonerated the
+novel-side lift by misreading the mechanism), probe 5 (which revealed the
+novel-side lift WAS implicated after all, once the authoritative side
+canonicalizes), and probe 6 (the correct fix). Two intermediate diagnoses were
+wrong, and both were caught by MEASUREMENT, not by review or reasoning. Amendment
+3's masking analysis was reasoned and plausible and still missed the direction
+the residual would unmask from. Record this as evidence for the probe-before-fix
+discipline: on this mechanism, reasoned fixes were wrong twice and measured
+fixes were right. The floor is only as strong as the attack column (B6), and the
+diagnosis is only as strong as the probe that tests it.
+
+### D7. Status of the fix
+
+The probe-6 fix (symmetry plus A2' composite-aware clearance) has NOT been
+implemented at the time of this amendment. This amendment records the three
+probe results, supersedes A2, and names the conditional cost of A2'. The
+implementation, the broadening of the coverage predicate to close the scheme-form
+false positive, and a benign multi-token corpus to bound A2's cost are future
+work and are not asserted here.
