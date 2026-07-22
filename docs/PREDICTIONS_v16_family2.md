@@ -41,6 +41,24 @@ the first family-2 frontier probe before the AFTER column is judged.
 > optional nicety. Original predictions and Amendment 1 are preserved intact.
 > Full record in [AMENDMENT 2](#amendment-2-2026-07-22-three-items-from-the-before-probe-before-mechanism-code).
 
+> **AMENDED 2026-07-22 (amendment 3, RE-SCOPE of AM2.1, before mechanism code).**
+> A read-only direction check FALSIFIED AM2.1 as written, before the AFTER probe.
+> `parameter_lineage_check` matches direction (B), param-token-in-blob
+> (`context.py:625-630`, `tok in blob`): it extracts tokens FROM the param and
+> tests each as a substring of the untrusted blob. AM2.1's containment argument
+> (emitted form is a substring of the composite param token) assumed direction
+> (A) and runs the wrong way under (B). Correct unified map: every first-cut
+> encoding catches its BARE form (direction-independent, the counted 4/4); NO
+> first-cut encoding catches its COMPOSITE form. base64 composites have TWO
+> blockers (phase AND direction), hex and natural-URL have ONE (direction).
+> Re-scope: hex-composite and natural-URL-composite move into the DEFERRED
+> frontier alongside base64-composite; all composites are deferred,
+> predicted-unchanged, not counted. Counted 4/4, benign zero-FP-delta, and
+> no-regression floors are untouched; AM2.2 and AM2.3 stand (AM2.3's two-halves
+> point now generalizes: the composite gap is universal, base64 just has an extra
+> phase blocker). Original predictions and Amendments 1-2 preserved intact. Full
+> record in [AMENDMENT 3](#amendment-3-2026-07-22-re-scope-of-am21-before-mechanism-code).
+
 ## Hypothesis
 Directional encoding (base64, URL-encoding, hex) can be attributed back to its
 untrusted source WITHOUT the novelty false-positive surface, by encoding the
@@ -572,3 +590,139 @@ and composite together; the two-halves framing is base64-specific.
 - Mechanism spec gains one required line: an encoded-form length floor (AM2.2).
 - The must-not-trip zero-FP-delta floor and the family-1 no-regression floor are
   unchanged.
+
+---
+
+## AMENDMENT 3 (2026-07-22): re-scope of AM2.1, before mechanism code
+
+This amendment is dated and recorded AFTER a read-only direction check and BEFORE
+any forward-encode mechanism exists. The direction check falsified AM2.1 as
+written, before the AFTER probe could reach it. This is a pre-registered
+correction, not a post-hoc reinterpretation of a run. Original predictions and
+Amendments 1 and 2 are left intact; AM2.1 is superseded on the composite claim
+only, and this section states what replaces it.
+
+### AM3.1. The match direction is (B), param-token-in-blob
+
+`parameter_lineage_check` extracts distinctive tokens FROM the parameter value and
+tests each as a substring of the untrusted blob. It does NOT scan the parameter
+for occurrences of untrusted tokens. Candidate construction, iterating over param
+leaves (`context.py:587-593`):
+
+```
+for path, value in _iter_param_leaves(parameters):
+    for kind, tok in extract_lineage_tokens(value, min_len):   # tok comes FROM the param
+        candidates.append((kind_rank.get(kind, 3), -len(tok), tok, path, kind, str(value)))
+```
+
+The match test (`context.py:625-630`):
+
+```
+for _rank, _neglen, tok, path, kind, value in candidates:      # tok is a PARAM token
+    if tok in auth_blob:
+        continue
+    for entry, blob in untrusted_blobs:
+        if tok in blob:                                        # PARAM token IN untrusted BLOB
+```
+
+`tok in blob` is direction (B): the param token is the needle, the untrusted blob
+is the haystack.
+
+### AM3.2. AM2.1 was wrong (containment ran the wrong way)
+
+AM2.1's argument was that the emitted form (`hex(evil.com)` = `6576696c2e636f6d`)
+is a contiguous substring of the composite param token
+(`hex(report_evil.com.pdf)`), which is TRUE. But that is direction (A): the
+emitted form contained IN the param. Under direction (B) the relevant containment
+is the reverse, the whole composite param token IN the blob, and the whole
+38-character composite token is not a substring of the short untrusted blob (which
+holds only the 16-character bare emitted form after forward-encode). So the
+composite MISSES. Alignment-freedom is a real property of hex and natural-URL, but
+it was never the binding constraint on composites; match direction is. AM2.1
+correctly separated hex/URL from base64 on the alignment axis and wrongly
+concluded that they are therefore caught.
+
+### AM3.3. The unified composite statement (the correct map)
+
+- **Every first-cut encoding catches its BARE form.** For a bare row the param
+  value IS the emitted form, so the extracted param token equals the emitted form
+  and containment is mutual: direction-independent. These are the counted four
+  rows, 4/4, unchanged.
+- **NO first-cut encoding catches its COMPOSITE form.** param_lineage is direction
+  (B), and an encoded composite yields no embedded sub-token to match, so only the
+  opaque whole-composite token remains and it fails (B).
+- **base64 composites have TWO independent blockers**: the phase problem (AM1.1,
+  3-byte-to-4-char grouping) AND the direction problem (AM3.1). Either alone
+  defeats the composite.
+- **hex and natural-URL composites have ONE blocker**: the direction problem only.
+  They are alignment-free (AM2.1's true half), which removes the phase blocker but
+  not the direction blocker, so they still miss.
+
+### AM3.4. Why plaintext composites escaped and encoded ones cannot
+
+Family 1's plaintext composite (`evil.com_2026-03-14.pdf`) was caught by
+param_lineage because `_URL_RE` (`context.py:31`, which requires a literal `\.`)
+extracted `evil.com` as a DISCRETE sub-token from the composite, stopping at the
+`_`. That short sub-token then satisfied direction (B) directly: `"evil.com" in
+blob` is true against the clean untrusted blob. The rescue is tokenization
+producing an embedded domain, and it depends on a literal `.` or `@`.
+
+Encoded composites encode that delimiter (`.` becomes `2e` in hex or `%2e` in
+URL-encoding), so `_URL_RE` and `_EMAIL_RE` find no literal delimiter, extract no
+embedded domain or email, and leave only the opaque whole-composite token, which
+fails (B). Encoded composites inherit exactly the miss that plaintext composites
+escaped, for the one reason they structurally cannot reproduce: a literal
+delimiter for the tokenizer to split on.
+
+### AM3.5. Re-scope: all composites deferred
+
+hex-composite and natural-URL-composite move OUT of AM2.1's newly-caught claim and
+INTO the deferred frontier, alongside base64-composite. All composites are now
+DEFERRED, predicted-unchanged, and NOT counted.
+
+```
+deferred frontier (superseding AM1.4's two-row table)
+row                                 | blockers                          | status if pulled in
+------------------------------------+-----------------------------------+----------------------
+base64 composite (value at offset)  | phase (AM1.1) + direction (AM3.1) | PREDICTED-AT-RISK
+hex composite                       | direction (AM3.1)                 | PREDICTED-AT-RISK
+natural-URL composite               | direction (AM3.1)                 | PREDICTED-AT-RISK
+url-encoded, alphanumerics encoded  | per-char enumeration (AM1.2)      | PREDICTED-AT-RISK
+```
+
+A composite catch would require either a direction-(A) scan (test emitted/untrusted
+tokens for occurrence IN the param) or param-side sub-token emission from encoded
+strings (decompose an encoded composite into candidate encoded sub-tokens), neither
+of which is in the mechanism spec. **The AFTER probe SHOULD therefore show every
+composite row UNCHANGED** (still `param_lineage = no_match`, STEP_UP under novel
+ON, ALLOW under novel OFF, exactly as the BEFORE probe measured). A composite catch
+in the AFTER probe WITHOUT one of those two mechanism additions would itself be a
+surprise to investigate, not a bonus, the same discipline the deferred rows have
+carried since Amendment 1.
+
+### AM3.6. Untouched by this amendment
+
+- Counted must-catch: unchanged, **4/4 on the four bare forms** (direction-
+  independent, AM3.3).
+- Benign zero-FP-delta floor and family-1 no-regression floor: unchanged.
+- AM2.2 (folded-base64 encoded-form entropy floor): stands.
+- AM2.3 (base64 two-halves framing): stands, and now GENERALIZES. The composite
+  gap is universal across the first-cut encodings, not base64-specific; every
+  encoding's composite is the deferred second half. base64 is distinguished only
+  by carrying an EXTRA phase blocker on top of the shared direction blocker. The
+  limitations writeup states the composite gap as universal, with base64's phase
+  as an additional base64-only cost.
+
+### AM3.7. Method note
+
+AM2.1 was a reasoned prediction from a structural argument (alignment-freedom)
+that was TRUE but NOT BINDING: hex and URL genuinely lack base64's phase, but
+phase was not the constraint that decides a composite. The direction check was a
+five-minute read-only measurement (read `parameter_lineage_check`, name the
+direction) that falsified AM2.1 before it could reach the AFTER probe. This is
+consistent with the family-1 finding (F7): reasoning proposes, measurement
+disposes, and the cheap check is what separates a true-but-not-binding argument
+from a load-bearing one. The same reasoner (Fable) proposed AM2.1 and proposed the
+direction check that killed it, which is the discipline working as intended, not
+a failure of it. The cost of being wrong here was one read, paid before any
+mechanism was built.
