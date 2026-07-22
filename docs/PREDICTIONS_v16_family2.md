@@ -59,6 +59,26 @@ the first family-2 frontier probe before the AFTER column is judged.
 > phase blocker). Original predictions and Amendments 1-2 preserved intact. Full
 > record in [AMENDMENT 3](#amendment-3-2026-07-22-re-scope-of-am21-before-mechanism-code).
 
+> **AMENDED 2026-07-22 (amendment 4, corrections and sharpenings, before
+> mechanism code).** Four items from review of Amendment 3, all consistent with
+> the direction finding (AM3.1): (4.1) the natural-URL partition claim is
+> half-falsified, its delimiter-encoded branch shared AM2.1's direction-(A)
+> assumption and collapses to the plaintext delimiter-bare path, ownership
+> recorded. (4.2) the two composite-fix paths of AM3.5 are NOT symmetric on the
+> forward-encode axis: a direction-(A) scan of the known encoded-token set is
+> zero-decode and preserves the FP argument, param-side sub-token emission steps
+> back toward reverse-decode; only the scan preserves the invariant, recorded as
+> the preferred shape before design. (4.3) base64's two blockers are ORDERED, not
+> merely independent: three-phase emission (AM1.1) is necessary but NOT sufficient
+> for base64 composites, sufficient only once a direction-(A) scan exists, so a
+> future cut shipping three-phase alone will still miss base64 composites by
+> prediction. (4.4) AM3.5's falsifier is strengthened: a composite catch without a
+> mechanism addition is a structural impossibility under direction (B), so it
+> triggers an AUDIT OF THE MEASUREMENT, not acceptance. Counted 4/4 and all floors
+> unchanged; everything falsified so far is OUTSIDE the counted set. Original
+> predictions and Amendments 1-3 preserved intact. Full record in
+> [AMENDMENT 4](#amendment-4-2026-07-22-corrections-and-sharpenings-before-mechanism-code).
+
 ## Hypothesis
 Directional encoding (base64, URL-encoding, hex) can be attributed back to its
 untrusted source WITHOUT the novelty false-positive surface, by encoding the
@@ -726,3 +746,109 @@ from a load-bearing one. The same reasoner (Fable) proposed AM2.1 and proposed t
 direction check that killed it, which is the discipline working as intended, not
 a failure of it. The cost of being wrong here was one read, paid before any
 mechanism was built.
+
+---
+
+## AMENDMENT 4 (2026-07-22): corrections and sharpenings, before mechanism code
+
+This amendment is dated and recorded BEFORE any forward-encode mechanism exists.
+Four items surfaced in review of Amendment 3, all consistent with the direction
+finding (AM3.1). Original predictions and Amendments 1 through 3 are left intact.
+
+### AM4.1. The natural-URL partition claim is half-falsified (ownership on record)
+
+A claim made after Amendment 2, that natural-URL composites are covered by a
+union over two branches (the delimiter left BARE or the delimiter ENCODED),
+shared AM2.1's root cause and is recorded here on the same footing so the error
+is not left unowned.
+
+- **Delimiter-bare branch SURVIVES.** If the composite leaves the dot literal
+  (`report_evil.com.pdf`), `_URL_RE` extracts `evil.com` as a sub-token and it
+  satisfies direction (B) against the clean blob. This is exactly the family-1
+  plaintext path (AM3.4), not a new one.
+- **Delimiter-encoded branch is FALSE.** If the composite encodes the dot
+  (`report_evil%2ecom%2epdf`), the claim that the natural-URL form of `evil.com`
+  is found inside it assumed direction (A), exactly as AM2.1 did. Under direction
+  (B) the whole encoded composite token is not a substring of the blob, so it
+  misses.
+
+The partition therefore collapses to "caught only when the delimiter is left
+bare," which is the plaintext path. It is not a second coverage path and adds
+nothing over AM3.4. Recorded so this claim sits on the same footing as AM2.1: a
+direction-(A) assumption, falsified by AM3.1.
+
+### AM4.2. The two composite-fix paths are not symmetric on the forward-encode axis
+
+AM3.5 named two paths to a future composite catch. They are not
+interchangeable; they differ in KIND on the axis that defines this family.
+
+- **A direction-(A) scan** (search the param string for occurrences of the known,
+  FINITE, forward-encoded token set) is STILL ZERO-DECODE. No benign value is ever
+  read or inverted; the scan only looks for known encoded-untrusted strings inside
+  the param. The entire forward-encode false-positive argument (section 1, the
+  rejection of reverse-decode on the probe-2 UUID) survives intact. Cost: a second
+  scan direction on the param side.
+- **Param-side sub-token emission** (decompose an encoded param into candidate
+  encoded sub-tokens) requires INTERPRETING the encoding of arbitrary param
+  content, which is the first step back toward reverse-decode and its unbounded
+  FP surface.
+
+**Corollary, recorded as the preferred shape BEFORE anyone builds the composite
+cut:** of the two paths, ONLY the direction-(A) scan preserves the forward-encode
+invariant that no benign value is ever decoded. The composite fix has a preferred
+shape before design begins. This is a scoping observation, not a design: it says
+which path keeps the family's core property, not how to write it.
+
+### AM4.3. base64's two blockers are ORDERED, not merely independent
+
+AM3.3 listed base64 composites as having two blockers (phase and direction). They
+are not just independent, they are ORDERED, and the order matters for a future
+cut.
+
+Direction (B) defeats a base64 composite EVEN WITH three-phase emission (AM1.1)
+in place. Three-phase emission fixes WHICH emitted forms exist in the blob (it
+adds the three phase-shifted encodings so the value is present at any offset); it
+does NOT change WHICH WAY the substring test runs. The composite param token is
+still tested against the blob, and the whole composite token is still not a
+substring of the blob.
+
+Therefore **AM1.1 three-phase emission is NECESSARY BUT NOT SUFFICIENT for base64
+composites.** It becomes sufficient only once a direction-(A) scan (AM4.2) also
+exists: the scan looks for the emitted forms inside the param, and three-phase is
+what guarantees the right emitted form is there to be found at the value's offset.
+A future cut that ships three-phase ALONE will still miss base64 composites. This
+record makes that a PREDICTED result, not a surprise, and fixes the build order:
+direction-(A) scan first (it alone catches hex and natural-URL composites and is
+the load-bearing half), three-phase second (it upgrades the scan from
+hex/URL-composite coverage to base64-composite coverage).
+
+### AM4.4. Strengthened falsifier for AM3.5
+
+AM3.5 said the AFTER probe SHOULD show every composite row unchanged, and a
+composite catch without a mechanism addition would be a surprise. Sharpened: such
+a catch is not merely surprising, it is a STRUCTURAL IMPOSSIBILITY given direction
+(B) plus the absence of an embedded sub-token (AM3.3, AM3.4). The engine as read
+cannot produce it.
+
+So if the AFTER probe reports a composite catch and neither a direction-(A) scan
+nor param-side sub-token emission was added, the correct response is an AUDIT OF
+THE MEASUREMENT (the probe harness constructed the case wrong, the engine under
+test differs from the code as read, or the session was mis-seeded), NOT acceptance
+of the catch as a bonus. An impossible result is evidence of a measurement fault
+before it is evidence of a capability. State it so an unexpected composite catch
+is investigated, not celebrated.
+
+### AM4.5. Untouched, and the quiet confirmation
+
+- Counted must-catch: unchanged, **4/4 on the four bare forms**.
+- Benign zero-FP-delta floor and family-1 no-regression floor: unchanged.
+- AM2.2, AM2.3, and all of Amendment 3 stand; this amendment sharpens them, it
+  reverses nothing.
+
+The quiet confirmation across Amendments 1 through 4: everything falsified so far
+(AM2.1's composite claim, the natural-URL partition, the two-halves scope) has
+been OUTSIDE the counted set of four bare rows. The counted prediction has not
+moved once. That is positive evidence that the Amendment-1 scope cut (count bare
+forms, defer composites) was drawn in the right place: the boundary is exactly
+where the direction blocker falls, so the errors have all landed on the deferred
+side of a line that was chosen before any of them was found.
