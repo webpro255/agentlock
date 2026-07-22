@@ -26,6 +26,21 @@ the first family-2 frontier probe before the AFTER column is judged.
 > are preserved intact; the must-catch table carries an inline pointer. Full
 > record in [AMENDMENT 1](#amendment-1-2026-07-22-two-coverage-risks-to-the-must-catch-prediction).
 
+> **AMENDED 2026-07-22 (amendment 2, after the BEFORE probe, before mechanism
+> code).** The frontier probe confirmed the BEFORE state (must-catch 0/4 caught
+> today, 4/4 reaching ALLOW under the shipped default; benign param_lineage
+> uniformly no_match). Three items are recorded before the build: (2.1) the
+> composite deferral of Amendment 1.1 applies ONLY to base64; hex and natural-URL
+> composites are alignment-free and are pre-registered as CAUGHT by bare emission
+> in the first cut. (2.2) a mechanism-spec requirement, a length floor on the
+> ENCODED form (not just the plaintext), because token lowercasing folds the
+> base64 alphabet from 64 to ~38 symbols and thins entropy near min_len (R2
+> sharpening, connected to the family-1 E5 min_len hazard). (2.3) a limitation
+> framing: the deferred base64 composite is the FIRST ADAPTIVE MOVE, not a corner
+> case, so three-phase emission is the second half of the base64 story, not an
+> optional nicety. Original predictions and Amendment 1 are preserved intact.
+> Full record in [AMENDMENT 2](#amendment-2-2026-07-22-three-items-from-the-before-probe-before-mechanism-code).
+
 ## Hypothesis
 Directional encoding (base64, URL-encoding, hex) can be attributed back to its
 untrusted source WITHOUT the novelty false-positive surface, by encoding the
@@ -462,3 +477,98 @@ out of the counted set rather than left inside it as landmines. The 4/4 soundnes
 floor and the zero-FP-delta must-not-trip floor (section 5) are unchanged: this
 amendment narrows what the 4 counts, it does not lower the bar on the benign side
 or the soundness side.
+
+---
+
+## AMENDMENT 2 (2026-07-22): three items from the BEFORE probe, before mechanism code
+
+This amendment is dated and recorded AFTER the family-2 frontier probe (the
+read-only BEFORE measurement) and BEFORE any forward-encode mechanism exists. The
+probe confirmed the frozen BEFORE state with no surprises: every counted
+must-catch row is `param_lineage = no_match` today, so 0/4 are caught and, under
+the shipped default (novel OFF), 4/4 reach ALLOW (the real soundness gap); every
+benign must-not-trip row is `param_lineage = no_match` (the 6/7 novel-ON flags are
+family-1 novelty residuals, not param-side catches, and clear to 0/7 under the
+default). Three items surfaced by that probe and the review are recorded here
+before the build. Original predictions and Amendment 1 are left intact.
+
+### AM2.1. Hex and natural-URL composites are alignment-free (new prediction)
+
+The base64 phase problem (AM1.1) is specific to base64's 3-byte-to-4-character
+grouping: where a substring lands in the output depends on its byte offset mod 3.
+That grouping is what forces three-phase emission for composites. Two of the three
+first-cut encodings do NOT have it:
+
+- **hex** maps each input byte to exactly 2 output characters, with no
+  cross-byte grouping. So hex(`evil.com`) is ALWAYS a contiguous substring of the
+  hex of any composite that contains `evil.com`, at every offset. hex has no phase.
+- **natural URL-encoding** encodes each structurally-significant character in
+  place (AM1.2 policy), independently of neighbors. So the natural-URL form of
+  `evil.com` appears verbatim inside the natural-URL form of any composite
+  containing it. No phase.
+
+**New pre-registered prediction:** the composite deferral of Amendment 1.1 applies
+ONLY to base64. A hex-encoded or natural-URL-encoded COMPOSITE (for example
+hex(`report_evil.com.pdf`), which contains `6576696c2e636f6d` as a substring) IS
+caught by the bare first-cut emission, with NO three-phase machinery. Falsifier:
+if a hex composite or a natural-URL composite is added to the AFTER probe and
+MISSES, this prediction is falsified and hex/URL inherit base64's composite
+problem after all. The base64 composite stays deferred (AM1.1); only base64 does.
+
+### AM2.2. Folded-base64 entropy floor (R2 sharpening and mechanism-spec line)
+
+The extractor lowercases every token (measured: the probe sees `ZXZpbC5jb20=` as
+`zxzpbc5jb20=`), so base64 forms are compared FOLDED on both sides. Folding is
+symmetric, so it does not break a legitimate match (AM: both the emitted form and
+the parameter fold identically). But it drops the effective base64 alphabet from
+64 symbols to about 38 (26 letters collapse to one case, plus 10 digits and 2
+symbols), so a folded encoded form is a WEAKER discriminator than its raw
+character length suggests. At the 12-plus character lengths of the counted rows,
+collision odds are still negligible. The hazard concentrates near `min_len`: a
+short untrusted value whose folded encoding approaches 6 characters carries less
+entropy than 6 raw base64 characters would, so a benign parameter substring is
+likelier to collide with it (the R2 false-DENY direction).
+
+**Mechanism-spec requirement (recorded now, not built):** apply a length floor to
+the ENCODED form, not only to the plaintext token, when emitting forward-encoded
+forms into the untrusted blob. An encoded form below the floor is not added. This
+is the encoded-side analogue of the plaintext `min_len` gate, and it is connected
+to the standing family-1 min_len hazard (E5, F6): min_len already has three
+load-bearing directions there, and this adds a fourth surface, the entropy of the
+EMITTED encoded form, which the plaintext gate does not see. The floor value is
+not fixed here; it is flagged as a spec decision the mechanism must make and
+justify, so that a collision at short lengths reads as a floor that was set too
+low, not as an unpredicted failure.
+
+### AM2.3. Limitation framing (for the eventual writeup, recorded now)
+
+The deferred base64 composite frontier (AM1.1) is not a corner case. It is the
+FIRST ADAPTIVE MOVE. An attacker who learns that bare encodings are caught wraps
+the untrusted value in a filename, a URL scheme, or a sentence and base64-encodes
+the whole thing, landing the value at a non-zero offset and straight back in the
+deferred base64-composite cell that the single-phase first cut misses. The move is
+cheap and obvious, so the composite is where a real adversary goes second.
+
+The first cut is still worth shipping: it closes the naive gap that reaches ALLOW
+under the shipped default today (the measured 4/4 soundness gap), which is a real
+default-configuration soundness improvement and the strongest claim in the arc.
+But three-phase emission (AM1.1, at the 3x base64 blob cost already quoted under
+R1) is the SECOND HALF of the base64 story, not an optional future nicety. The
+limitations section of the writeup must state this plainly, so the result is not
+oversold as closing base64 when it closes bare base64 and defers composite base64
+to a named, costed, still-forward-encode follow-on. Note the asymmetry with
+AM2.1: for hex and natural-URL there is no second half, the first cut closes bare
+and composite together; the two-halves framing is base64-specific.
+
+### AM2.4. Amended prediction set (delta from Amendment 1)
+
+- Counted must-catch: unchanged, 4/4 on the four bare and natural-encoder rows.
+- base64 composite: unchanged, DEFERRED, PREDICTED-AT-RISK if pulled in without
+  three-phase emission (AM1.1).
+- hex composite and natural-URL composite: NEWLY pre-registered as CAUGHT by the
+  first cut (AM2.1). If added to the AFTER probe, predicted DENY:param_lineage,
+  not deferred. A miss falsifies AM2.1.
+- Adversarial per-character URL: unchanged, DEFERRED (AM1.2).
+- Mechanism spec gains one required line: an encoded-form length floor (AM2.2).
+- The must-not-trip zero-FP-delta floor and the family-1 no-regression floor are
+  unchanged.
