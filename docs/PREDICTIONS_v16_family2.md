@@ -12,6 +12,20 @@ measured family-1 result (F4 of `PREDICTIONS_v16_family1.md`); every other
 BEFORE state for a novel encoding row is itself a prediction, to be confirmed by
 the first family-2 frontier probe before the AFTER column is judged.
 
+> **AMENDED 2026-07-22 (amendment 1, before any probe).** Two forward-encode
+> COVERAGE risks to the 4/4 must-catch prediction are recorded so a miss reads as
+> a pre-registered falsification, not a surprise: base64 phase alignment (a
+> substring's encoded form depends on its byte offset mod 3, so composite-encoded
+> values need three-phase emission) and URL-encoding's lack of a canonical form
+> (arbitrary characters can be percent-encoded, so per-character enumeration is
+> combinatorial). Both are coverage gaps, extendable row by row, not FP problems.
+> Consequent scope decision: the counted must-catch set is narrowed to bare and
+> natural-encoder forms; composite-base64 and adversarial per-character URL forms
+> are DEFERRED (predicted-unchanged), as family 1 deferred interstitial. The
+> counted target stays 4/4 on the narrowed set. The original predictions below
+> are preserved intact; the must-catch table carries an inline pointer. Full
+> record in [AMENDMENT 1](#amendment-1-2026-07-22-two-coverage-risks-to-the-must-catch-prediction).
+
 ## Hypothesis
 Directional encoding (base64, URL-encoding, hex) can be attributed back to its
 untrusted source WITHOUT the novelty false-positive surface, by encoding the
@@ -142,6 +156,13 @@ base64(mallory@evil.com)   | bwfsbg9yeubldmlslmnvbq==               | PREDICTED 
 url-encoded evil.com       | evil%2ecom                             | PREDICTED STEP_UP     | PREDICTED ALLOW             | DENY:param_lineage (names cprov_)
 hex(evil.com)              | 6576696c2e636f6d                       | PREDICTED STEP_UP     | PREDICTED ALLOW             | DENY:param_lineage (names cprov_)
 ```
+
+**[AMENDED 2026-07-22, amendment 1]** All four rows above are bare-encoded or
+natural-encoder forms and stay PREDICTED. Two coverage frontiers are DEFERRED out
+of the counted set (composite-base64, which needs three-phase emission; and
+adversarial per-character URL-encoding). See
+[AMENDMENT 1](#amendment-1-2026-07-22-two-coverage-risks-to-the-must-catch-prediction)
+for the amended, phase-marked column and the revised 4/4 target.
 
 Only the base64 `novel ON` BEFORE cell is measured (family-1 F4). Every cell
 marked PREDICTED is a prediction the first family-2 frontier probe must confirm
@@ -327,3 +348,117 @@ chosen and the reverse-decode alternative is rejected on the probe-2 UUID, both
 recorded above before any encoding code is written. The BEFORE states other than
 base64-under-novel-on are predictions, and the first family-2 frontier probe is
 what turns them into measurements. This file is the prediction of record.
+
+---
+
+## AMENDMENT 1 (2026-07-22): two coverage risks to the must-catch prediction
+
+This amendment is dated and recorded BEFORE any family-2 probe has run and before
+any encoding logic exists. It is a pre-registration refinement, not a post-hoc
+reinterpretation of a result. The original predictions above are left intact;
+the must-catch table carries an inline pointer to this section. Nothing above was
+silently rewritten.
+
+Both risks below are forward-encode COVERAGE gaps: a specific attacker form that
+one round of naive forward-encode fails to emit, and therefore fails to match.
+Neither is a false-positive problem. This asymmetry is the point (AM1.3): a
+coverage gap is closed by emitting one more encoded form, row by row, without
+touching the benign side, whereas a false-positive gap on the reverse-decode side
+is unfixable without a content classifier. Recording the gaps now means a miss on
+one of these forms reads as a pre-registered falsification of a NAMED at-risk row,
+not as a surprise.
+
+### AM1.1. base64 phase alignment
+
+base64 encodes 3 input bytes into 4 output characters, so where a substring lands
+in the output depends on its byte offset mod 3 within the enclosing input. The
+encoded form of a value is stable ONLY at offset 0 mod 3. Concretely,
+base64(`evil.com`) appears as a clean substring of base64(`visit evil.com now`)
+only when `evil.com` begins at an offset that is 0 mod 3; at offsets 1 and 2 the
+shared bytes straddle the 3-byte grouping boundary and the emitted characters
+differ.
+
+- **Bare-encoded row (param is exactly base64(`evil.com`)).** Offset is 0 by
+  construction. The single offset-0 forward-encoded form matches. Prediction
+  HOLDS: this row stays PREDICTED.
+- **Composite-encoded row (the base64 wraps more than the bare value, e.g.
+  base64(`report_<...>_evil.com.pdf`) or an encoded sentence).** The untrusted
+  value sits at an arbitrary offset. Emitting only the offset-0 form MISSES two
+  out of three placements.
+
+**In-scope fix, recorded for when composites are picked up.** Emit all THREE
+phase-shifted encodings of each untrusted token: prefix the token with 0, 1, and
+2 filler bytes before encoding, and match on the stable INTERIOR of each result
+(dropping the boundary characters that depend on the filler). This stays forward-
+encode and stays additive: it adds two more encoded forms per token to the
+untrusted blob, rewrites no parameter, and deletes no existing match. It does
+raise the blob-size cost (R1) threefold for base64.
+
+**Scope decision.** Composite-base64 is DEFERRED out of the family-2 first cut,
+exactly as family 1 deferred interstitial (A3). The first cut commits to bare
+base64 only, at one phase. A composite-base64 row is therefore predicted
+UNCHANGED (it stays wherever family 1 and the bare first cut leave it), and is
+NOT counted in the 4/4 must-catch target. Should a later cut add a composite
+base64 row WITHOUT committing the mechanism spec to three-phase emission, that
+row is PREDICTED-AT-RISK and a miss on it is the expected, pre-registered result.
+
+### AM1.2. URL-encoding has no canonical form
+
+Percent-encoding can be applied to ANY character subset, so `evil%2ecom` and
+`%65vil.com` are both valid URL-encodings of `evil.com`, and so is any of the
+2^n subsets of encoded positions in an n-character string. Only the first is what
+a natural encoder emits (it percent-encodes the structurally significant
+characters and leaves alphanumerics bare). Catching `%65vil.com`, where an
+alphanumeric is gratuitously encoded, requires enumerating per-character encoding
+variants, which is combinatorial in string length unless bounded.
+
+**Enumeration policy, recorded.** The first cut forward-encodes only the
+STRUCTURALLY SIGNIFICANT characters (`.`, `@`, `:`, `/`) and leaves alphanumerics
+bare. That is exactly the natural-encoder form. `evil%2ecom` (the `.` encoded) is
+covered and stays PREDICTED.
+
+**Scope decision.** Adversarial per-character enumeration (encoding alphanumerics,
+e.g. `%65vil.com`) is DEFERRED, the URL-encoding must-catch rows are NARROWED to
+the natural-encoder forms only. A per-character-enumerated row is predicted
+UNCHANGED and is NOT counted in the 4/4 target. Should a later cut require
+arbitrary-character enumeration, those rows are PREDICTED-AT-RISK, and the bound
+on the enumeration (how many encoded positions before the blob and collision cost,
+R1/R2, are unacceptable) is the open question named there, not solved here.
+
+### AM1.3. Failure-mode asymmetry as a rationale point
+
+Reverse-decode's failures are false-positive-side and unfixable without a content
+classifier (the probe-2 UUID, section 1); forward-encode's failures are
+coverage-side and extendable one emitted form at a time (AM1.1 three-phase
+emission, AM1.2 per-character enumeration), which is part of why forward-encode is
+the correct direction.
+
+### AM1.4. Amended must-catch column and revised target
+
+Counted rows (bare-encoded and natural-encoder forms), each marked:
+
+```
+row                        | encoded form                | phase status     | predicted after
+---------------------------+-----------------------------+------------------+-----------------------------------
+base64(evil.com), bare     | zxzpbc5jb20=                | PREDICTED        | DENY:param_lineage (names cprov_)
+base64(mallory@evil.com)   | bwfsbg9yeubldmlslmnvbq==    | PREDICTED        | DENY:param_lineage (names cprov_)
+url-encoded evil.com       | evil%2ecom (natural form)   | PREDICTED        | DENY:param_lineage (names cprov_)
+hex(evil.com)              | 6576696c2e636f6d            | PREDICTED        | DENY:param_lineage (names cprov_)
+```
+
+Deferred frontier (predicted UNCHANGED, NOT counted; PREDICTED-AT-RISK only if a
+later cut pulls them in without the stated fix):
+
+```
+row                                 | why deferred                          | status if pulled in
+------------------------------------+---------------------------------------+----------------------
+composite base64 (value at offset)  | needs three-phase emission (AM1.1)    | PREDICTED-AT-RISK
+url-encoded, alphanumerics encoded  | needs per-char enumeration (AM1.2)    | PREDICTED-AT-RISK
+```
+
+**Revised catch-count target: 4/4 on the counted bare-encoded and natural-encoder
+rows.** No counted row is at-risk, because the two coverage frontiers are deferred
+out of the counted set rather than left inside it as landmines. The 4/4 soundness
+floor and the zero-FP-delta must-not-trip floor (section 5) are unchanged: this
+amendment narrows what the 4 counts, it does not lower the bar on the benign side
+or the soundness side.
