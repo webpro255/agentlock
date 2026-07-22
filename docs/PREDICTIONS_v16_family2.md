@@ -79,6 +79,24 @@ the first family-2 frontier probe before the AFTER column is judged.
 > predictions and Amendments 1-3 preserved intact. Full record in
 > [AMENDMENT 4](#amendment-4-2026-07-22-corrections-and-sharpenings-before-mechanism-code).
 
+> **AMENDED 2026-07-22 (amendment 5, spec closure, before mechanism code).** Two
+> mechanism-spec lines recorded so the first-cut spec is fully determined by the
+> doc: (5.1) EMISSION-SOURCE COVERAGE INHERITANCE, forward-encode draws its
+> plaintext set from `extract_lineage_tokens` on the untrusted blob, so family 2's
+> catch surface is exactly the image of family 1's context-side tokenization under
+> the encoding set; a tokenizer-driven miss is inherited, not a family-2 defect
+> (counted rows safe, `evil.com`/`mallory@evil.com` are clean extractions). (5.2)
+> AUTH-FIRST SHORT-CIRCUIT as positive control, `tok in auth_blob` is tested
+> before any untrusted blob (`context.py:625-627`) and is untouched because
+> forward-encode extends only untrusted blobs; the AFTER probe must re-run the
+> legit-base64-config row as a POSITIVE CONTROL, a flip there means emissions
+> leaked into the wrong blob. (5.3) the FIRST-CUT SPEC is now fully determined:
+> encode context-side untrusted tokens under base64, hex, and natural-URL, fold
+> symmetrically, apply the AM2.2 encoded-form length floor, append to untrusted
+> blobs only, change nothing else; everything beyond is the deferred frontier with
+> build order fixed by AM4.3. Original predictions and Amendments 1-4 preserved
+> intact. Full record in [AMENDMENT 5](#amendment-5-2026-07-22-spec-closure-before-mechanism-code).
+
 ## Hypothesis
 Directional encoding (base64, URL-encoding, hex) can be attributed back to its
 untrusted source WITHOUT the novelty false-positive surface, by encoding the
@@ -852,3 +870,104 @@ moved once. That is positive evidence that the Amendment-1 scope cut (count bare
 forms, defer composites) was drawn in the right place: the boundary is exactly
 where the direction blocker falls, so the errors have all landed on the deferred
 side of a line that was chosen before any of them was found.
+
+---
+
+## AMENDMENT 5 (2026-07-22): spec closure, before mechanism code
+
+This amendment is dated and recorded BEFORE any forward-encode mechanism exists.
+It adds two mechanism-spec lines surfaced in review and then states the first-cut
+spec in full, so the spec is determined entirely by this document before the
+build. Original predictions and Amendments 1 through 4 are left intact.
+
+### AM5.1. Emission-source coverage inheritance
+
+Forward-encode does not invent plaintext to encode. It draws its plaintext token
+set from `extract_lineage_tokens` run on the untrusted blob (the context side),
+the SAME extractor `novel_lineage_check` already runs on context
+(`context.py:745`). An untrusted value can therefore be forward-encoded only if
+the context-side tokenizer extracts it first.
+
+The consequence, stated as a scope fact: **family 2's catch surface is exactly the
+IMAGE of family 1's context-side tokenization under the encoding set.** Whatever
+the tokenizer misses on the context side (a value below `min_len`, a domain with
+no literal dot, a value the regexes do not recognize), forward-encode silently
+misses too, because there is no plaintext token to encode. This is a COVERAGE
+INHERITANCE from family 1, not a new family-2 gap: family 2 can only encode what
+family 1 already sees.
+
+The counted rows are safe under this. `evil.com` is a clean `_URL_RE` extraction
+and `mallory@evil.com` a clean `_EMAIL_RE` extraction from a clean untrusted blob,
+so both are in the context-side token set and both are available to forward-encode.
+Recorded so that a future miss traceable to context-side tokenization reads as an
+INHERITED limitation (fix it in the extractor, which lifts both families at once),
+not as a family-2 defect to be patched in the encoder.
+
+### AM5.2. Auth-first short-circuit as positive control
+
+`parameter_lineage_check` tests `tok in auth_blob` and `continue`s BEFORE it
+scans any untrusted blob (`context.py:625-627`):
+
+```
+for _rank, _neglen, tok, path, kind, value in candidates:
+    if tok in auth_blob:
+        continue                       # authoritative token wins, never reaches untrusted scan
+    for entry, blob in untrusted_blobs:
+        if tok in blob:
+```
+
+This ordering is what clears the legit-base64-config benign row (the BEFORE probe
+measured it ALLOW even under novel ON): a base64 value the user supplied in the
+authoritative request is an authoritative token, so it short-circuits before any
+untrusted comparison. Forward-encode extends ONLY untrusted blobs (AM5.3), so this
+auth-first ordering is untouched by construction.
+
+**Spec and probe requirement:** the AFTER probe must re-run the
+legit-base64-config row explicitly as a POSITIVE CONTROL. It confirms two things
+at once, with one row: the authoritative clearing path SURVIVED (the row is still
+ALLOW), AND emissions landed in the UNTRUSTED blob rather than the auth blob. If
+that row ever flips to caught, emissions leaked into the wrong blob (or the
+auth-first ordering was disturbed), which is a CONSTRUCTION FAULT, not a new
+capability. The positive control makes the blob-targeting correctness OBSERVABLE
+in the probe, not merely assertable in the spec.
+
+### AM5.3. First-cut spec, fully determined by the doc
+
+The first-cut forward-encode mechanism, stated completely:
+
+- **Source.** For each untrusted context entry, run `extract_lineage_tokens` on
+  its content and take the resulting plaintext token set (AM5.1). No other source.
+- **Encodings.** For each such token, emit its forward encoding under each of:
+  base64 (standard alphabet, standard padding), hex, and natural-URL
+  (percent-encode structurally-significant characters only, `.` `@` `:` `/`, leave
+  alphanumerics bare, per AM1.2). One forward round per encoding (no nesting).
+- **Folding.** Fold each emitted form with the same lowercase the extractor
+  applies (AM2.2), so both sides compare folded and symmetric matches survive.
+- **Length floor.** Apply the AM2.2 length floor to the ENCODED form (not only the
+  plaintext token); an encoded form below the floor is not emitted.
+- **Placement.** Append the surviving emitted forms to the UNTRUSTED blobs only
+  (the `_canonical_blob_suffix` position, additive), so `parameter_lineage_check`
+  substring-matches param tokens against them. Touch the auth blob nowhere (AM5.2).
+- **Nothing else.** No scan-direction change, no decode anywhere, no param-side
+  interpretation of encoded content.
+
+Everything beyond this line is the DEFERRED frontier, with build order fixed by
+AM4.3: a direction-(A) scan first (it alone catches hex and natural-URL
+composites and is the load-bearing half), three-phase emission second (it upgrades
+the scan to base64-composite coverage). Neither is in the first cut.
+
+**Confirmation: the first-cut spec is fully determined by this document.** Source,
+encoding set, folding, length floor, placement, and exclusions are all fixed
+above; the only free parameters are named as spec decisions with their direction
+fixed (the AM2.2 floor VALUE, to be chosen and justified against the near-min_len
+entropy hazard; and the encoding set, frozen at three for the first cut). No
+mechanism behavior is left to be inferred at build time that is not written here.
+
+### AM5.4. Untouched
+
+- Counted must-catch: unchanged, **4/4 on the four bare forms**.
+- Benign zero-FP-delta floor and family-1 no-regression floor: unchanged.
+- All of Amendments 1 through 4 stand; this amendment adds spec detail and a
+  positive control, it reverses nothing. The must-not-trip column gains one
+  explicitly-labeled positive-control row (legit base64 config), already present
+  in the BEFORE probe, now assigned its verification role.
