@@ -14,6 +14,24 @@ through AMENDMENT 4): hex and natural-URL composites caught, base64 composites
 caught ONLY in the phase-0-AND-terminal corner (AM1.3), everything else base64
 uncaught.
 
+> **AMENDED 2026-07-24 (amendment 1, RESULT: base64 composite cut MET, no
+> falsifications).** The three-phase interior mechanism is implemented and
+> measured. Every frozen prediction is MET: evil.com and mallory@evil.com base64
+> composites move from 1/6 to 6/6 caught across phases 0, 1, 2, terminal and
+> non-terminal, attributed DENY:param_lineage with match_direction
+> raw_substring_scan and the parent cprov_ named, both configs; benign rows
+> param_lineage uniformly no_match (FP delta 0); the positive control clears via
+> whole-leaf clearance; the counted 4/4 stay byte-identical via direction (B)
+> still citing the bare padded form; hex and natural-URL composites are
+> byte-identical; suite 1364, ruff and mypy clean. The pre-registered
+> phase-0-terminal citation shift landed as predicted (bare zxzpbc5jb20= to
+> interior zxzpbc5jb2). The AM4.5 falsifier was NOT triggered (no 10-char needle
+> hit a benign row; JWT and data-URI canaries stay at 2-char runs). AM4.3's build
+> order is COMPLETE: all three encodings are now closed at bare AND composite,
+> and no remaining open item is base64. Original predictions preserved intact.
+> Full record in
+> [AMENDMENT 1](#amendment-1-2026-07-24-result-base64-composite-cut-met-no-falsifications).
+
 ## Why a separate document
 This is a separate file, consistent with how the composite cut was separated from
 the first cut. Two reasons, the same two. First, the composite-cut document is
@@ -367,3 +385,130 @@ numeric targets and the AM4.5 falsifier are recorded (sections 5 and 6). The
 BEFORE states are the shipped composite-cut measurement; the first base64-composite
 frontier probe is what turns the AFTER predictions into measurements. This file is
 the prediction of record for the base64 composite cut.
+
+---
+
+## AMENDMENT 1 (2026-07-24): RESULT, base64 composite cut MET, no falsifications
+
+This amendment records the MEASURED RESULT of the three-phase interior mechanism.
+It is dated and recorded AFTER the mechanism was implemented and the frozen
+columns replayed on the base64-composite engine. It makes no mechanism change;
+it records the outcome of the build this document specified. The original
+predictions above are left intact.
+
+### AM1.1. Result: every frozen prediction MET
+
+The three-phase interior emission was implemented exactly to the frozen spec (the
+base64 direction-(A) scan needle set became the three phase interiors, cut from
+forward encodings with 0/1/2 filler-byte prefixes; direction (B) untouched).
+Measured, row for row:
+
+- **base64 composites, evil.com: 1/6 to 6/6 caught.** Every phase (0, 1, 2) and
+  both placements (terminal and non-terminal) move to `DENY:param_lineage` with
+  `match_direction = raw_substring_scan`, `matched_kind = base64`, and the parent
+  `cprov_` named, in both novel-ON and novel-OFF. Before, only the phase-0-terminal
+  corner was caught (1/6).
+- **base64 composites, mallory@evil.com: 1/6 to 6/6 caught, unconditional.** The
+  interiors (20 to 21 characters) are above the floor at every phase, so all six
+  placements catch, attributed, both configs.
+- **Benign rows: param_lineage uniformly no_match, FP delta 0.** Every benign
+  must-not-trip row holds no_match under the three-phase interior needles,
+  including the three newly-admitted 10-character evil.com interiors.
+- **Positive control: cleared.** Still ALLOW via whole-leaf clearance (Decision A),
+  both configs.
+- **Counted 4/4: byte-identical via direction (B).** The bare rows are direction-
+  (B) catches, floor-independent; the bare base64 row still cites the 12-character
+  padded form (`zxzpbc5jb20=`) from the direction-(B) blob, unaffected by the
+  direction-(A) needle-set change.
+- **hex and natural-URL composites: byte-identical.** This cut touched only the
+  base64 needle set.
+- **Suite: 1364 passed, ruff and mypy clean.** No em dashes.
+
+No frozen prediction was falsified.
+
+### AM1.2. The pre-registered citation shift landed as predicted
+
+The phase-0-terminal row's verdict is unchanged (still CAUGHT, `DENY:param_lineage`,
+same parent `cprov_`), and its cited `matched_token` moved from the 12-character
+bare padded form `zxzpbc5jb20=` to the 10-character phase-0 interior `zxzpbc5jb2`,
+exactly as section 4 pre-registered. The composite-cut test that asserted the bare
+token on that row, and named it "the only base64 catch," is SUPERSEDED (all phases
+now catch). This is a scope change, not a regression, recorded on the same footing
+as AM6.3 of the family-2 doc (the superseded family-1 base64 test) and AM2.6 of
+the composite-cut doc (the superseded hex/url deferral tests).
+
+### AM1.3. AM4.5 falsifier not triggered
+
+No 10-character interior needle hit any benign row. The JWT and data-URI canaries
+remain at 2-character closest shared runs, the closest approach in the corpus. The
+AM4.1 absolute-check justification for the base64 scan floor of 10 stands
+UNFALSIFIED on this corpus.
+
+State it honestly: this is the corpus not hitting, not proof of safety. A
+10-character folded base64 needle carries more intrinsic per-alignment collision
+risk than the 12-character floor assumed (AM3.4), and the benign corpus simply
+does not contain a colliding substring. The canaries stay under watch as the
+needle set grows, and the AM4.5 falsifier remains a live, first-class condition:
+a future benign hit reopens the AM4.1 floor decision with data.
+
+### AM1.4. Geometry pinned in three layers
+
+Recorded because a single layer would have been weaker than it reads. The
+interior geometry is verified by three tests that cover different things, and only
+together cover ground truth:
+
+- **`test_interior_geometry_formula`** independently re-evaluates the formula
+  constants (it recomputes the slice from `ceil(4p/3)` and `floor(4(p+L)/3)`
+  rather than calling the implementation, and expresses the ceiling differently
+  from the implementation's integer form), so it cross-checks the arithmetic.
+  Its stated LIMIT: it verifies formula-implementation CONSISTENCY, not the
+  formula's ground truth. If the formula itself were wrong, both sides would be
+  wrong identically and the test would still pass.
+- **`test_interior_is_filler_byte_independent`** varies the filler byte and
+  requires the interior to be unchanged, which tests SURROUND-INDEPENDENCE, the
+  property the formula is supposed to deliver.
+- **The must-catch rows** require the interior to actually appear inside real
+  base64 composites at each phase.
+
+Together these cover ground truth (a wrong formula would be caught by the
+filler-independence test or the must-catch rows even though it passes the
+consistency test); separately none of them does.
+
+### AM1.5. A prose transposition caught and corrected
+
+The build report stated the mallory@evil.com interiors as 20/21/21 at phases 0,
+1, 2. The formula (`floor(4(p+L)/3) - ceil(4p/3)` at L=16), the Phase 0
+measurement, the shipped implementation, and the test docstring all give
+21/20/21. A read-only check confirmed the implementation matches the formula
+phase by phase and there is no implementation or test defect; the transposition
+was in the build-report prose alone.
+
+The assertion in `test_interior_lengths_match_phase0_report` is a SORTED length
+multiset (`[20, 21, 21]`), so the transposition was never load-bearing: both
+orders sort identically. Recorded anyway because evil.com's 10/10/10 is
+phase-symmetric and could not have exposed a real phase transposition;
+mallory@evil.com is the only counted vector whose per-phase lengths differ, so it
+is the only one that could, which is why the discrepancy was worth resolving by a
+read rather than assuming it was cosmetic. The resolution: prose error, code
+correct.
+
+### AM1.6. AM4.3 build order is now COMPLETE
+
+The AM4.3 build order was: direction-(A) scan first (shipped in the composite
+cut, catches hex and natural-URL composites), three-phase interior emission
+second (ships here, catches base64 composites). Both halves have landed.
+
+Closing state of family 2:
+
+- **Bare forms closed** for base64, hex, and natural-URL (the first cut).
+- **Composites closed** for all three encodings (hex and natural-URL in the
+  composite cut, base64 here).
+- **Remaining open items, none of them base64:** per-character URL enumeration
+  (AM1.2), the tokenizer coverage inheritance (AM5.1, which lifts both families
+  when fixed upstream), and any encoding outside the frozen three (base32,
+  quoted-printable, HTML entity, unicode escape, nested encodings). Each is a
+  candidate for a later cut; a verdict move on one now is a scope leak.
+
+The base64 story, opened at F4 of family 1 and carried through the first cut, the
+composite cut, the terminal-boundary reconciliation (AM1.3 of the composite-cut
+doc), and the floor decision (AM4.1), is finished here.
