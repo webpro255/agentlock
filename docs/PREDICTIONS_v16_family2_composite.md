@@ -67,6 +67,26 @@ deferred frontier this cut proposes to reach.
 > intact. Full record in
 > [AMENDMENT 3](#amendment-3-2026-07-24-decision-c-floor-read-before-any-base64-composite-mechanism).
 
+> **AMENDED 2026-07-24 (amendment 4, MAKES the AM3.6 floor decision, before any
+> base64 composite mechanism).** Decision taken: OPTION (a). The base64
+> direction-(A) scan floor is amended from 12 to 10, an explicit floor-lowering
+> decision of the kind R3 requires, dated before the AFTER probe. The rule, not
+> the constant, is fixed: Decision C's anchor is RESTATED as the MATCHABLE FORM
+> LENGTH of the shortest counted value, the INTERIOR length for phased encodings
+> and the WHOLE ENCODED length for phase-free ones, under which hex stays 16,
+> natural-URL stays 10, and base64 FALLS OUT to 10. Option (b) is rejected because
+> its deferral boundary (L of 9 bytes or fewer) is ATTACKER-SELECTABLE: short
+> domains are cheap, so holding 12 would publish an evasion recipe rather than
+> defer a corner. Blast radius is exactly three needles (the evil.com interiors at
+> phases 0, 1, 2, each 10 chars), all already scanned with zero benign hits and a
+> closest shared run of 2 chars; 38^-10 is about 2^-52 per alignment under the
+> same union bound. Falsifier registered: the JWT and data-URI rows stay the
+> canaries, and the AFTER probe's param_lineage column must stay uniformly
+> no_match. hex 16, natural-URL 10, the counted 4/4, the mallory interiors (20 to
+> 21), Decisions A and B, and the direction-(B) floor of 8 are unchanged. Original
+> predictions and Amendments 1-3 preserved intact. Full record in
+> [AMENDMENT 4](#amendment-4-2026-07-24-makes-the-floor-decision-option-a-base64-scan-floor-10).
+
 ## Why a separate document
 This is a separate file, not an amendment to `PREDICTIONS_v16_family2.md`. Two
 reasons. First, the family-2 first-cut document is CLOSED: AMENDMENT 6 recorded
@@ -973,3 +993,112 @@ proposes, measurement disposes, and the cheap check is what separates a
 true-but-not-binding argument from a load-bearing one. The cost of falsifying the
 length-aware floor was one read of Decision C, paid before any base64 composite
 mechanism was built.
+
+---
+
+## AMENDMENT 4 (2026-07-24): MAKES the floor decision, OPTION (a), base64 scan floor 10
+
+This amendment is dated and recorded BEFORE any base64 composite mechanism
+(three-phase emission with interior matching) exists. It MAKES the floor decision
+Amendment 3 left open (AM3.6), which the read of Decision C established was an
+explicit amendment rather than an application. It changes no mechanism code.
+Original predictions and Amendments 1 through 3 are left intact.
+
+### AM4.1. Decision: option (a)
+
+The base64 direction-(A) scan floor is amended from 12 to 10. This is an explicit
+floor-lowering decision of exactly the kind R3 requires to be dated and reasoned,
+recorded here before the AFTER probe of the base64 composite cut.
+
+### AM4.2. Fix the rule, not the constant
+
+The failure Amendment 3 diagnosed was not that 12 was the wrong number; it was
+that the anchor was defined on the wrong representation of the value (the whole
+padded encoding, which a composite does not contain). The repair is at the rule
+level, not the constant level.
+
+**Restated Decision C anchor.** The per-encoding scan floor is the MATCHABLE FORM
+LENGTH of the shortest counted value, where the matchable form is:
+
+- the INTERIOR length for PHASED encodings (base64), because interior matching is
+  what a composite is scanned against, and
+- the WHOLE ENCODED length for PHASE-FREE encodings (hex, natural-URL), because
+  their whole encoding appears in a composite verbatim.
+
+Under this rule the three floors are:
+
+- **hex: 16, unchanged.** Phase-free; the matchable form is the whole encoding
+  `hex("evil.com")` = 16 chars.
+- **natural-URL: 10, unchanged.** Phase-free; the matchable form is the whole
+  encoding `evil%2ecom` = 10 chars.
+- **base64: 10, changed from 12.** Phased; the matchable form is the INTERIOR of
+  `base64("evil.com")`, measured at 10 chars at every phase (Phase 0 report).
+
+base64's new floor of 10 FALLS OUT of the corrected rule; it is not chosen to
+relieve coverage pressure. Stating the repair at the rule level is what makes it
+a REPAIR of a misdefined anchor, not a precedent for lowering floors whenever
+coverage is inconvenient. The rule now names the representation the scan actually
+matches, so each floor tracks the shortest counted value's matchable form under
+the matching mode that encoding uses.
+
+### AM4.3. Why option (b) was rejected: the deferral boundary is attacker-selectable
+
+This is the decisive argument. Under option (b) (hold 12, defer base64 composites
+of sub-10-byte values), the deferral boundary is a property of the DOMAIN THE
+ATTACKER REGISTERS, not of the attack. "L of 9 bytes or fewer" is attacker-
+selectable: short domains are cheap and common in real exfiltration precisely
+because they are cheap. Holding 12 would not defer a corner case; it would publish
+an EVASION RECIPE: use a domain of 9 bytes or fewer and composite it. That is the
+AM2.3 adaptive-move structure one level down: an attacker who learns bare
+encodings are caught wraps the value (AM2.3), and an attacker who learns
+long-domain composites are caught shortens the domain. Option (b) would close the
+composite gap while leaving its shortest and most attacker-convenient instance
+open, for a reason (the 12-versus-10 gap) already measured to be an artifact of
+the abandoned whole-needle anchor (AM3.3). A deferral whose boundary the attacker
+picks is not a deferral; it is a documented bypass.
+
+### AM4.4. Blast radius, stated precisely
+
+The change is unusually tight. Lowering the base64 scan floor from 12 to 10
+changes the admissibility of EXACTLY THREE needles: the `evil.com` interiors at
+phases 0, 1, and 2, each 10 characters. No other needle in the set changes
+status:
+
+- The `mallory@evil.com` interiors (20 to 21) were already admitted at 12.
+- The hex and natural-URL needle sets are untouched (their floors do not move).
+- The bare base64 needle (`zxzpbc5jb20=`, 12) is a direction-(B) blob form, not a
+  scan needle, and is unaffected.
+
+All three newly-admitted needles were ALREADY scanned against every benign
+must-not-trip row in the Phase 0 measurement, with ZERO hits and a closest shared
+run of 2 characters. No benign row gains exposure it has not already been measured
+under. The absolute check clears under the identical union-bound style the hex
+bullet runs: `38^-10` is about `2^-52` per alignment, and the union over a
+64-character carrier, one hundred needles, and ten thousand params (about `2^26`
+offsets) leaves it near `2^-26`, negligible.
+
+### AM4.5. Falsifier registered with the change
+
+The lowered floor carries the same audit trail the original had. After this
+amendment, the JWT and data-URI rows remain the CANARIES: they had the closest
+approach in the corpus (2-character shared runs with a needle). The AFTER probe's
+benign table must stay uniformly `no_match` on the `param_lineage` column. If a
+10-character needle ever hits a benign row, the amendment's absolute-check
+justification is FALSIFIED and the floor question reopens WITH DATA. Registering
+the falsifier with the change is what keeps the lowered floor on the same footing
+as the original 12: a floor with a stated justification and a stated way to be
+proven wrong, not a floor lowered on convenience.
+
+### AM4.6. Unchanged
+
+- **hex 16 and natural-URL 10**, with their anchors intact (phase-free, whole
+  encoding is the matchable form, AM3.3).
+- **The counted 4/4** bare rows: direction (B), floor-independent (AM2.2), untouched.
+- **The `mallory@evil.com` base64 interiors** (20 to 21): unconditional under any
+  floor considered, admitted before and after.
+- **Decisions A and B** (whole-leaf clearance, url/email curation): unchanged.
+- **The direction-(B) blob floor** `_ENCODED_MIN_LEN` = 8: unchanged; only the
+  direction-(A) base64 SCAN floor moves.
+
+The base64 composite cut's own predictions document is the next separate step;
+this amendment fixes the one free parameter that document will build against.
