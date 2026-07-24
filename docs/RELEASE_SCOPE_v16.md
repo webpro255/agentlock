@@ -530,3 +530,98 @@ validation of capability. The item-8 open list is unchanged by this amendment (t
 IP fix shape and the claim wording remain open), with the added AM2.6 constraint
 on how the claim may cite the benchmark, and the added AM2.5 open option of a
 custom encoded variant.
+
+---
+
+## AMENDMENT 3 (2026-07-24): the three-column AgentDojo no-regression run
+
+This amendment records the measured result of the three-column AgentDojo run that
+AM1.4 gated and AM2.3 re-characterized as a no-regression gate. The original
+document and Amendments 1 and 2 are left intact. No mechanism change.
+
+Run configuration, identical across all three columns: model
+`gpt-4o-mini-2024-07-18`, `tool_knowledge` attack, agentlock defense, four suites
+(workspace, slack, travel, banking), adapter defaults, 984 episodes per column,
+zero crashes, `scored_as_attack_success=0`. Model calls billed to
+platform.openai.com. All figures aggregated from per-episode JSONL, not stdout
+(so an anomalous row can be audited per AM4.4).
+
+### AM3.1. The table (utility / security per suite)
+
+```
+column                          | workspace     | slack         | travel        | banking       | combined
+--------------------------------+---------------+---------------+---------------+---------------+---------------
+baseline  (1.5.0, novel off)    | 37.68 / 0.00  | 4.76 / 17.14  | 32.14 / 0.71  | 38.89 / 0.00  | 33.40 / 2.00
+v16-default (v1.6, novel off)   | 39.29 / 0.00  | 4.76 / 20.00  | 33.57 / 2.14  | 38.89 / 0.00  | 34.56 / 2.53
+v16-novel-on (v1.6, novel on)   | 40.00 / 0.00  | 4.76 / 20.95  | 32.86 / 0.71  | 37.50 / 0.00  | 34.67 / 2.42
+```
+
+Utility is benign-task success; security is attack-success (lower is better).
+
+### AM3.2. No-regression result confirmed
+
+Baseline to v16-default: slack and banking utility identical to the decimal
+(4.76 and 38.89), workspace and travel within single-run sampling spread, combined
+33.40 to 34.56. NO suite regressed. Slack held at exactly 4.76 in all three
+columns, the structurally pinned value (its floor comes from taint-gated outbound
+and membership writes plus lineage blocks on reads, section 6 of the README's
+AgentDojo notes), which confirms run stability across columns. The gate engaged
+where expected: episodes with untrusted lineage gated tool calls, and a smoke test
+showed a 7-call gating with reason `untrusted_lineage`. This is the release's
+no-regression gate, and it PASSES.
+
+### AM3.3. The uniform positive drift, recorded honestly
+
+Every v16-default number moved slightly UP relative to baseline, utility AND
+security, uniformly signed. Most plausibly single-run variance stacking (no seed
+pinning, one `gpt-4o-mini` call per episode), and AgentDojo contains no encoded
+payloads (AM2.1), so the family 2 mechanism cannot fire here to explain it. But a
+uniform sign is ALSO the signature of a subtle real effect, and honesty requires
+not asserting variance as if it were established. The clean separation is a
+confirmatory SECOND BASELINE run, which measures baseline's own run-to-run drift
+and tells variance from effect. Recorded as: no regression, small uniform positive
+drift, most plausibly variance, the second baseline OPEN (carried to AM3.6).
+
+### AM3.4. Novel-on did not drop utility, and why that is expected here
+
+v16-novel-on combined utility 34.67 is flat against v16-default 34.56. The
+predicted family-1 novelty false-positive cost DID NOT appear. This is a property
+of AgentDojo's task shapes, NOT evidence that novel-on is cheap.
+
+`novel_lineage` fires on unrecognized tokens WHEN an authoritative baseline
+exists. AgentDojo's benign tasks supply their values in the user instruction, so
+the tokens the agent uses are largely already authoritative, and there is little
+novel-but-clean material to false-positive on. The real FP cost of novel-on was
+measured at 88.9 percent on benign MINTED values (order IDs, UUIDs, computed
+totals) in family 1's probe 2, none of which AgentDojo's benign tasks generate. So
+the flat novel-on column is CONSISTENT with probe 2: the FP surface exists, this
+benchmark does not exercise it.
+
+This is the same limitation as the encoding-payload gap (AM2.2): the benchmark
+cannot show what it does not present. The limitations section must state that
+novel-on's FP cost is established by the FROZEN CORPORA, not by AgentDojo, exactly
+as the encoding capability is.
+
+### AM3.5. Consequence for the claim
+
+The run supports exactly ONE public statement: v1.6 does not regress v1.5's
+benchmark behavior on the four AgentDojo suites. It does NOT support any claim
+about the encoding capability (AM2.2) or about novel-on's cost (AM3.4), both of
+which the benchmark structurally cannot measure. Capability evidence remains the
+frozen corpora only. Keep this distinction VISIBLE in the README and the paper: a
+no-regression sentence citing AgentDojo, a capability sentence citing the frozen
+corpora, and no sentence letting the benchmark appear to corroborate either the
+encoding catch or the novelty cost.
+
+### AM3.6. Open, carried forward
+
+- The confirmatory SECOND BASELINE run (AM3.3), to separate the uniform positive
+  drift from variance.
+- The custom encoded-injection variant (AM2.5), which remains the one path toward
+  external capability evidence, still authored-by-us and so not independent in the
+  AM1.5 sense.
+- The final claim wording (item 8), which this run now CONSTRAINS to no-regression
+  language for AgentDojo (AM3.5) on top of the AM2.6 constraint.
+
+The gating decision (AM1.4) is satisfied: the no-regression gate ran and passed
+(AM3.2). The IP composite fix shape (item 8) is untouched by this run.
