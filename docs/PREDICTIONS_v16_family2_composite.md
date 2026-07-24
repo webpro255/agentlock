@@ -13,6 +13,23 @@ cut as shipped (the state recorded in AMENDMENT 6 of
 (B), and every composite row UNCAUGHT (`param_lineage = no_match`), which is the
 deferred frontier this cut proposes to reach.
 
+> **AMENDED 2026-07-24 (amendment 1, BEFORE probe result, before mechanism
+> code).** The read-only BEFORE probe confirmed the frozen BEFORE state with no
+> surprises on it (composites uncaught by param_lineage, ALLOW under the shipped
+> novel-OFF default; counted 4/4 bare rows caught via direction (B); benign
+> param_lineage uniformly no_match; positive control clears). Latent collision at
+> the Decision C floors is ZERO across every at-risk benign row, on both the full
+> and curated needle sets. One frozen row is RECONCILED: the base64 phase-0
+> must-catch holds only in the phase-0-AND-TERMINAL corner, because base64
+> grouping cuts at both the leading offset (AM1.1 phase) and the TRAILING BOUNDARY
+> (padded final group versus merged with following bytes); phase-0 non-terminal,
+> phase 1, and phase 2 are all now PREDICTED UNCAUGHT, so base64 composites are
+> effectively wholly deferred by this cut. The fix is already named (AM1.1
+> interior matching), not new scope. Hex and natural-URL must-catch rows,
+> Decisions A/B/C, and every floor are unchanged. Original predictions preserved
+> intact. Full record in
+> [AMENDMENT 1](#amendment-1-2026-07-24-before-probe-result-before-mechanism-code).
+
 ## Why a separate document
 This is a separate file, not an amendment to `PREDICTIONS_v16_family2.md`. Two
 reasons. First, the family-2 first-cut document is CLOSED: AMENDMENT 6 recorded
@@ -515,3 +532,145 @@ corpora byte-identical). The BEFORE states are the family-2 first-cut
 measurement; the first composite frontier probe is what turns the AFTER
 predictions into measurements. This file is the prediction of record for the
 composite cut.
+
+---
+
+## AMENDMENT 1 (2026-07-24): BEFORE probe result, before mechanism code
+
+This amendment is dated and recorded AFTER the read-only composite-cut BEFORE
+probe and BEFORE any direction-(A) mechanism exists. It records the measured
+BEFORE state, the latent-collision measurement, and reconciles one frozen
+must-catch row that the probe narrowed. The original predictions above are left
+intact; the reconciled row carries its correction here, not by rewriting section
+5. No mechanism code is written.
+
+### AM1.1. BEFORE state confirmed
+
+The probe measured the current shipped engine (first cut, direction (B) only)
+against the frozen columns, and the BEFORE state is as predicted with no
+surprises on it:
+
+- **Composites uncaught by param_lineage today.** Every composite row (hex,
+  natural-URL, and base64 at all three phases) returns `param_lineage = no_match`.
+  Under novel ON each is blocked only by the novelty branch
+  (`STEP_UP:novel_lineage`); under the shipped novel-OFF default each reaches
+  `ALLOW`. This is the deferred frontier and the real default-configuration gap
+  the composite cut targets.
+- **Counted 4/4 bare rows caught via direction (B).** The four bare rows
+  (base64(evil.com), base64(mallory@evil.com), url-encoded evil.com, hex(evil.com))
+  are attributed `DENY:param_lineage`, byte-identical in both configs. The
+  no-regression anchor holds at the BEFORE point.
+- **Benign param_lineage uniformly no_match.** All ten benign rows (git SHA,
+  hyphenated UUID, de-hyphenated UUID, benign JWT, data-URI, percent-encoded URL,
+  API token, order ID, computed total, and the positive control) return
+  `param_lineage = no_match` in both configs. The novel-ON `STEP_UP` flags are the
+  family-1 novelty residual, not a param-side catch, and clear to `ALLOW` under
+  novel OFF.
+- **Positive control clears in both configs via auth-first.** The
+  legit-base64-config value returns `no_match` and net `ALLOW` under novel ON and
+  OFF, cleared by the auth-first short-circuit as predicted.
+
+### AM1.2. Latent collision: ZERO at the Decision C floors
+
+The latent-collision measurement (inspection only, no scan runs, since no
+direction-(A) scan exists) tested whether any currently-emitted needle already
+sits as a substring inside each at-risk benign value. Result: **zero latent
+collisions**, on both the full emitted needle set (all kinds, floor 8, 15
+needles) and the curated + floored direction-(A) set (Decision B url/email kinds,
+Decision C floors, 6 needles), across every at-risk row. The Decision C floors
+are sufficient on this benign corpus. Two honest data points are recorded:
+
+- **The API token is the CANARY ROW.** `sk-live-9f3a2b7c1d8e4056` carries a
+  16-character contiguous hex run (`9f3a2b7c1d8e4056`), EXACTLY at the hex floor
+  of 16. It does not equal either curated hex needle, so there is no hit, but it
+  is the closest structural near-miss and the row that would collide first if a
+  16-character hex needle ever matched it. It is the row to watch when the AFTER
+  probe runs and whenever the hex floor is reconsidered.
+- **The hyphenated UUID is SAFE-BY-STRUCTURE, not safe-by-luck.** Its longest
+  contiguous hex run is 12, below the floor of 16, so a 16-character hex needle
+  cannot fit between the hyphens. The de-hyphenated UUID (32 contiguous hex) and
+  the git SHA (40 contiguous hex) are the genuine long hex carriers, and both are
+  clean here. The structural distinction the section-6 table drew is confirmed by
+  measurement.
+
+### AM1.3. Reconciled: the base64 phase-0 must-catch row
+
+Section 5 froze the row as "base64 composite, value at offset 0: CAUGHT" via the
+full bare needle `zxzpbc5jb20=`. The probe shows this holds only when `evil.com`
+is phase-0 aligned AND TERMINAL. Base64 grouping cuts at BOTH ends:
+
+- the LEADING offset (the phase problem, AM1.1 of the family-2 doc): the value
+  must start at a byte offset that is 0 mod 3, and
+- the TRAILING BOUNDARY: the value's final byte-group must be padded, which
+  happens only when the value is terminal. When content follows the value, its
+  final group is merged with the following bytes and the emitted characters
+  differ.
+
+Measured:
+
+```
+placement                     | offset mod 3 | terminal | full needle zxzpbc5jb20= | interior zxzpbc5j
+------------------------------+--------------+----------+--------------------------+------------------
+xxxevil.com                   | 0            | yes      | PRESENT                  | present
+"evil.com is bad"             | 0            | no       | ABSENT                   | present
+xevil.com                     | 1            | yes      | ABSENT                   | absent
+xxevil.com                    | 2            | yes      | ABSENT                   | absent
+```
+
+The phase-0 non-terminal case encodes `om` plus a following byte where the bare
+needle encodes `om` plus padding, so only the interior `zxzpbc5j` (the fully
+aligned 3-byte groups) survives at phase 0.
+
+**Amended row.** The base64 composite is PREDICTED CAUGHT only in the
+phase-0-AND-TERMINAL corner. Phase-0 non-terminal, phase 1, and phase 2 are all
+PREDICTED UNCAUGHT and deferred. The terminal corner (the value sitting at the
+very end of the base64-encoded input with nothing after it) is the LESS realistic
+composite shape: a real composite wraps the value in a filename, a URL, or a
+sentence, which places content after it. So **base64 composites are effectively
+WHOLLY DEFERRED by this cut**, not merely deferred at non-zero phase. The
+section-5 phase-0 CAUGHT prediction is narrowed to this corner and is not counted
+as a general base64-composite catch.
+
+### AM1.4. The fix is already named, not new scope
+
+The trailing-boundary problem is not a new mechanism requirement. AM1.1 of the
+family-2 doc already specifies emitting the three phase-shifted encodings and
+matching on the stable INTERIOR of each, dropping the boundary characters that
+depend on the filler. That interior-matching fix addresses BOTH ends at once: the
+leading phase (which of the three phase forms aligns the value) and the trailing
+boundary (dropping the final boundary characters that depend on what follows the
+value). The current bare emission emits the FULL padded form, not the interior,
+which is exactly why the phase-0 non-terminal case misses: the emitted needle
+carries the terminal padding the composite does not have.
+
+Changing the emission set from full padded forms to interior needles is NOT in
+this cut's frozen scope. It is deferred with the rest of base64 composites, under
+the AM4.3 build order (direction-(A) scan first, then three-phase-with-interior
+emission for base64). This amendment records the trailing boundary as part of the
+already-named base64 second half, not as a newly discovered gap.
+
+### AM1.5. Unchanged
+
+- **Hex and natural-URL composite must-catch rows stand.** The probe confirmed
+  `hex(evil.com)` and `evil%2ecom` are present as substrings of their respective
+  raw composites, so direction (A) would catch them. These are alignment-free
+  (byte-wise hex, per-character natural-URL) and carry no trailing-boundary
+  problem.
+- **Decisions A, B, and C stand.** Whole-leaf auth clearance, url/email-only
+  needle curation, and the per-encoding floors (hex 16, base64 12, natural-URL
+  10) are unchanged and confirmed sufficient on the benign corpus (AM1.2).
+- **All floors and targets stand.** The benign delta-0 target, the counted 4/4
+  byte-identity, and the family-1 and family-2 corpus byte-identity are unchanged.
+
+### AM1.6. Method note
+
+This is the THIRD pre-build probe in family 2 to falsify or narrow a frozen
+prediction before its AFTER run: AM2.1's composite claim (falsified by a
+read-only direction check), the natural-URL partition claim (half-falsified on
+the same direction footing, AM4.1), and now the base64 terminal boundary
+(narrowed by this BEFORE probe). Each was caught by a cheap read-only measurement
+rather than by the AFTER probe, and each landed OUTSIDE the counted set. This is
+consistent with the family-1 F7 finding: reasoning proposes, measurement
+disposes, and the cheap check is what separates a true-but-not-binding argument
+from a load-bearing one. The cost of narrowing the base64 phase-0 row here was
+one read-only probe, paid before any composite mechanism was built.
