@@ -294,3 +294,134 @@ internal (5, recommended, split OPEN).
 **Open, human required:** the version number; the predictions-docs disposition;
 whether an evaluation run gates; the IP fix shape and its family-1 regression;
 whether Defect A blocks v1.6; the final claim wording (8).
+
+---
+
+## AMENDMENT 1 (2026-07-24): four open questions closed, independence determination dated before the run
+
+This amendment closes four of the item-8 open questions and records the
+corpus-independence determination BEFORE any v1.6 AgentDojo run, so the framing is
+fixed before the numbers exist. It makes no mechanism change. The original
+document is left intact; the questions it left OPEN are resolved here, not
+rewritten above.
+
+### AM1.1. Version: 1.6.0
+
+Closed, no ceremony. Both families are new capability over a shipped 1.5.0, so a
+minor bump is the correct level. `pyproject.toml` and `__init__.py` move together
+from 1.5.0 to 1.6.0 (David's manual step per the workflow; the number is now
+decided, the bump is not yet done).
+
+### AM1.2. Defect A does not gate
+
+Defect A has been deferred since family 1 (the family-1 doc records it as a
+"separate extractor-hygiene change"). Its family-2 consequence (AM7.5) is a
+REGISTERED CHECK, not a measured defect: nobody has measured whether the divergent
+trailing-punctuation spelling (`evil.com.` as `str` alongside `evil.com` as `url`)
+mints needles outside the AM4.1 floor analysis. Blocking a release on an
+unmeasured possibility that was RECORDED rather than DISCOVERED is backwards. It
+stays a roadmap item, the registered check intact, and it runs when Defect A is
+next touched. Defect A therefore does NOT gate v1.6, resolving the item-8 question
+"whether Defect A blocks v1.6."
+
+### AM1.3. Predictions docs: ship the raw chain, distilled doc as its entry point
+
+Resolving the item-5 OPEN and superseding its recommendation. **Ship the raw
+amendment chain, with a distilled document as its ENTRY POINT**, not as a
+replacement.
+
+- Rejected: distillation alone. It loses the falsifications, and the
+  falsifications are the CREDENTIAL rather than the liability: four reasoned
+  claims killed by cheap reads before a build (AM2.1's composite claim, the
+  natural-URL partition, the length-aware floor reconstruction, the base64
+  terminal boundary) are the evidence the method works, not embarrassments to
+  hide.
+- Rejected: internal-only. The method is half the value; hiding it keeps the
+  weaker half.
+- The distilled doc's job is to make the chain LEGIBLE (a reader's entry point
+  and map), not to stand in for it.
+
+The playbook concern (the reason earlier design docs were kept private) is thin
+HERE, because every mechanism the chain describes is being shipped open source
+regardless: forward-encode, the three encodings, the direction-(A) scan, the
+three decisions, the floors, and the three-phase interior geometry are all in the
+released code. There is no playbook to protect that the code does not already
+publish. (This is a narrower judgment than the general no-publish-design-docs
+precedent, and it turns on the mechanisms being open-source in this specific
+release.)
+
+### AM1.4. AgentDojo: a fresh run gates the release
+
+Resolving the item-6 "David's call" and the item-8 "whether an evaluation run
+gates" toward GATING, with the reasoning recorded.
+
+The public claim's spine is "effective in the shipped default" (section 2). The
+evidence for that spine is the frozen corpora, which only we can run. The
+independently reproducible artifact, the published benchmark table, describes the
+PRE-v1.6 engine. For a release whose differentiator is falsifier-carrying
+measurement discipline, shipping with the reproducible number STALE and the
+internal number LOAD-BEARING inverts exactly what the method advertises. So a
+fresh run gates.
+
+Outcome asymmetry, recorded so the gate is not mistaken for a risk:
+
+- If the encoded-attack rows flip to caught and utility holds, that is the
+  changelog headline.
+- If something unexpected moves, the frozen corpora had a blind spot and it
+  surfaced BEFORE release, which is the method working.
+- No run OUTCOME makes the release worse. Only SKIPPING the run does.
+
+**Run design: three columns if the harness allows.** `v1.5.0` baseline, `v1.6`
+default, `v1.6` novel-on. The three columns show the gap (baseline), the fix
+(v1.6 default), and the residual family-1 novelty surface the limitations section
+already owns (novel-on). A single v1.6 column proves the engine passes; three
+prove we know WHY, which is the claim the method makes.
+
+### AM1.5. Independence determination, dated before the run
+
+A read-only trace over all four prediction docs returns ZERO matches for
+`agentdojo`, `benchmark`, `dojo`, or any variant: the chain never references the
+benchmark by any name. **Verdict: FULL INDEPENDENCE.**
+
+- **Attack rows** trace to the engine's own scratch probes in its own cprov
+  session structure (one authoritative `user_message`/`alice`, one untrusted
+  `web_content`/`fetch_url` carrying the injection), with encodings from the
+  Phase 0 taxonomy and the threat model (F4, real-world attack prevalence).
+- **Benign rows** trace to probe 2's minted-values finding (`system`/
+  `authoritative` origin labels), the Phase 0 accidentally-valid-encoding surface
+  (git SHA, API token, base64 config), and the terrain report's substring-carrier
+  enumeration (JWT, data-URI, percent-encoded URL, de-hyphenated UUID).
+- **No design decision cites benchmark behavior.** Decisions A, B, and C, the
+  AM4.1 floor amendment, the AM4.2 anchor rule, AM4.3's rejection of option (b),
+  and the `_SCAN_KINDS` curation each trace to the threat model, the collision
+  math, encoded or interior lengths, or absolute per-alignment probability, never
+  to a benchmark row cleared or a benchmark task needing a kind.
+
+**Therefore the v1.6 AgentDojo run is EXTERNAL VALIDATION, not regression
+evidence.** This framing was fixed BEFORE the numbers existed, so it is not
+retrofitted to a result. That is the point of dating it here, before the run
+AM1.4 gates.
+
+### AM1.6. Two residuals on the determination
+
+Recorded rather than smoothed:
+
+- **SILENT on the literal choice of `evil.com` and `mallory@evil.com`.** The docs
+  state the ROLE of these strings ("the injection") but never why THESE literals.
+  Resolved as placeholder convention (the domain analogue of `example.com`) with
+  no stated external source. Marked SILENT rather than inferred independent.
+- **The probe and terrain scripts are NOT in the repo** (the family-1 doc states
+  "Probes are not committed to the repo"). The determination rests on origins the
+  documents STATE, not on construction code. If a probe had silently copied an
+  external template at construction time, uniformly internal stated origins would
+  not reveal it. Nothing in the text suggests this; the text cannot fully exclude
+  it. What would settle it: inspecting the uncommitted probe and terrain scripts.
+  This is the one channel the committed documents cannot close by themselves.
+
+### AM1.7. Item-8 status after this amendment
+
+Closed here: the version number (1.6.0, AM1.1), whether Defect A blocks (no,
+AM1.2), the predictions-docs disposition (ship raw with a distilled entry point,
+AM1.3), and whether an evaluation run gates (yes, AM1.4). Still OPEN, unchanged:
+the IP composite fix shape and its family-1 regression, and the final public-claim
+wording.
