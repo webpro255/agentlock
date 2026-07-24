@@ -48,6 +48,25 @@ deferred frontier this cut proposes to reach.
 > intact. Full record in
 > [AMENDMENT 2](#amendment-2-2026-07-24-result-composite-cut-met-no-falsifications).
 
+> **AMENDED 2026-07-24 (amendment 3, Decision C floor read, before any base64
+> composite mechanism).** A read-only check of Decision C established that the
+> three floors were NOT derived from the stated n0 + log_A(L) formula: the doc
+> assigns no value to n0 or L and never evaluates it; the floors are set to
+> len(encode("evil.com")) per encoding (hex 16, base64 12, url 10) and
+> cross-checked against absolute per-alignment probabilities. So a length-aware
+> floor is an AMENDMENT, not an application, and the reconstruction that proposed
+> it "inside the framework" is falsified. The base64 anchor of 12 equals
+> base64("evil.com") INCLUDING terminal padding, which AM1.3 measured is exactly
+> what a composite lacks, so that anchor assumed the whole-needle matching that
+> interior matching replaces; hex and url carry no padding and no phase, so their
+> anchors survive intact. The absolute check does not select 12 over 10 (38^-10 is
+> about 2^-52 per alignment, negligible under the same union bound), and the
+> global fix is ruled out by the canary (AM1.2 records hex 16 sitting exactly on
+> the API token's 16-char hex run). The open floor decision is stated as two
+> options and NOT made here. Original predictions and Amendments 1-2 preserved
+> intact. Full record in
+> [AMENDMENT 3](#amendment-3-2026-07-24-decision-c-floor-read-before-any-base64-composite-mechanism).
+
 ## Why a separate document
 This is a separate file, not an amendment to `PREDICTIONS_v16_family2.md`. Two
 reasons. First, the family-2 first-cut document is CLOSED: AMENDMENT 6 recorded
@@ -844,3 +863,113 @@ two alignment-free encodings.
   decision: any future short-value composite row is an explicit floor-lowering
   decision with its FP cost measured at that time, not a silent retrofit of the
   hex 16 / base64 12 / url 10 floors.
+
+---
+
+## AMENDMENT 3 (2026-07-24): Decision C floor read, before any base64 composite mechanism
+
+This amendment is dated and recorded AFTER a read-only check of Decision C and
+BEFORE any base64 composite mechanism (three-phase emission with interior
+matching) exists. It records what the read established and how it reframes the
+floor conflict the base64 Phase 0 measurement surfaced. It makes NO mechanism
+change and does NOT make the floor decision; the decision is stated as options
+with the choice deferred. Original predictions and Amendments 1 and 2 are left
+intact.
+
+### AM3.1. The floors were not derived from the stated formula
+
+Decision C states the scaling argument `n0 + log_A(L)` SYMBOLICALLY: it assigns
+no value to `n0` and no value to `L`, and never evaluates the expression. The
+three floors are set instead to `len(encode("evil.com"))` per encoding (hex 16,
+base64 12, natural-URL 10), and then cross-checked against absolute per-alignment
+probabilities (hex "16^-16 = 2^-64 per alignment", base64 "38^-12, near 2^-63").
+Recorded plainly: the formula is justification-shaped BACKING, not the
+derivation. The actual rule that produced the numbers was "clear the shortest
+counted value's encoded length," with the probability check as a sanity bound,
+not a forward evaluation of `n0 + log_A(L)`.
+
+### AM3.2. A length-aware floor is therefore an amendment, not an application
+
+Because Decision C commits fixed integer constants, and every downstream
+reference treats them as fixed (R3's "explicit floor-lowering decision," Decision
+C's closer "not a floor set wrong," AM2.2's `_SCAN_FLOORS` as literal values), a
+leaf-length-dependent floor is NOT expressed in the pre-registered framework. A
+length-aware floor was proposed as a resolution "inside the framework" (read the
+floor off the scanned leaf's length via the formula); the read FALSIFIED that:
+there is no committed `n0` to evaluate, and the floors were never a function of
+`L` to begin with. A length-aware floor would be an amendment to the framework,
+not an application of it.
+
+### AM3.3. The base64 anchor is an artifact of whole-needle matching
+
+The base64 floor of 12 equals `base64("evil.com")` = `zxzpbc5jb20=` INCLUDING its
+terminal padding. AM1.3 measured that the terminal padding is exactly what a
+composite LACKS (the composite encodes the trailing bytes where the bare form
+encodes padding). The form that actually matches a base64 composite is the
+10-character INTERIOR (Phase 0 measurement: `evil.com` interiors are 10 at all
+three phases). So the coincidence that anchored the base64 floor, "12 characters
+is exactly base64(evil.com)," assumed the whole-needle matching mode that
+interior matching REPLACES. hex and natural-URL do NOT have this problem: their
+encodings carry no padding and no phase, so `hex("evil.com")` (16) and
+`evil%2ecom` (10) match a composite verbatim and their anchors survive interior
+matching intact. Only base64's anchor was built on the abandoned assumption, only
+by two characters (12 versus 10), and those two characters are the entire
+conflict.
+
+### AM3.4. The absolute check does not select 12 over 10
+
+The doc's surviving justification style is the absolute per-alignment probability
+under a union bound. Applied to a 10-character folded base64 needle: `38^-10` is
+about `2^-52` per alignment, and the same union bound the hex bullet runs (a
+64-character carrier, one hundred needles, ten thousand params, about `2^26`
+offsets) leaves it near `2^-26`, negligible. Recorded: the doc's own surviving
+justification covers a 10-character base64 needle. The absolute check does not
+distinguish 12 from 10; only the abandoned whole-needle anchor (AM3.3) did.
+
+### AM3.5. The global fix is ruled out by the canary
+
+A leaf-length-aware floor would move hex and natural-URL too, not base64 alone.
+AM1.2 records the hex floor of 16 sitting EXACTLY on the API token's 16-character
+contiguous hex run (`9f3a2b7c1d8e4056`), named there as the row that "would
+collide first if a 16-character hex needle ever matched it." Lowering the hex
+floor puts a live benign row inside needle range, and hex has NO correctness
+pressure to pay for that risk: no padding, no phase, no interior shortfall, its
+16-character anchor matches composites verbatim. The canary made the cost of the
+general fix concrete BEFORE any probe ran. Any floor change must therefore be
+base64-SPECIFIC and interior-MOTIVATED, not framework-wide and length-motivated.
+
+### AM3.6. The open decision, stated as options, not made here
+
+Two options are recorded; the choice is NOT made in this amendment and is dated
+before the AFTER probe when it is made.
+
+- **(a) Amend the base64 scan floor to 10**, scoped as the interior length of the
+  shortest counted value, with the padding-artifact finding (AM3.3) as the reason
+  and the `38^-10` absolute check (AM3.4) as the surviving justification. This is
+  a floor-lowering decision of exactly the kind R3 requires to be explicit, and
+  must be dated before the AFTER probe.
+- **(b) Hold 12 and defer base64 composites of sub-10-byte values** as a named
+  corner. Per the interior formula `interior_chars = floor(4(p+L)/3) - ceil(4p/3)`,
+  the conflict exists only for untrusted values of 9 bytes or fewer: `L=8` gives
+  interiors 10/10/10 (all below 12), `L=9` gives 12/11/11 (failing at two
+  phases), and `L=10` clears at 13/12/13. State it as "base64 composites of
+  sub-10-byte values," not "base64 composites."
+
+Under BOTH options: the `mallory@evil.com` rows stay unconditional (interiors 20
+to 21, above 12 at every phase), the counted 4/4 stays untouched (direction (B),
+floor-independent, AM2.2), and the hex and natural-URL floors stay frozen with
+their anchors intact (AM3.3, AM3.5).
+
+### AM3.7. Method note
+
+This is the FOURTH reasoned claim in family 2 falsified by a cheap read-only
+check before it could reach a probe or a build: after the AM2.1 composite claim,
+the natural-URL partition (AM4.1 of the family-2 doc), and the base64 terminal
+boundary (AM1.3 here), now the length-aware floor reconstruction. The root cause
+is the same as the first two: a structural argument attributed to the system that
+the system does not actually implement (here, a length-derived floor the doc
+never committed). This is consistent with the family-1 F7 finding: reasoning
+proposes, measurement disposes, and the cheap check is what separates a
+true-but-not-binding argument from a load-bearing one. The cost of falsifying the
+length-aware floor was one read of Decision C, paid before any base64 composite
+mechanism was built.
