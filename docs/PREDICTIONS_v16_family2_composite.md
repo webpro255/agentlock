@@ -30,6 +30,24 @@ deferred frontier this cut proposes to reach.
 > intact. Full record in
 > [AMENDMENT 1](#amendment-1-2026-07-24-before-probe-result-before-mechanism-code).
 
+> **AMENDED 2026-07-24 (amendment 2, RESULT: composite cut MET, no
+> falsifications).** The direction-(A) scan is implemented and measured. Every
+> frozen prediction is MET: hex and natural-URL composites attributed
+> DENY:param_lineage naming the parent cprov_ in both configs; base64 composites
+> uncaught except the phase-0-AND-terminal corner (AM1.3), with the three
+> deferred base64 rows asserted uncaught and failing the suite if they ever catch
+> (AM4.4 encoded as a test); ten benign rows param_lineage no_match with FP delta
+> 0; counted 4/4 bare rows byte-identical via direction (B); suite 1309, ruff and
+> mypy clean. The three decisions shipped as built (whole-leaf clearance,
+> url/email curation, floors hex 16 / base64 12 / url 10), the loop order is
+> direction (B) first and pinned by a guard, and one implementation finding is
+> recorded: the AM2.2 symmetric fold had to be applied to the direction-(A)
+> HAYSTACK, not only the needles, and the positive control's isolation test is
+> what caught that it would otherwise have measured MET while whole-leaf clearance
+> did nothing. No prediction moved. Original predictions and Amendment 1 preserved
+> intact. Full record in
+> [AMENDMENT 2](#amendment-2-2026-07-24-result-composite-cut-met-no-falsifications).
+
 ## Why a separate document
 This is a separate file, not an amendment to `PREDICTIONS_v16_family2.md`. Two
 reasons. First, the family-2 first-cut document is CLOSED: AMENDMENT 6 recorded
@@ -674,3 +692,155 @@ consistent with the family-1 F7 finding: reasoning proposes, measurement
 disposes, and the cheap check is what separates a true-but-not-binding argument
 from a load-bearing one. The cost of narrowing the base64 phase-0 row here was
 one read-only probe, paid before any composite mechanism was built.
+
+---
+
+## AMENDMENT 2 (2026-07-24): RESULT, composite cut MET, no falsifications
+
+This amendment records the MEASURED RESULT of the composite-cut direction-(A)
+scan. It is dated and recorded AFTER the mechanism was implemented and the frozen
+columns replayed on the composite-cut engine. The original predictions and
+Amendment 1 are preserved intact; nothing above is rewritten. This amendment
+makes no mechanism change; it records the outcome of the build the doc already
+specified.
+
+### AM2.1. Result: every frozen prediction MET
+
+The direction-(A) scan was implemented exactly to the frozen spec (a second,
+additive loop; forward-encoded untrusted forms as needles, the raw param leaf as
+haystack; direction (B) untouched). Measured, row for row:
+
+- **hex composite: CAUGHT, attributed.** `DENY:param_lineage` with
+  `matched_token = 6576696c2e636f6d` and the parent `cprov_` entry named
+  (`fetch_url:cprov_...`), in both novel-ON and novel-OFF.
+- **natural-URL composite: CAUGHT, attributed.** `DENY:param_lineage` with
+  `matched_token = evil%2ecom` and the parent `cprov_` named, both configs.
+- **base64 composites: UNCAUGHT except the phase-0-AND-terminal corner (AM1.3).**
+  Phase-0 non-terminal, phase 1, and phase 2 are all uncaught (STEP_UP under
+  novel ON, ALLOW under novel OFF), and the deferred rows are asserted uncaught
+  in the suite: a catch there fails the test, which is AM4.4 (a composite catch
+  that the mechanism cannot produce is a measurement fault) encoded as a test.
+  The phase-0-AND-terminal corner is the single base64 catch and is asserted
+  explicitly so the boundary stays visible.
+- **Ten benign must-not-trip rows: param_lineage no_match, FP delta 0.** Every
+  benign row holds no_match under the scan and clears to ALLOW under novel OFF.
+  The API-token canary (a 16-character contiguous hex run exactly at the hex
+  floor, AM1.2) is confirmed non-colliding.
+- **Positive control: cleared.** Still ALLOW, cleared by whole-leaf clearance
+  (see AM2.4).
+- **Counted 4/4 bare rows: byte-identical via direction (B).** Caught by (B),
+  attributed, identical tokens, both configs, carrying no scan marker.
+- **Suite: 1309 passed, ruff and mypy clean.** No em dashes.
+
+No frozen prediction was falsified. Nothing outside the deferred base64 frontier
+moved.
+
+### AM2.2. The three decisions as built
+
+- **Decision A, whole-leaf auth clearance.** A leaf that is a substring of the
+  auth blob is skipped before scanning, at LEAF granularity (not sibling-token),
+  so it does not reopen the family-1 composite-laundering breach. Pinned by an
+  isolation test (AM2.4).
+- **Decision B, curation.** Only the url and email kinds enter the scan set
+  (`_SCAN_KINDS`); str, date, phone, and amount are excluded. The direction-(B)
+  blob emission (`_encoded_blob_suffix`) is unchanged and still carries all
+  kinds.
+- **Decision C, per-encoding floors.** `_SCAN_FLOORS` are hex 16, base64 12,
+  natural-URL 10, SEPARATE from the direction-(B) blob floor `_ENCODED_MIN_LEN`,
+  which stays 8. The counted 4/4 are floor-independent (caught by (B)), so these
+  floors touch only composite coverage, as predicted.
+
+### AM2.3. Loop order (R4) decided
+
+Direction (B) runs FIRST; the direction-(A) scan runs only after (B) finds
+nothing. This preserves citation determinism: a bare row's raw value equals its
+needle, so (A) would also find that needle inside it, but letting (B) return
+first keeps every counted-4/4 and family-1 catch byte-identical as a (B) match.
+A (B) catch carries no marker; a direction-(A) catch carries
+`match_direction = "raw_substring_scan"`. A loop-order guard asserts a bare row
+lacks the marker and a composite carries it, so a future reorder that let (A)
+cite a bare row fails loudly. The auth-first short-circuit is untouched
+byte-for-byte.
+
+### AM2.4. Implementation finding: the fold had to reach the haystack
+
+Recorded because it nearly produced a FALSE PASS. The AM2.2 symmetric lowercase
+fold had to be applied to the direction-(A) HAYSTACK (`value.lower()`), not only
+to the needles. The needles are folded lowercase and the auth blob is already
+lowercased; the raw param value was not, and that asymmetry had three
+consequences before it was fixed:
+
+- **base64 missed even at phase-0-terminal**, because base64 output is mixed
+  case and the lowercased needle did not match the mixed-case raw value.
+- **uppercase hex and uppercase percent-codes would have slipped real composites
+  past the scan** (a `%2E` from a real URL encoder, an uppercase SHA-shaped
+  composite), a silent coverage hole.
+- **critically, the POSITIVE CONTROL cleared via the direction-(B) auth-first
+  short-circuit rather than via whole-leaf clearance.** The control row was ALLOW,
+  so Decision A would have measured MET while whole-leaf clearance did nothing:
+  an inert mechanism behind a green control.
+
+This was caught by the ISOLATION TEST, not by the control row: the same value
+placed where it is NOT authoritative is caught by direction (A), and the same
+value placed inside authoritative content clears, so the delta between the two
+rows is exactly the protection whole-leaf clearance provides. A positive control
+that can pass while its mechanism is inert is not a control; the isolation test
+is what makes it one. Folding the haystack fixed all three at once, and the
+behavior then matched AM1.3 exactly (base64 caught only phase-0-terminal). No
+prediction moved, because AM2.2 already mandates symmetric lowercase folding on
+both sides; the finding is that "both sides" had to include the raw haystack the
+scan reads, which the first draft applied to the needles alone.
+
+### AM2.5. Guards enforced by the suite
+
+Five properties are pinned by tests, so a future change that breaks one fails
+loudly:
+
+- **Additive-only emission.** From one untrusted content, the bare form still
+  catches via (B) and the composite catches via (A); if (A) had replaced (B) the
+  bare catch would be gone.
+- **Per-entry attribution (unpooled).** Two untrusted entries carrying different
+  domains: a composite of one is attributed to THAT entry's `cprov_`, not the
+  other's. Pooling the needle sets would make this ambiguous.
+- **No-decode.** The guard greps the whole of `context.py`, now including the
+  direction-(A) loop, for decode primitives, so a reverse-decode cannot be
+  slipped into the new code.
+- **Loop order.** Direction (B) before (A), as AM2.3.
+- **Floors and kinds as specified.** `_SCAN_FLOORS` and `_SCAN_KINDS` are the
+  frozen values, and str/date needles are confirmed absent from the scan set.
+
+### AM2.6. Superseded test
+
+The family-2 first-cut deferred-composite test asserted that hex, natural-URL,
+and base64 composites all stay uncaught (direction (B) only). It is SUPERSEDED
+for hex and natural-URL BY DESIGN (the composite cut catches them) and NARROWED
+to base64 non-terminal composites, which stay uncaught. This is a scope change,
+not a regression: the first cut left those rows uncaught, and the composite cut
+catches them, exactly as this document pre-registered. It is recorded here on the
+same footing as AM6.3 of the family-2 doc recorded the superseded family-1 base64
+test.
+
+### AM2.7. Closing state of the composite cut
+
+**Closed.** hex and natural-URL composites, attributed to the parent `cprov_`
+entry and configuration-independent (holds with the novelty branch on or off).
+The direction-(A) scan is the load-bearing half of AM4.3, and it fully closes the
+two alignment-free encodings.
+
+**Open, with named mechanism and fixed build order.**
+
+- **base64 composites** remain deferred. They need three-phase emission with
+  INTERIOR matching (AM1.1, AM1.4), and Amendment 1 sharpened WHY: base64
+  grouping cuts at both the leading phase and the trailing boundary, so the fix
+  must handle both, emitting the three phase-shifted forms and matching on the
+  stable interior with the boundary characters dropped. Interior needles are not
+  in this cut; they are the base64 second half under the AM4.3 order.
+- **Per-character URL enumeration** (AM1.2, e.g. `%65vil.com`) remains deferred,
+  with the enumeration bound the open question there.
+- **Tokenizer coverage inheritance** (AM5.1): the scan can only key on what
+  `extract_lineage_tokens` extracts on the context side, so a tokenizer miss is
+  inherited and its fix lifts both families.
+- **The AM2.2 floor-versus-coverage tension** is deferred to a row-admission
+  decision: any future short-value composite row is an explicit floor-lowering
+  decision with its FP cost measured at that time, not a silent retrofit of the
+  hex 16 / base64 12 / url 10 floors.
