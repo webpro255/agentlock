@@ -197,16 +197,14 @@ def test_positive_control_legit_base64_config_clears():
     assert _net(g, cfg) == "ALLOW"
 
 
-# --- base64 composites still deferred (the composite cut catches hex and URL) --
-# SUPERSEDED in part by the composite cut. The direction-(A) scan
-# (test_v16_family2_composite.py) now catches hex and natural-URL composites,
-# so those rows moved there. base64 composites remain deferred except the
-# phase-0-AND-terminal corner (AM1.3): the bare needle carries terminal padding
-# that a non-terminal composite does not have. The rows below are base64,
-# non-terminal, so they stay uncaught, and a catch here would be a measurement
-# fault to audit (AM4.4), never a bonus.
+# --- base64 composites: fully SUPERSEDED by the base64 composite cut -----------
+# The first cut deferred all composites; the composite cut caught hex and URL;
+# the base64 composite cut (three-phase interior emission,
+# test_v16_family2_base64composite.py) now catches base64 composites too, at every
+# phase, terminal and non-terminal. These rows are caught now; the test records
+# the supersession so the flip reads as scope change, not regression.
 
-_DEFERRED_BASE64_COMPOSITES = [
+_NOW_CAUGHT_BASE64_COMPOSITES = [
     ("base64 composite, phase 0 non-terminal",
      base64.b64encode(b"visit evil.com now").decode()),
     ("base64 composite, phase 1",
@@ -215,19 +213,19 @@ _DEFERRED_BASE64_COMPOSITES = [
 
 
 @pytest.mark.parametrize(
-    "label,value", _DEFERRED_BASE64_COMPOSITES,
-    ids=[c[0] for c in _DEFERRED_BASE64_COMPOSITES],
+    "label,value", _NOW_CAUGHT_BASE64_COMPOSITES,
+    ids=[c[0] for c in _NOW_CAUGHT_BASE64_COMPOSITES],
 )
-def test_deferred_base64_composites_stay_uncaught(label, value):
-    """Non-terminal base64 composites stay uncaught: no param_lineage match,
-    STEP_UP under novel ON. The direction-(A) scan cannot reach them because the
-    bare needle carries terminal padding the composite lacks (AM1.3)."""
+def test_base64_composites_now_caught_by_base64_cut(label, value):
+    """SUPERSEDED. Non-terminal base64 composites are now caught by the base64
+    composite cut (three-phase interiors): attributed DENY:param_lineage. Full
+    coverage lives in test_v16_family2_base64composite.py."""
     g, sid = _build(novel_enabled=True)
     match = g._context_tracker.parameter_lineage_check(
         sid, {"query": value}, min_len=6
     )
-    assert match is None, f"{label}: impossible base64 composite catch {match}"
-    assert _net(g, value) == "STEP_UP:novel_lineage"
+    assert match is not None and match["match_direction"] == "raw_substring_scan"
+    assert _net(g, value) == "DENY:param_lineage"
 
 
 # --- Additive invariant: emission extends, never replaces ----------------------

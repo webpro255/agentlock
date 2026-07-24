@@ -381,19 +381,30 @@ def _encoded_blob_suffix(content: str, min_len: int) -> str:
 #     injection targets.  str/date/phone/amount are excluded.  The direction-(B)
 #     blob (_encoded_blob_suffix) keeps its wider all-kinds emission unchanged;
 #     curation applies only to this NEW scan set.
-#   * Decision C (per-encoding floors): substring scanning needs longer needles
-#     than whole-token matching.  Separate floors per encoding, hex 16 (16-symbol
+#   * Decision C (per-encoding floors), amended by AM4.1/AM4.2: the floor is the
+#     MATCHABLE FORM LENGTH of the shortest counted value, the whole encoding for
+#     phase-free encodings and the INTERIOR for phased ones.  hex 16 (16-symbol
 #     alphabet, densest benign carriers: SHAs, de-hyphenated UUIDs, hashes),
-#     base64 12 (~38 folded symbols), natural-URL 10 (quasi-plaintext, retains
-#     the domain verbatim).  These are SEPARATE from _ENCODED_MIN_LEN, which is
-#     the direction-(B) blob floor and stays 8.  The counted 4/4 bare rows are
-#     caught by direction (B), so these floors cannot touch them (floor-
-#     independent); they only govern composite coverage for short values, which
-#     is the deferred AM2.2 tension.
+#     natural-URL 10 (quasi-plaintext, retains the domain verbatim), base64 10
+#     (the evil.com interior length, see the base64 composite cut below).  These
+#     are SEPARATE from _ENCODED_MIN_LEN, which is the direction-(B) blob floor
+#     and stays 8.  The counted 4/4 bare rows are caught by direction (B), so
+#     these floors cannot touch them (floor-independent).
 #
-# Zero-decode is preserved: needles come from _encoded_forms (forward encoding),
-# nothing is inverted, and the no-decode suite guard still covers this code.
-_SCAN_FLOORS = {"hex": 16, "base64": 12, "url": 10}
+# BASE64 COMPOSITE CUT (three-phase emission with interior matching).  base64
+# groups 3 input bytes into 4 output characters, so the encoded form of a value
+# cuts at BOTH ends: the leading offset (which 3-byte alignment the value starts
+# on) and the trailing boundary (padded only when terminal, else merged with
+# following bytes).  The bare padded form matches a composite only at phase-0 AND
+# terminal.  So the base64 SCAN needle is the three phase interiors (prefix 0/1/2
+# filler bytes, drop the boundary characters at both ends), which match at any
+# offset and any surrounding content.  This is direction-(A) only; the
+# direction-(B) blob emission (_encoded_blob_suffix) is untouched.
+#
+# Zero-decode is preserved: needles come from forward encoding (with filler
+# prefixes), nothing is inverted, and the no-decode suite guard still covers this
+# code.
+_SCAN_FLOORS = {"hex": 16, "base64": 10, "url": 10}
 _SCAN_KINDS = frozenset({"url", "email"})
 
 
@@ -411,17 +422,57 @@ def _scan_encoding(form: str) -> str:
     return "base64"
 
 
-def _encoded_scan_forms(tok: str) -> set[str]:
-    """Direction-(A) needles for one untrusted token: its encoded forms admitted
-    only above the per-encoding scan floor (Decision C).
+def _base64_phase_interiors(tok: str) -> set[str]:
+    """The three phase-shifted base64 INTERIOR needles for one token.
 
-    Reuses ``_encoded_forms``, the SAME forward-encoding primitive the blob
-    emission uses, then filters by the higher per-encoding floor.  Nothing is
-    decoded; the scan floors are all at or above ``_ENCODED_MIN_LEN`` so this is
-    a strict narrowing of the blob emission, never a widening."""
-    return {
-        f for f in _encoded_forms(tok) if len(f) >= _SCAN_FLOORS[_scan_encoding(f)]
-    }
+    Prefix p=0,1,2 filler bytes, base64-encode, and cut the stable interior: the
+    maximal run of characters whose entire 6-bit window falls inside the token's
+    own bytes, independent of the filler before and any bytes after.  Emitting
+    all three phases covers any composite offset (offset mod 3); the interior is
+    boundary-independent, so it matches whether the value is terminal or not.
+
+    Geometry (derived, never hardcoded per value).  base64 packs input at 6 bits
+    per output character, so for a token of ``L`` bytes prefixed by ``p`` filler
+    bytes the leading drop is ``ceil(4p/3)`` characters (those whose window
+    overlaps a filler byte) and the clean run runs to ``floor(4(p+L)/3)``, giving
+    an interior length of ``floor(4(p+L)/3) - ceil(4p/3)``.  The filler byte value
+    is irrelevant because its characters are dropped; ``\\x00`` is used.
+
+    Forward-encode only: nothing is decoded or inverted."""
+    raw = tok.encode("utf-8")
+    length_bytes = len(raw)
+    interiors: set[str] = set()
+    for p in range(3):
+        encoded = base64.b64encode(b"\x00" * p + raw).decode("ascii").lower()
+        lead = -(-4 * p // 3)  # ceil(4p/3): 0, 2, 3 for p = 0, 1, 2
+        end = (4 * (p + length_bytes)) // 3  # floor(4(p+L)/3), the clean run end
+        interior = encoded[lead:end]
+        if interior:
+            interiors.add(interior)
+    return interiors
+
+
+def _encoded_scan_forms(tok: str) -> set[str]:
+    """Direction-(A) needles for one untrusted token, admitted only above the
+    per-encoding scan floor (Decision C, amended by AM4.1/AM4.2).
+
+    hex and natural-URL are PHASE-FREE: their whole encoded form is the matchable
+    form and is taken from ``_encoded_forms``.  base64 is PHASED: the bare padded
+    form matches a composite only at phase-0-and-terminal, so it is REPLACED by
+    the three phase interiors (``_base64_phase_interiors``), the forms that match
+    at any offset and any surrounding content.  Nothing is decoded; every needle
+    is a forward encoding."""
+    forms: set[str] = set()
+    for f in _encoded_forms(tok):
+        enc = _scan_encoding(f)
+        if enc == "base64":
+            continue  # phased: replaced by the three interiors below
+        if len(f) >= _SCAN_FLOORS[enc]:
+            forms.add(f)
+    for interior in _base64_phase_interiors(tok):
+        if len(interior) >= _SCAN_FLOORS["base64"]:
+            forms.add(interior)
+    return forms
 
 
 def _encoded_scan_needles(content: str, min_len: int) -> set[str]:

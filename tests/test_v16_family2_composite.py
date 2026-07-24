@@ -115,16 +115,19 @@ def test_composite_attributed_deny_both_configs(label, value, needle, enc, novel
     assert _net(g, value) == "DENY:param_lineage"
 
 
-# --- base64 composites: UNCAUGHT except the phase-0-AND-terminal corner (AM1.3) -
-# evil.com placed at byte offset 0/1/2 by 0/1/2 filler chars; terminal means the
-# value sits at the very end of the base64 input (final group padded).
+# --- base64 composites: SUPERSEDED by the base64 composite cut ------------------
+# When the composite cut shipped, base64 composites were deferred (uncaught except
+# the phase-0-AND-terminal corner, AM1.3). The base64 composite cut (three-phase
+# interior emission, test_v16_family2_base64composite.py) now catches them at
+# every phase, terminal and non-terminal. These rows moved there; the two tests
+# below record the supersession so the flip reads as scope change, not regression.
 
 _B64_TERMINAL_P0 = base64.b64encode(b"xxxevil.com").decode()          # phase 0, terminal
 _B64_NONTERMINAL_P0 = base64.b64encode(b"evil.com is bad").decode()   # phase 0, non-terminal
 _B64_P1 = base64.b64encode(b"xevil.com").decode()                     # phase 1
 _B64_P2 = base64.b64encode(b"xxevil.com").decode()                    # phase 2
 
-_B64_UNCAUGHT = [
+_B64_NOW_CAUGHT = [
     ("base64 phase 0 non-terminal", _B64_NONTERMINAL_P0),
     ("base64 phase 1", _B64_P1),
     ("base64 phase 2", _B64_P2),
@@ -133,27 +136,28 @@ _B64_UNCAUGHT = [
 
 @pytest.mark.parametrize("novel", [True, False], ids=["novel_on", "novel_off"])
 @pytest.mark.parametrize(
-    "label,value", _B64_UNCAUGHT, ids=[c[0] for c in _B64_UNCAUGHT]
+    "label,value", _B64_NOW_CAUGHT, ids=[c[0] for c in _B64_NOW_CAUGHT]
 )
-def test_base64_composites_stay_uncaught(label, value, novel):
-    """base64 composites at phase-0 non-terminal, phase 1, and phase 2 are
-    PREDICTED UNCAUGHT (AM1.3): the bare needle carries terminal padding the
-    composite lacks (non-terminal) or lands off-phase. A catch here is a
-    structural impossibility (AM4.4) and MUST fail the suite, not pass silently."""
+def test_base64_composites_now_caught_by_base64_cut(label, value, novel):
+    """SUPERSEDED. These base64 composites were deferred under the composite cut
+    and are now caught by the base64 composite cut (three-phase interiors),
+    attributed DENY:param_lineage in both configs. Full coverage lives in
+    test_v16_family2_base64composite.py."""
     g, sid = _build(novel_enabled=novel)
-    assert _pl(g, sid, value) is None, f"{label}: impossible base64 catch"
-    expected = "STEP_UP:novel_lineage" if novel else "ALLOW"
-    assert _net(g, value) == expected
+    m = _pl(g, sid, value)
+    assert m is not None and m["match_direction"] == "raw_substring_scan"
+    assert _net(g, value) == "DENY:param_lineage"
 
 
-def test_base64_phase0_terminal_corner_is_the_only_base64_catch():
-    """The narrow corner AM1.3 named: base64 caught only when evil.com is
-    phase-0 aligned AND terminal. Recorded so the boundary is explicit; the
-    realistic (non-terminal) shape above stays deferred."""
+def test_base64_phase0_terminal_citation_shifts_to_interior():
+    """SUPERSEDED. The phase-0-terminal corner was the ONLY base64 catch under the
+    composite cut and cited the 12-char bare form. The base64 composite cut cites
+    the 10-char interior instead (verdict unchanged, citation shifts), and it is
+    no longer the only base64 catch. This pins the pre-registered citation shift."""
     g, sid = _build(novel_enabled=True)
     m = _pl(g, sid, _B64_TERMINAL_P0)
     assert m is not None and m["match_direction"] == "raw_substring_scan"
-    assert m["matched_token"] == "zxzpbc5jb20="
+    assert m["matched_token"] == "zxzpbc5jb2"   # interior, was "zxzpbc5jb20="
 
 
 # --- Must-not-trip: ten benign rows, param_lineage no_match, FP delta 0 --------
@@ -361,11 +365,12 @@ def test_no_decode_primitive_in_context_module():
 
 
 def test_scan_floors_and_kinds_as_specified():
-    """Decision C floors (hex 16, base64 12, natural-URL 10) and Decision B kinds
-    (url, email only) are the values the doc froze."""
+    """Decision C floors (hex 16, base64 10 per AM4.1, natural-URL 10) and
+    Decision B kinds (url, email only) are the values the doc froze. The base64
+    floor was amended from 12 to 10 by AM4.1 under the AM4.2 matchable-form rule."""
     from agentlock.context import _encoded_scan_needles
 
-    assert ctx._SCAN_FLOORS == {"hex": 16, "base64": 12, "url": 10}
+    assert ctx._SCAN_FLOORS == {"hex": 16, "base64": 10, "url": 10}
     assert {"url", "email"} == ctx._SCAN_KINDS
     needles = _encoded_scan_needles(
         "domain evil.com and str quarterly-report-2026 and date 2026-03-14", 6
