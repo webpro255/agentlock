@@ -7,6 +7,7 @@ v1.1 context authority model.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import re
 import secrets
@@ -267,6 +268,99 @@ def _canonical_blob_suffix(content: str, min_len: int) -> str:
     the canonical reach."""
     cs = sorted(t for _kind, t in _canonical_lineage_tokens(content, min_len))
     return (" " + " ".join(cs)) if cs else ""
+
+
+# ---------------------------------------------------------------------------
+# v1.6 family 2 -- directional-encoding forward emission
+# ---------------------------------------------------------------------------
+# FORWARD-ENCODE, never reverse-decode (PREDICTIONS_v16_family2.md, section 1).
+# Each recorded UNTRUSTED token is run FORWARD through the known encodings and
+# the encoded forms are ADDED to the untrusted blob, alongside the raw content
+# and the family-1 canonical suffix.  parameter_lineage_check then substring-
+# matches a raw parameter token against them, exactly as it matches the raw and
+# canonical forms.  No parameter value is ever decoded or inverted: the entire
+# false-positive argument is that a benign value is only ever COMPARED against a
+# known encoded-untrusted string, never read backwards (AM1.3; section 1's
+# rejection of reverse-decode on the probe-2 UUID).  There is no decode
+# primitive in this module, and none may be added; a test asserts their
+# absence so one cannot be slipped in silently.
+#
+# Placement is the UNTRUSTED blob only.  The authoritative blob is untouched, so
+# the auth-first short-circuit (parameter_lineage_check, ``tok in auth_blob``)
+# clears a legitimately user-supplied encoded value before any untrusted scan
+# (AM5.2, the positive control).
+
+# Natural-URL percent-encoding of the STRUCTURALLY SIGNIFICANT characters only
+# (AM1.2): the dot/at/colon/slash a natural encoder targets, leaving
+# alphanumerics bare.  Adversarial per-character enumeration (``%65`` for 'e')
+# is the deferred frontier, not emitted here.  Percent codes are written
+# lowercase so they fold with the extractor's lowercase (AM2.2, symmetric fold).
+_URL_SIGNIFICANT = {".": "%2e", "@": "%40", ":": "%3a", "/": "%2f"}
+
+# Length floor on the ENCODED form (AM2.2), NOT on the plaintext token.  Value
+# chosen = 8, justified against the near-min_len folded-entropy hazard:
+#
+#   * The plaintext distinctiveness gate is min_len=6 over the folded 36-symbol
+#     lowercase-alphanumeric alphabet, about 31 bits.
+#   * Folding a base64 form collapses its 64-symbol alphabet to about 38
+#     (log2 ~ 5.25 bits/char), so RAW length OVERSTATES a folded form's entropy.
+#     Recovering the plaintext gate's 31 bits under folding needs ceil(31/5.25)
+#     = 6 folded chars, and AM2.2 flags exactly that 6-char band as where a
+#     folded encoded form is a weaker discriminator than its length suggests.
+#   * A floor of 8 clears that band with margin (8 folded chars ~ 42 bits, about
+#     11 bits / ~2000x above the plaintext gate) while admitting every counted
+#     row: the shortest counted encoded form is the natural-URL ``evil%2ecom``
+#     at 10 chars, so 8 rejects the low-entropy near-min_len emissions without
+#     dropping a counted catch.
+#
+# A collision at short lengths therefore reads as a floor set too low, a named
+# spec decision, not an unpredicted failure.
+_ENCODED_MIN_LEN = 8
+
+
+def _natural_url_encode(tok: str) -> str:
+    """Percent-encode the structurally significant characters of ``tok`` and
+    leave everything else bare (AM1.2 natural-encoder form)."""
+    return "".join(_URL_SIGNIFICANT.get(c, c) for c in tok)
+
+
+def _encoded_forms(tok: str) -> set[str]:
+    """The forward encodings of one untrusted plaintext token: base64 (standard
+    alphabet and padding), hex, and natural-URL, each folded lowercase (AM2.2),
+    admitted only if the ENCODED form meets the length floor (AM2.2).
+
+    Encode only.  There is no decode path here and none may be added: a decode
+    would reintroduce the reverse-decode false-positive surface section 1
+    rejects on the probe-2 UUID.  One round per encoding; nesting is the
+    deferred depth frontier (R3), not emitted here."""
+    raw = tok.encode("utf-8")
+    forms = {
+        base64.b64encode(raw).decode("ascii").lower(),
+        raw.hex().lower(),
+        _natural_url_encode(tok).lower(),
+    }
+    return {f for f in forms if len(f) >= _ENCODED_MIN_LEN}
+
+
+def _encoded_blob_suffix(content: str, min_len: int) -> str:
+    """Forward-encoded forms of a context blob's UNTRUSTED tokens, as a text
+    suffix (v1.6 family 2).
+
+    Source (AM5.1): the plaintext set is exactly ``extract_lineage_tokens``
+    of the content, the same context-side tokenization ``novel_lineage_check``
+    already runs, so family 2's catch surface is the IMAGE of family 1's
+    tokenization under the encoding set -- it can only encode what family 1
+    already sees.
+
+    ADDITIVE, never replacement: the caller appends this AFTER the raw lowercased
+    content and the family-1 canonical suffix, so the raw and canonical catches
+    are untouched and only encoded match opportunities are added.  Emitted into
+    the UNTRUSTED blob only; the auth blob is never extended (AM5.2, AM5.3)."""
+    forms: set[str] = set()
+    for _kind, tok in extract_lineage_tokens(content, min_len):
+        if tok:
+            forms |= _encoded_forms(tok)
+    return (" " + " ".join(sorted(forms))) if forms else ""
 
 
 def _iter_param_leaves(obj: Any, path: str = "") -> Iterator[tuple[str, str]]:
@@ -552,11 +646,19 @@ class ContextTracker:
             _note_outcome(outcome, "no_match", "no_provenance_log")
             return None
 
-        # Symmetry (v1.6): each blob carries its content's canonical forms too,
-        # appended additively (see _canonical_blob_suffix).  Both sides now hold
-        # canonical forms, so a defanged untrusted ``evil[.]com`` is reachable by
-        # a clean ``evil.com`` parameter.  Additive, not replacement: the raw
-        # form stays so param_lineage keeps its independent raw catch (D2).
+        # Symmetry (v1.6 family 1): each blob carries its content's canonical
+        # forms too, appended additively (see _canonical_blob_suffix).  Both
+        # sides hold canonical forms, so a defanged untrusted ``evil[.]com`` is
+        # reachable by a clean ``evil.com`` parameter.  Additive, not
+        # replacement: the raw form stays so param_lineage keeps its independent
+        # raw catch (D2).
+        #
+        # The auth blob carries ONLY the family-1 canonical suffix.  It is NOT
+        # extended with the family-2 encoded suffix: forward-encode emits into
+        # untrusted blobs only (AM5.2, AM5.3), which is what keeps the auth-first
+        # short-circuit below the positive control -- a legitimately
+        # user-supplied encoded value is an authoritative token and clears there
+        # before any untrusted comparison.
         auth_blob = " ".join(
             e.content.lower() + _canonical_blob_suffix(e.content, min_len)
             for e in state.provenance_log
@@ -570,8 +672,18 @@ class ContextTracker:
         if not untrusted_entries:
             _note_outcome(outcome, "no_match", "no_untrusted_context")
             return None
+        # Untrusted blobs additionally carry the family-2 encoded suffix: the
+        # forward encodings of their own untrusted tokens (base64/hex/natural-URL
+        # of ``evil.com`` and friends).  Additive on top of the raw content and
+        # the canonical suffix, so a raw parameter token that is an encoded form
+        # of a known untrusted value substring-matches here (AM5.3).
         untrusted_blobs = [
-            (e, e.content.lower() + _canonical_blob_suffix(e.content, min_len))
+            (
+                e,
+                e.content.lower()
+                + _canonical_blob_suffix(e.content, min_len)
+                + _encoded_blob_suffix(e.content, min_len),
+            )
             for e in untrusted_entries
         ]
 

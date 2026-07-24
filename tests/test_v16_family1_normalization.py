@@ -141,12 +141,17 @@ def test_p2_interstitial_deferred_stays_step_up(session):
     assert _net(_authorize(g, "e-v-i-l.com")) == "STEP_UP:novel_lineage"
 
 
-def test_p2_base64_out_of_scope_stays_step_up(session):
+def test_p2_base64_now_caught_by_family2(session):
+    """SUPERSEDED by v1.6 family 2. base64 was out of scope for family 1 and
+    stayed STEP_UP:novel_lineage; the family-2 forward-encode lever moves it to
+    an attributed DENY:param_lineage (see docs/PREDICTIONS_v16_family2.md and
+    test_v16_family2_encoding.py). This row is the family-2 must-catch, not a
+    family-1 regression: family 1 left it unchanged, family 2 catches it."""
     import base64
 
     g, _ = session
     b64 = base64.b64encode(b"evil.com").decode()
-    assert _net(_authorize(g, b64)) == "STEP_UP:novel_lineage"
+    assert _net(_authorize(g, b64)) == "DENY:param_lineage"
 
 
 # --- P3: the four genuine catches and the two correct ALLOWs unchanged ------
