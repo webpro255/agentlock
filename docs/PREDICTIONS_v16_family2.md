@@ -113,6 +113,24 @@ the first family-2 frontier probe before the AFTER column is judged.
 > Original predictions and Amendments 1 through 5 preserved intact. Full record
 > in [AMENDMENT 6](#amendment-6-2026-07-24-result-first-cut-met-no-falsifications).
 
+> **AMENDED 2026-07-24 (amendment 7, AM5.1 measured, family 2 closed over its
+> token set).** The AM5.1 coverage inheritance was measured. It is confirmed and
+> its true miss set is narrow (localhost, db01, abcde, secret: below min_len or
+> purely alphabetic with no structural char); everything else extracts, most
+> often via the str net. The premise inverted: bare IPv4/IPv6, host:port, data:
+> URIs, and no-TLD emails are NOT tokenizer misses (they extract as str, so
+> family 1 sees them and the direction-(B) blob encodes them, catching the bare
+> form), but their COMPOSITE forms are uncovered because Decision B curation
+> (_SCAN_KINDS = url, email) excludes str from the direction-(A) scan. This is a
+> two-layer inheritance (tokenization image, then curation image), both strictly
+> downstream. The IP composite gap, Defect A as a new family-2 correctness
+> question, the mangled-partial robustness finding, and the declined true misses
+> are recorded. Closing statement: family 2 is COMPLETE over the token set family
+> 1 gives it; the next increment costs a shared-extraction change with
+> both-families blast radius, a different kind of work. Original predictions and
+> Amendments 1 through 6 preserved intact. Full record in
+> [AMENDMENT 7](#amendment-7-2026-07-24-am51-measured-family-2-closed-over-its-token-set).
+
 ## Hypothesis
 Directional encoding (base64, URL-encoding, hex) can be attributed back to its
 untrusted source WITHOUT the novelty false-positive surface, by encoding the
@@ -1138,3 +1156,128 @@ falsification, each paid for by a cheap read rather than a wasted build, is what
 made a clean first-cut result possible rather than lucky. Reasoning proposed,
 measurement disposed (F7), and the disposal happened before the mechanism
 existed.
+
+---
+
+## AMENDMENT 7 (2026-07-24): AM5.1 measured, family 2 closed over its token set
+
+This amendment records the AM5.1 Phase 0 measurement (a read-only run of the
+context-side recognizers over a corpus of realistic untrusted values) and uses it
+to state the closing boundary of family 2. It makes no mechanism change. Original
+predictions and Amendments 1 through 6 are left intact.
+
+### AM7.1. The inheritance is confirmed and the miss set is narrow
+
+AM5.1 recorded that family 2's catch surface is the image of family 1's
+context-side tokenization under the encoding set. Measured, this holds, and the
+set of values NO recognizer extracts is small:
+
+**True misses (empty `extract_lineage_tokens`): `localhost`, `db01`, `abcde`,
+`secret`.** Each is either below `min_len` or a purely alphabetic 6-to-11-char
+word with no structural character. Everything else in the probe extracted, most
+often via the `str` net, because `_STRUCTURAL` includes `.` `:` `/` `@` and every
+digit, so `_plain_qualifies` catches most structured or long tokens that `_URL_RE`
+and `_EMAIL_RE` miss.
+
+### AM7.2. The premise inverted (the finding)
+
+The natural expectation, that bare IP addresses are the sharp tokenizer miss, is
+FALSIFIED by measurement. Bare IPv4 (`192.168.1.1`, `8.8.8.8`), IPv6
+(`2001:db8::1`, `fe80::1`), `host:port` forms, `data:` URIs, and no-TLD emails
+(`mallory@evil`) all extract as `str` tokens. So family 1 sees them, and family
+2's direction-(B) blob encodes them: measured, `base64("8.8.8.8")` is present in
+the direction-(B) blob, so the BARE encoded form catches. What is uncovered is
+their COMPOSITE encoded forms, because Decision B curation sets `_SCAN_KINDS` to
+`url` and `email` only, so `str` is excluded from the direction-(A) scan and the
+needle set is empty for an IP-bearing blob (measured).
+
+### AM7.3. This is a two-layer inheritance
+
+- **Layer one (AM5.1 as recorded):** family 2's surface is the image of family
+  1's context-side tokenization. An empty preimage (a true miss) gives an empty
+  image in both families.
+- **Layer two (below it):** even when extraction succeeds, direction-(A) coverage
+  is gated by Decision B curation, so the SCAN surface is the curation image of
+  the tokenization image. A `str`-only value is covered bare (direction B) and
+  uncovered composite (direction A).
+
+Both layers are strictly downstream: family 2 never adds coverage family 1 lacks,
+it can only narrow it. The composite scan surface is
+`curation(encode(tokenize(untrusted)))`, each stage a potential narrowing, none
+an addition.
+
+### AM7.4. The IP composite gap (recorded so it is not later a small tweak)
+
+Bare IPs are canonical exfiltration and C2 endpoints. They are covered bare and
+uncovered composite. Two fix shapes, asymmetric in the AM4.2 pattern:
+
+- **(a) A distinct `ip` kind from an IP recognizer, admitted to `_SCAN_KINDS`.**
+  IPv4 and IPv6 have exact grammars, so this admits a well-defined set of
+  high-structure needles and keeps the scan set curated and enumerable. PREFERRED
+  SHAPE.
+- **(b) Admit `str` wholesale to `_SCAN_KINDS`.** A pure curation change needing
+  no new recognizer, but it re-admits the entire `str` universe as
+  substring-scanned needles, exactly the false-positive surface Decision B was
+  written to bound. The measurement names where it lands first: the git SHA, the
+  de-hyphenated UUID, the JWT, and the data-URI as the long low-structure
+  carriers, with the API token canary (16-char hex run at the hex floor) as the
+  likeliest first hit. NOT PREFERRED.
+
+Unlike AM4.2, even the preferred shape is NOT CONTAINED. A new kind label enters
+the token set and can shift the `kind_rank` citation ordering on family 1 rows
+even where `str` already matched the same string. Any IP cut is therefore a
+BOTH-FAMILIES change requiring family 1 regression measurement, not a family 2
+amendment.
+
+### AM7.5. Defect A is now a family-2 correctness question
+
+Defect A (family-1 doc: prose words with trailing punctuation stay distinctive
+tokens) is no longer only a family-1 wart. Measured: `_plain_qualifies` strips
+`"'()[]{}<>,;:!?` but NOT the period, while `_canon_url` strips it, so `evil.com.`
+yields `str` token `evil.com.` (dot retained) alongside `url` token `evil.com`
+(dot stripped). Family 2 encodes token SPELLINGS, and the trailing dot changes the
+byte stream and therefore every base64 phase interior. Direction (B) is fine today
+because both spellings enter the blob, but the direction-(A) needle set and the
+AM4.1 floor accounting assumed ONE matchable form per value per phase. Registered
+check, for whenever Defect A is next touched: whether the divergent spelling mints
+needles that were never in the floor analysis.
+
+### AM7.6. Mangled partials fail in the right direction
+
+Quoted-local emails (`"m x"@evil.com`), credentialed URLs
+(`https://user:pass@evil.com/p`), and bracketed IPv6 (`[2001:db8::1]:443`) extract
+a DISTORTED full token (`x"@evil.com`, `pass@evil.com`, `2001:db8::1]:443`), but
+`_URL_RE` still recovers the clean domain, and the domain is what forward-encode
+needs. Precision is lost on the exotic full value while the exfil-relevant core is
+preserved. Recorded as a robustness finding in family 2's favor.
+
+### AM7.7. True misses declined, with reasons
+
+Rather than deferring the four true misses, they are DECLINED with reasons, to
+keep the open-items list honest:
+
+- **`localhost`** is not an exfiltration endpoint (a local address does not carry
+  data out).
+- **Sub-`min_len` values** (`db01`, `abcde`) are the `min_len` contract working as
+  specified, not a defect.
+- **Bare keywords** (`secret`) are outside lineage's remit, which tracks
+  destinations rather than vocabulary.
+
+### AM7.8. The containment boundary, and the closing statement for family 2
+
+Every family 2 cut was safe because it added needles over a FROZEN TOKEN SET: the
+first cut emitted encoded forms, the composite cut added a scan direction, the
+base64 cut added phase interiors, and none of them changed what
+`extract_lineage_tokens` returns. A tokenizer or curation change moves the set
+itself, which is why the AM7.4 fixes have a both-families blast radius that no
+family 2 cut had.
+
+**Family 2 is COMPLETE over the token set family 1 gives it.** Bare and composite
+forms are closed for base64, hex, and natural-URL, attributed and
+configuration-independent (holds with the novelty branch on or off). The next
+coverage increment costs a shared-extraction change (a new recognizer or a
+curation broadening) with both-families blast radius, and that is a different kind
+of work from anything family 2 has done. This is the boundary of the method,
+measured from the inside: family 2 is exhausted not because every value is caught,
+but because every remaining value is one family 1 does not tokenize, and reaching
+those is family-1 (extractor) work, not family-2 (encoder) work.
