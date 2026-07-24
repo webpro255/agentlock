@@ -425,3 +425,108 @@ AM1.2), the predictions-docs disposition (ship raw with a distilled entry point,
 AM1.3), and whether an evaluation run gates (yes, AM1.4). Still OPEN, unchanged:
 the IP composite fix shape and its family-1 regression, and the final public-claim
 wording.
+
+---
+
+## AMENDMENT 2 (2026-07-24): corrects AM1.4 and AM1.5 before any run
+
+This amendment CORRECTS the framing that Amendment 1 gave the v1.6 AgentDojo run,
+on the basis of a measured read-only sweep of the benchmark's own content. It is
+dated and recorded BEFORE any run. The original document and Amendment 1 are left
+intact; AM1.4 and AM1.5 are superseded on the "external validation" claim only,
+and this section states what replaces it.
+
+### AM2.1. Measured finding: AgentDojo contains no encoded forms
+
+A read-only sweep of the installed agentdojo package across all four suites
+(banking, slack, travel, workspace) found NO encoded forms anywhere: no encoding
+function calls, no percent-encoding, no base64 blobs, no hex escapes, no
+defanging, no homoglyphs. Every injected target value (IBANs, recipients, URLs,
+file IDs, passwords) appears as literal PLAINTEXT, wrapped in a social-engineering
+template that embeds the goal verbatim without transformation.
+
+Two representation quirks were found, and neither is an encoding:
+
+- **Scheme-less bare domains.** A domain written without `http(s)://` is a form
+  `_URL_RE` already reads (its scheme prefix is optional), so it is a plaintext
+  token the tokenizer handles directly, not a transformed one.
+- **A bit.ly shortener.** A shortened URL is a plaintext token expandable only by
+  NETWORK RESOLUTION, not by string normalization or decoding. Forward-encode
+  acts on string representations of known untrusted values; a shortener is a
+  different value that resolves elsewhere, outside the mechanism's remit.
+
+### AM2.2. AM1.4 and AM1.5 are corrected
+
+Both framed the v1.6 AgentDojo run as EXTERNAL VALIDATION of the release claim.
+That framing conflated two separate things. AM1.5 established that the frozen
+corpora and the benchmark share no provenance, which is TRUE and REMAINS TRUE. But
+provenance-independence is NECESSARY AND NOT SUFFICIENT for external validation:
+the benchmark is ALSO independent of the CAPABILITY, because it never presents an
+encoded payload for the encoding mechanism to act on (AM2.1). A run cannot
+validate what it does not exercise. AM1.4's "the run is external validation" and
+AM1.5's "therefore the run is EXTERNAL VALIDATION, not regression evidence" are
+corrected on exactly this point.
+
+### AM2.3. Corrected framing: the run is a no-regression gate
+
+The AgentDojo run is a NO-REGRESSION GATE. It establishes that v1.6 does not break
+the injection-blocking and utility behavior v1.5 had. It does NOT validate the
+encoding capability, because the benchmark contains no encoded payload to catch.
+
+The frozen corpora remain the ONLY capability evidence for the encoding work, and
+there is no external validation of that capability available from this benchmark.
+State this plainly, as a WEAKER position than AM1.4 assumed: "we ran the
+benchmark" must not be allowed to imply more than a no-regression result. The
+capability is proven internally (the four cuts, measured MET) and is not
+externally corroborated by AgentDojo.
+
+### AM2.4. The run still gates, for the corrected reason
+
+v1.6 changes verdicts BY DESIGN and is not decision-invariant the way v1.5's work
+was (family-1 R3 made this explicit for family 1, and family 2 adds encoded
+catches). So a no-regression measurement against the published baseline is
+required before release REGARDLESS of what the benchmark can validate: a
+verdict-changing release must show it did not change the wrong verdicts. The
+three-column design stands (v1.5.0 baseline, v1.6 default, v1.6 novel-on), but its
+OUTPUT is a NO-REGRESSION TABLE, not a capability table. The columns show that the
+baseline behavior is preserved (utility held, injection-blocking not regressed)
+across the shipped default and the novel-on configuration, not that an encoded
+attack was caught.
+
+### AM2.5. Open, not decided: a custom encoded-injection variant
+
+Whether to author a CUSTOM INJECTION VARIANT that encodes AgentDojo's own target
+values (the IBANs, recipients, URLs, file IDs) and runs them through the same
+harness is recorded as an OPEN option, not decided here.
+
+- **Value:** it would exercise the mechanism on benchmark TASK SHAPES rather than
+  on probe constructions, which is closer to external than the frozen corpora
+  (real suite structure, real tool surfaces, real utility tasks around the
+  injection).
+- **Limitation:** it is AUTHORED BY US, so it is NOT independent in the AM1.5
+  sense. It would be a stronger capability demonstration than the frozen corpora
+  (benchmark task shapes) but still not third-party-independent evidence, because
+  we chose which values to encode and how.
+
+Recorded as a candidate for after the no-regression run, its value and its
+limitation both stated. Not decided.
+
+### AM2.6. Consequence for the public claim
+
+The claim wording (still OPEN per AM1.7) MUST NOT cite AgentDojo as evidence for
+the encoding capability. It may cite AgentDojo for NO-REGRESSION and the frozen
+corpora for CAPABILITY, with the distinction VISIBLE to the reader. A sentence
+that lets AgentDojo appear to corroborate the encoding catch would overstate
+exactly the way AM2.2 corrects. The honest form separates the two: AgentDojo shows
+v1.6 does not regress the v1.5 behavior; the frozen corpora show the encoded
+attack is caught and attributed.
+
+### AM2.7. Status after this amendment
+
+AM1.5's independence VERDICT stands (the corpora and benchmark share no
+provenance). AM1.4's GATING decision stands (the run happens before release). What
+is corrected is the CHARACTER of the run: no-regression gate, not external
+validation of capability. The item-8 open list is unchanged by this amendment (the
+IP fix shape and the claim wording remain open), with the added AM2.6 constraint
+on how the claim may cite the benchmark, and the added AM2.5 open option of a
+custom encoded variant.
