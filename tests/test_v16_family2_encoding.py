@@ -197,32 +197,36 @@ def test_positive_control_legit_base64_config_clears():
     assert _net(g, cfg) == "ALLOW"
 
 
-# --- Deferred composites: unchanged; a catch is a structural impossibility -----
-# AM3.5 / AM4.4: an encoded composite yields no embedded sub-token to match, and
-# the whole opaque composite token is not a substring of the blob (direction B).
-# So every composite stays uncaught. A composite catch WITHOUT a direction-(A)
-# scan or param-side sub-token emission is a structural impossibility and would
-# trigger an audit of the measurement, not acceptance.
+# --- base64 composites still deferred (the composite cut catches hex and URL) --
+# SUPERSEDED in part by the composite cut. The direction-(A) scan
+# (test_v16_family2_composite.py) now catches hex and natural-URL composites,
+# so those rows moved there. base64 composites remain deferred except the
+# phase-0-AND-terminal corner (AM1.3): the bare needle carries terminal padding
+# that a non-terminal composite does not have. The rows below are base64,
+# non-terminal, so they stay uncaught, and a catch here would be a measurement
+# fault to audit (AM4.4), never a bonus.
 
-_DEFERRED_COMPOSITES = [
-    ("base64 composite", base64.b64encode(b"visit evil.com now").decode()),
-    ("hex composite", b"report_evil.com.pdf".hex()),
-    ("url composite", _natural_url("report_evil.com.pdf")),
+_DEFERRED_BASE64_COMPOSITES = [
+    ("base64 composite, phase 0 non-terminal",
+     base64.b64encode(b"visit evil.com now").decode()),
+    ("base64 composite, phase 1",
+     base64.b64encode(b"xevil.com/malware").decode()),
 ]
 
 
 @pytest.mark.parametrize(
-    "label,value", _DEFERRED_COMPOSITES, ids=[c[0] for c in _DEFERRED_COMPOSITES]
+    "label,value", _DEFERRED_BASE64_COMPOSITES,
+    ids=[c[0] for c in _DEFERRED_BASE64_COMPOSITES],
 )
-def test_deferred_composites_stay_uncaught(label, value):
-    """Every composite row is UNCHANGED: no param_lineage match, STEP_UP under
-    novel ON, exactly as the BEFORE probe measured. A catch here would be a
-    measurement fault to audit (AM4.4), never a bonus."""
+def test_deferred_base64_composites_stay_uncaught(label, value):
+    """Non-terminal base64 composites stay uncaught: no param_lineage match,
+    STEP_UP under novel ON. The direction-(A) scan cannot reach them because the
+    bare needle carries terminal padding the composite lacks (AM1.3)."""
     g, sid = _build(novel_enabled=True)
     match = g._context_tracker.parameter_lineage_check(
         sid, {"query": value}, min_len=6
     )
-    assert match is None, f"{label}: impossible composite catch {match} -- audit"
+    assert match is None, f"{label}: impossible base64 composite catch {match}"
     assert _net(g, value) == "STEP_UP:novel_lineage"
 
 

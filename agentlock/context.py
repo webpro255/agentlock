@@ -363,6 +363,83 @@ def _encoded_blob_suffix(content: str, min_len: int) -> str:
     return (" " + " ".join(sorted(forms))) if forms else ""
 
 
+# ---------------------------------------------------------------------------
+# v1.6 family 2 COMPOSITE CUT -- direction-(A) scan needle set
+# ---------------------------------------------------------------------------
+# The first cut runs direction (B): tokenize the param, test each param token as
+# a substring of the untrusted blob.  Direction (B) catches BARE encoded forms
+# but structurally cannot catch a COMPOSITE (the whole opaque composite token is
+# not a substring of the blob).  The composite cut adds direction (A): the
+# forward-encoded untrusted forms are the NEEDLES and the raw param leaf value is
+# the HAYSTACK, so an emitted short form contained in a longer composite matches.
+#
+# Direction (A) makes every emitted form a needle scanned against every leaf, so
+# its false-positive surface scales as (needles) times (haystack length), far
+# wider than direction (B)'s whole-token precision.  Two decisions bound it:
+#
+#   * Decision B (curation): only the url and email KINDS enter the scan set, the
+#     injection targets.  str/date/phone/amount are excluded.  The direction-(B)
+#     blob (_encoded_blob_suffix) keeps its wider all-kinds emission unchanged;
+#     curation applies only to this NEW scan set.
+#   * Decision C (per-encoding floors): substring scanning needs longer needles
+#     than whole-token matching.  Separate floors per encoding, hex 16 (16-symbol
+#     alphabet, densest benign carriers: SHAs, de-hyphenated UUIDs, hashes),
+#     base64 12 (~38 folded symbols), natural-URL 10 (quasi-plaintext, retains
+#     the domain verbatim).  These are SEPARATE from _ENCODED_MIN_LEN, which is
+#     the direction-(B) blob floor and stays 8.  The counted 4/4 bare rows are
+#     caught by direction (B), so these floors cannot touch them (floor-
+#     independent); they only govern composite coverage for short values, which
+#     is the deferred AM2.2 tension.
+#
+# Zero-decode is preserved: needles come from _encoded_forms (forward encoding),
+# nothing is inverted, and the no-decode suite guard still covers this code.
+_SCAN_FLOORS = {"hex": 16, "base64": 12, "url": 10}
+_SCAN_KINDS = frozenset({"url", "email"})
+
+
+def _scan_encoding(form: str) -> str:
+    """Classify an emitted form by its encoding, for the per-encoding floor.
+
+    natural-URL forms carry a percent sign; hex forms are all hex digits;
+    everything else is base64.  Order matters: the percent test comes first
+    because a natural-URL form of an all-alphanumeric token could otherwise look
+    hex."""
+    if "%" in form:
+        return "url"
+    if all(c in "0123456789abcdef" for c in form):
+        return "hex"
+    return "base64"
+
+
+def _encoded_scan_forms(tok: str) -> set[str]:
+    """Direction-(A) needles for one untrusted token: its encoded forms admitted
+    only above the per-encoding scan floor (Decision C).
+
+    Reuses ``_encoded_forms``, the SAME forward-encoding primitive the blob
+    emission uses, then filters by the higher per-encoding floor.  Nothing is
+    decoded; the scan floors are all at or above ``_ENCODED_MIN_LEN`` so this is
+    a strict narrowing of the blob emission, never a widening."""
+    return {
+        f for f in _encoded_forms(tok) if len(f) >= _SCAN_FLOORS[_scan_encoding(f)]
+    }
+
+
+def _encoded_scan_needles(content: str, min_len: int) -> set[str]:
+    """The curated (url/email kinds, Decision B) and floored (Decision C)
+    direction-(A) needle set for one untrusted blob's content.
+
+    Drawn from the same ``extract_lineage_tokens`` source as the blob emission
+    (AM5.1), so the scan can only key on what family 1 already tokenizes.  Kept
+    PER untrusted entry by the caller (never pooled across entries), because a
+    form two entries both emit would otherwise make the cprov attribution
+    ambiguous."""
+    needles: set[str] = set()
+    for kind, tok in extract_lineage_tokens(content, min_len):
+        if kind in _SCAN_KINDS and tok:
+            needles |= _encoded_scan_forms(tok)
+    return needles
+
+
 def _iter_param_leaves(obj: Any, path: str = "") -> Iterator[tuple[str, str]]:
     """Yield (path, str_value) leaves of a (possibly nested) parameter value."""
     if isinstance(obj, dict):
@@ -686,6 +763,14 @@ class ContextTracker:
             )
             for e in untrusted_entries
         ]
+        # Composite cut, direction (A): per-entry keyed needle sets, curated to
+        # url/email kinds and per-encoding floors (Decisions B and C).  Kept per
+        # entry, NOT pooled: a needle two untrusted entries both emit must stay
+        # attributable to exactly one parent cprov, so the scan carries the
+        # entry that produced each set (attribution requirement, section 7).
+        untrusted_scan = [
+            (e, _encoded_scan_needles(e.content, min_len)) for e in untrusted_entries
+        ]
 
         # Most-specific-first, like ``novel_lineage_check``, and for the same
         # reason: ``extract_lineage_tokens`` returns a SET, so iterating it
@@ -755,6 +840,58 @@ class ContextTracker:
                         # without parsing ``untrusted_source_ref``.
                         "untrusted_provenance_id": entry.provenance_id,
                     }
+
+        # Composite cut, direction (A).  Runs ONLY after the direction-(B) loop
+        # above found nothing, and this ORDER is a decision, not an accident (R4).
+        #
+        #   * Direction (B) FIRST preserves citation determinism.  A bare row's
+        #     raw value equals its needle, so direction (A) would ALSO find that
+        #     needle inside the raw value and could cite it via the scan path.
+        #     Letting (B) return first keeps every counted-4/4 and family-1 catch
+        #     byte-identical to the first cut: those are (B) matches and cite the
+        #     (B) token.  A (B) match therefore never carries the scan marker, and
+        #     the loop-order test pins that so a future reorder fails loudly.
+        #   * The auth-first short-circuit above is untouched, byte-for-byte.
+        #     Direction (A) has its OWN clearance, WHOLE-LEAF (Decision A): a leaf
+        #     that is itself a substring of the auth blob is the user's own
+        #     content, so any needle inside it is coincidental, not laundering,
+        #     and the leaf is skipped before it is scanned.  This is what clears
+        #     the positive control (a legit user-supplied encoded value is a
+        #     substring of the auth blob) at LEAF granularity.  It tests the WHOLE
+        #     leaf, not a sibling token, so it does not reopen the composite-
+        #     laundering breach family 1 closed per-token on the (B) side.
+        for path, value in _iter_param_leaves(parameters):
+            # Folded (AM2.2 symmetric lowercase), matching direction (B), which
+            # compares lowercased param tokens against the lowercased blobs.  The
+            # needles are already folded lowercase and the auth blob is already
+            # lowercased, so the haystack is folded here to keep the comparison
+            # symmetric; an uppercase hex SHA or an uppercase percent-code would
+            # otherwise slip a real encoded composite past the scan.
+            low = value.lower()
+            # Decision A: whole-leaf auth clearance, before scanning the leaf.
+            if low in auth_blob:
+                continue
+            for entry, needles in untrusted_scan:
+                for needle in sorted(needles):
+                    if needle in low:
+                        _note_outcome(outcome, "match")
+                        return {
+                            "matched_param": path,
+                            "matched_value": value[:120],
+                            "matched_kind": _scan_encoding(needle),
+                            "matched_token": needle[:120],
+                            "untrusted_source_ref": (
+                                f"{entry.tool_name or entry.source.value}"
+                                f":{entry.provenance_id}"
+                            ),
+                            "untrusted_provenance_id": entry.provenance_id,
+                            # Marks this as a direction-(A) raw-substring catch,
+                            # never a direction-(B) token catch.  Only the (A)
+                            # path sets it, so the (B) return stays byte-for-byte
+                            # and the loop-order test can assert bare rows lack it.
+                            "match_direction": "raw_substring_scan",
+                        }
+
         # Compared every traceable token against the untrusted context and none
         # of them traced to it.  This, and only this, is the strong result: it
         # carries no qualifier.
