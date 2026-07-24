@@ -97,6 +97,22 @@ the first family-2 frontier probe before the AFTER column is judged.
 > build order fixed by AM4.3. Original predictions and Amendments 1-4 preserved
 > intact. Full record in [AMENDMENT 5](#amendment-5-2026-07-22-spec-closure-before-mechanism-code).
 
+> **AMENDED 2026-07-24 (amendment 6, RESULT: first cut MET, no falsifications).**
+> The AM5.3 forward-encode first cut is implemented and measured. Every counted
+> prediction is MET: counted must-catch 0/4 to 4/4 attributed
+> DENY:param_lineage naming the parent cprov_ entry in BOTH novel-ON and
+> novel-OFF; the soundness floor is met in both configs, closing the measured
+> shipped-default gap; the must-not-trip FP delta is exactly 0 with param_lineage
+> uniformly no_match; the positive control clears via auth-first; every deferred
+> composite row is unchanged; suite 1265, ruff and mypy clean. The one free
+> parameter, the AM2.2 encoded-form length floor, is fixed at 8 and justified.
+> The family-1 test that asserted base64's F4 LIMITATION is superseded (not
+> regressed) and replaced with an attributed-DENY assertion, keeping the row
+> covered. Three structural guards are now enforced by the suite: additive-only
+> emission, a no-decode grep of context.py, and the auth-first positive control.
+> Original predictions and Amendments 1 through 5 preserved intact. Full record
+> in [AMENDMENT 6](#amendment-6-2026-07-24-result-first-cut-met-no-falsifications).
+
 ## Hypothesis
 Directional encoding (base64, URL-encoding, hex) can be attributed back to its
 untrusted source WITHOUT the novelty false-positive surface, by encoding the
@@ -971,3 +987,154 @@ mechanism behavior is left to be inferred at build time that is not written here
   positive control, it reverses nothing. The must-not-trip column gains one
   explicitly-labeled positive-control row (legit base64 config), already present
   in the BEFORE probe, now assigned its verification role.
+
+---
+
+## AMENDMENT 6 (2026-07-24): RESULT, first cut MET, no falsifications
+
+This amendment records the MEASURED RESULT of the AM5.3 forward-encode first
+cut. It is dated and recorded AFTER the mechanism was implemented and the frozen
+probes replayed on the family-2 engine. Amendments 1 through 5 are preserved
+intact; nothing above is rewritten. No mechanism change is made by this
+amendment; it records the outcome of the build the doc already fully determined.
+
+### AM6.1. Result: every counted prediction MET
+
+The first cut was implemented exactly to AM5.3 (source =
+`extract_lineage_tokens` on the untrusted blob; encodings = base64 standard
+padding, hex, natural-URL of `.` `@` `:` `/`; symmetric lowercase fold;
+encoded-form length floor; untrusted-blob-only additive placement at the
+`_canonical_blob_suffix` position; auth blob and auth-first ordering untouched).
+Measured against the frozen predictions, row for row:
+
+- **Counted must-catch: 0/4 to 4/4 attributed.** All four counted rows
+  (`base64(evil.com)` = `zxzpbc5jb20=`, `base64(mallory@evil.com)` =
+  `bwfsbg9yeubldmlslmnvbq==`, url-encoded `evil.com` = `evil%2ecom`,
+  `hex(evil.com)` = `6576696c2e636f6d`) move to `DENY:param_lineage`, each with a
+  `matched_token` equal to the folded encoded form AND a named parent `cprov_`
+  entry for the untrusted `web_content` blob (`fetch_url:cprov_...`). This holds
+  in BOTH the novel-ON and the shipped novel-OFF default, because
+  `parameter_lineage_check` is on by default and returns the DENY regardless of
+  the novelty flag.
+- **Soundness floor: met in both configs.** Before, under the shipped default
+  (novel OFF), all four encoded attacks reached ALLOW (the measured
+  default-configuration gap, F1/F4). After, 4/4 are blocked in both novel-ON and
+  novel-OFF. The strongest claim in the arc, the default-configuration soundness
+  improvement, is confirmed.
+- **Must-not-trip: FP delta exactly 0.** Every benign row (minted UUID, order ID,
+  computed total, git SHA, real API token) holds its family-1 verdict, and the
+  `param_lineage` column is uniformly `no_match`. Forward-encode never read,
+  decoded, or inverted a benign value, so none moved.
+- **Positive control: still clears.** The legit-base64-config row remains ALLOW
+  via the auth-first short-circuit, confirming the emissions landed in the
+  untrusted blob only and the auth blob was untouched (AM5.2).
+- **Deferred composites: unchanged.** base64, hex, and natural-URL composites all
+  stay uncaught (`param_lineage = no_match`, STEP_UP under novel ON), exactly as
+  the BEFORE probe measured and as AM3.5/AM4.4 predicted.
+- **Suite: 1265 passed, ruff and mypy clean.** No em dashes.
+
+No counted prediction was falsified. Nothing outside the deferred frontier
+moved.
+
+### AM6.2. The floor value, the one free parameter: 8, applied to the encoded form
+
+The AM2.2 length floor, the single free parameter AM5.3 left for the mechanism
+to choose and justify, is fixed at **8**, applied to the ENCODED form (not the
+plaintext token). Justification, against the near-min_len folded-entropy hazard
+AM2.2 named:
+
+- The plaintext distinctiveness gate is `min_len=6` over the folded ~36-symbol
+  lowercase-alphanumeric alphabet, about 31 bits.
+- Folding collapses base64's 64-symbol alphabet to about 38 (log2 ~ 5.25
+  bits/char), so RAW length OVERSTATES a folded form's entropy. Recovering the
+  plaintext gate's 31 bits under folding needs ceil(31 / 5.25) = 6 folded chars,
+  which is exactly the 6-char band AM2.2 flagged as the hazard, where a folded
+  encoded form is a weaker discriminator than its length suggests.
+- A floor of 8 clears that band with margin (8 folded chars ~ 42 bits, about 11
+  bits / ~2000x above the plaintext gate) while admitting all four counted rows:
+  the shortest counted encoded form is the natural-URL `evil%2ecom` at 10 chars,
+  so 8 rejects the low-entropy near-min_len emissions without dropping a counted
+  catch.
+
+Consequence, recorded: a future short-length collision therefore reads as a
+floor set too low, a NAMED spec decision to revisit, not a mechanism failure.
+The floor's direction was fixed by AM2.2 before the build; only its value was
+open, and it is now closed at 8 with the entropy argument above.
+
+### AM6.3. Superseded family-1 test (recorded so it is not read as a regression)
+
+`test_p2_base64_out_of_scope_stays_step_up` asserted family 1's LIMITATION: that
+base64 was caught ONLY by the unattributed novelty branch (F4), staying at
+`STEP_UP:novel_lineage` because family 1 had no basis to decode or attribute an
+encoded form. Family 2's entire purpose is to REMOVE that limitation by
+forward-encoding the untrusted set, so the row is SUPERSEDED, not broken: family
+1 left it unchanged by design, and family 2 catches it by design.
+
+The replacement test asserts the new expected behavior, an attributed
+`DENY:param_lineage` naming the parent `cprov_` entry, so the row remains
+COVERED rather than merely deleted. Every other family-1 corpus row is
+byte-identical before and after family 2, satisfying the no-regression floor:
+the base64 row is the sole moved row, and it is a counted must-catch, not a
+regression.
+
+### AM6.4. Structural guards now enforced by the suite, not by convention
+
+Three properties the safety argument rests on are now pinned by tests, so a
+future change that breaks one fails loudly rather than eroding the argument
+silently:
+
+- **Additive-only emission.** A guard seeds one untrusted content (`evil.com`)
+  and asserts BOTH the raw form and the encoded form catch. If emission ever
+  becomes replacement (dropping the raw content), the raw catch disappears and
+  the guard fails. This is the family-1 additive-emission invariant (A1),
+  carried into family 2 and made testable.
+- **No-decode guard.** The suite greps `context.py` for `b64decode`, `fromhex`,
+  `unquote`, and equivalent decode primitives, and fails if any is present. This
+  is what makes the zero-decode false-positive argument STRUCTURAL rather than a
+  promise: a reverse-decode path, which would reopen the probe-2-UUID
+  false-positive surface (section 1), cannot be slipped in later without
+  tripping the guard.
+- **Auth-first ordering untouched.** The positive control (legit base64 config
+  clears via `tok in auth_blob` before any untrusted scan) pins that the
+  auth-first short-circuit is intact and that emissions never reach the auth
+  blob.
+
+### AM6.5. Closing state of the family-2 first cut
+
+**Closed.** Bare-form catches for base64, hex, and natural-URL, attributed to
+the parent `cprov_` entry and configuration-independent (holds with the novelty
+branch on or off). This closes the default-configuration soundness gap for the
+naive encoded attack.
+
+**Open, with named mechanism and fixed build order (AM4.3).**
+
+- All composites are DEFERRED. The fix path is fixed: a direction-(A) scan FIRST
+  (search the param for occurrences of the known forward-encoded token set,
+  which preserves zero-decode per AM4.2 and alone catches hex and natural-URL
+  composites), then three-phase emission SECOND for base64 (AM1.1, which upgrades
+  the scan from hex/URL-composite coverage to base64-composite coverage). Neither
+  is in the first cut.
+- Per-character URL enumeration (AM1.2, e.g. `%65vil.com`) is deferred, with the
+  enumeration bound the open question there.
+- Coverage inheritance from family 1's context-side tokenizer (AM5.1): family 2
+  can only encode what `extract_lineage_tokens` extracts, so a tokenizer miss is
+  inherited, and its fix lifts BOTH families at once.
+
+### AM6.6. Method note
+
+Across the family-2 design phase, four reasoned predictions were falsified: the
+AM2.1 composite claim (hex/URL composites caught by bare emission), the
+natural-URL partition claim (AM4.1), the two-halves scope (base64-specific vs
+universal, AM3.6), and the alignment-versus-direction confusion (AM3.2, alignment
+freedom is real but not the binding constraint; match DIRECTION is). Every one
+of the four landed OUTSIDE the counted set of four bare rows. The counted
+prediction never moved once, and then hit 4/4 on the first build.
+
+Record this as evidence that the Amendment-1 scope cut, count bare forms and
+defer composites, was drawn EXACTLY where the structural blocker (direction B)
+falls: the boundary is the direction blocker, so every falsification landed on
+the deferred side of a line chosen before any of them was found. Pre-build
+falsification, each paid for by a cheap read rather than a wasted build, is what
+made a clean first-cut result possible rather than lucky. Reasoning proposed,
+measurement disposed (F7), and the disposal happened before the mechanism
+existed.
