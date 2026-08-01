@@ -660,3 +660,408 @@ falsified by that probe and is corrected on the record at the top rather than
 carried forward. The BEFORE states other than P1 are predictions, and the
 cross-hop BEFORE probe is what turns them into measurements. This file is the
 prediction of record.
+
+---
+
+# AMENDMENT 1 (2026-08-01): mechanism probe results, and the frozen build spec
+
+Everything above this line is the original prediction of record and is unedited.
+This amendment records what a read-only mechanism probe series MEASURED against
+the shipped engine, and freezes the build spec that follows from it. All probe
+code was scratch, outside the repo, and no mechanism code exists at time of
+writing.
+
+## AM1.0 CORRECTION TO THE COMMISSIONING CLAIMS
+
+This section exists for the same reason the CORRECTION block at the top of the
+original document exists, and is placed first for the same reason. The task that
+commissioned this amendment supplied six findings to record. Four are
+contradicted by the measurements, and one of those re-asserts the precise fact
+the original document was written to correct. They are corrected here rather
+than carried into the spec.
+
+**C1. "The engine's existing BFS walks the chain, no engine walk work needed."**
+FALSE, and this is the original document's own falsified starting fact returning
+verbatim. `_collect_provenance_ids` does not exist; the correction at the top of
+this file verifies its absence four ways and classifies the walk as component 2
+of a three-component build. The probe wrote a cycle-guarded BFS in scratch to
+evaluate reachability; that scratch BFS is not engine code and nothing about it
+shipped. **The walk must still be built.**
+
+**C2. "Short/common-token over-linking is cut by the inherited family-2 min_len
+floors and kind curation, which transfer to linking unchanged."** FALSE in three
+separate ways, measured:
+
+  * `min_len` is family-1/v1.3 machinery (`schema.py:373`), not family 2.
+  * The family-2 controls are `_SCAN_FLOORS` and `_SCAN_KINDS` (`context.py:407-408`).
+    They govern only `_encoded_scan_needles`, the direction-(A) needle set.
+    **100% of measured false links were direction-(B) whole-token blob matches**,
+    which those controls do not govern. The family-2 controls cut none of the
+    over-linking, because they never engaged on any false link.
+  * The floors do not cut common tokens either. Every measured collision token
+    passes `min_len=6`: `ticket-88213` (12), `po-2026-0042` (12), `confirmation`
+    (12), `acknowledgement` (15), `security@corp.example.com` (25). Separately,
+    `_plain_qualifies` (`context.py:152-159`) treats `.` as structural and the
+    token strip set (`:180`) does not strip a trailing period, so sentence-final
+    English words are emitted as traceable tokens: measured emissions include
+    `report.`, `notice.`, `breakdown.`, `assigned.`, `resolved.`, `details.`.
+    An ordinary 200-character benign tool output emitted 11 tokens, 7 of kind
+    `str`.
+
+  The floors DO transfer unchanged, and they DO correctly exclude short and
+  undistinctive tokens (measured: `po-42`, `abcde`, `report`, `localhost`,
+  `totals`, `priority` all emit nothing). The false claim is that this cuts the
+  over-linking. It does not.
+
+**C3. "The Reading B selection rule is the fix (measured)."** PARTIALLY FALSE.
+Reading B was implemented and measured, and it is a real improvement that is not
+sufficient. See AM3 for the numbers. Recording it as the fix would pre-register
+a control the probe measured failing.
+
+**C4. "Ceiling (P4/P5): semantic and model-mediated rewrite uncatchable,
+pre-registered as non-capability."** FALSE, and it inverts the original
+document. Section 2 predicts P5 CAUGHT and states at lines 316-337 that
+pre-registering semantic paraphrase as a non-capability would be as damaging as
+claiming a capability the mechanism lacks. P4 is a depth row, also predicted
+CAUGHT. The ceiling is N1 and N2, model-mediated rewrite and no-matchable-form,
+and it is unchanged. The probe MEASURED P5 and depth-4 caught (AM4). Moving P5
+into the ceiling would discard the strongest measured result in the series.
+
+**C5. Verdict letter.** The mechanism probe returned **(c)**, an over-linking
+problem that must be solved before the build is viable, and identified a control
+that moves it to (b). Recording (b) is defensible ONLY with that control named
+and adopted. It is named and adopted in AM5. Recording (b) while attributing the
+fix to the family-2 floors (C2) or to Reading B (C3) would be recording a
+viability that no measurement supports.
+
+**What survives unchanged.** The R4 self-linking finding and its
+match-before-write fix are confirmed exactly as commissioned (AM2). The
+three-component build classification at the top of this document survives. The
+family-1 and family-2 floors transfer unchanged (they are simply not the control
+that resolves the residual).
+
+## AM1.1 VERDICT
+
+**Cross-hop linking is VIABLE, verdict (b): sound, requiring precision controls,
+all of which are now identified and specified.** The qualifier that makes this
+(b) rather than (c) is that the link predicate is REPLACED, not tuned. Token
+overlap does not survive as the linking condition. See AM5.
+
+Corpora were hand-built and small. Every figure below is an existence proof of a
+behavior, not a rate.
+
+## AM2 TRAP 1: R4 SELF-LINKING. CONFIRMED, FIX CONFIRMED
+
+**Measured.** Match-before-write produced **0 self-links across all 8 corpora**.
+Write-before-match produced self-links wherever a tool's output contains its own
+input: 3/3 on the echo chain, 1/1 on the P1 relay.
+
+**The consequence is worse than a spurious edge.** On P1 the self-link REPLACED
+the true parent and the catch disappeared: entries reachable to an untrusted
+ancestor went from `['B(relay)']` to `none`. Write-before-match is silently
+catch-destroying on any relay or echo tool.
+
+**Ordering confirmed slottable.** `record_write` (`context.py:600`) takes
+`parent_provenance_id` as a caller keyword (`:609`), constructs the dataclass
+with it (`:669`), and appends at `:674`. `notify_context_write` (`gate.py:2450`)
+is a pass-through, calling `record_write` at `:2491` and forwarding at `:2498`.
+Nothing between the public entry point and the append reads the log. **A match
+inserted anywhere before `context.py:674` sees prior entries only.**
+
+FROZEN: the match runs inside `record_write` or `notify_context_write`, strictly
+before the append. Not in an adapter that records first and links after.
+
+## AM3 TRAP 2: THE OVER-LINKING RESIDUAL, AND WHY READING B IS NOT THE FIX
+
+Two token-based linkers were simulated against the shipped matcher. Linker A
+reuses `parameter_lineage_check` verbatim (UNTRUSTED-only haystack, which is what
+that method scans, `context.py:795-799`). Linker B generalizes the haystack to
+every prior entry, which a link over a DERIVED intermediate hop requires.
+
+**Reading A (any untrusted token match wins), measured over-linking on
+legitimate trusted-only chains:**
+
+```
+corpus (collision token)                      linker A      linker B
+ticket workflow ('ticket-88213')              4/4 tainted   4/4 tainted
+benign 6-call ('po-2026-0042')                4/4 tainted   0
+benign 6-call, untrusted FIRST                4/4 tainted   0
+10-call session ('confirmation')              5/9 tainted   1/9 tainted
+incident chain ('security@corp.example.com')  3/4 tainted   3/4 tainted
+expense chain (shared domain, distinct paths) 0             0
+```
+
+Linker B's zeroes are `kind_rank` luck, not a control: it escaped only where a
+higher-ranked email or url token happened to point at the correct benign parent
+before the ordering reached the colliding `str` token.
+
+**The shared-email row is the important one.** `kind_rank` (`context.py:833`)
+places `email` at 0 and `url` at 1, above every `str`. An email or bare-domain
+collision is therefore selected in preference to every other token in the leaf,
+and no kind outranks it, so the rank-luck escape structurally cannot occur.
+Reading A is at its worst on exactly the shared-address case. A shared domain
+with distinct paths did NOT collide, because `_canon_url` retains the path
+(`docs.example.com/policy/travel` versus `docs.example.com/shared/invoice-9912`);
+the collision requires a bare-domain mention or a shared path. An address is
+atomic and has no such escape.
+
+**Link precision against declared ground truth, 10-call benign session, linker
+B: 6 links set for 6 true derivations, of which 2 named the correct parent and 4
+did not.** The link COUNT matched exactly, which is the FL3 success criterion as
+originally pre-registered. **FL3 must therefore be re-specified as parent
+identity, not link count**, or it will certify a graph that is two thirds wrong,
+the same way a verdict-only measurement cannot see saturation.
+
+**Reading B, implemented and measured.** Definition used, which is the only
+implementable reading at this layer: a token is trust-explained iff some prior
+entry with `authority != UNTRUSTED` and non-empty `content` contains it, under
+the same blob construction and substring test the untrusted side uses. Iterate
+candidate tokens in `kind_rank` order; prefer any trust-explained entry as
+parent; fall to untrusted only when no non-untrusted entry contains the token.
+
+```
+shared email (MID-chain collision)     3/4 tainted -> 0 tainted     FIXED
+P5 paraphrase (must-catch)             still caught                  HELD
+ticket (HEAD-of-chain collision)       4/4 tainted -> 4/4 tainted    NOT FIXED
+```
+
+**Reading B fixes mid-chain collisions and does not fix head-of-chain
+collisions, and one poisoned head link taints the whole chain through the walk.**
+The head case exactly:
+
+```
+T1  params {"id": "ticket-88213"}
+    prior log = [ U(auth) "please work the open ticket", A(untrusted) ]
+    -> T1 parent=A(untrusted)   tok='ticket-88213'
+    T2, T3, N(sink) then inherit.  4/4 tainted.
+```
+
+At T1 no trusted entry contains the token, because T1 is the first entry to carry
+it and its true origin is the ticket system, OUTSIDE the provenance log.
+
+**This limit is structural and cannot be tuned away.** It follows from the
+transport-independence fact already pre-registered at section 3 of this document:
+both adapters see only tool name, input arguments, output, session id, token id,
+and a static `context_source`, and no framework supplies a derivation signal.
+There is no way to record "this identifier came from the tool's own backend", so
+"a trusted origin ACCOUNTS FOR the token" is undecidable for any value entering
+from outside the log, which is the normal case for identifiers tools return.
+
+**Recorded as a definitional finding, because the commissioning brief asked for
+the distinction: at this layer there is no implementable difference between a
+trusted entry that ACCOUNTS FOR a token and one that merely CONTAINS it.** The
+brief's requested definition does not exist and could not be written. That is the
+finding, not an omission.
+
+**Not A2', confirmed.** A2' (`PREDICTIONS_v16_family1.md:994-997`,
+`context.py:1091-1097`) pools authoritative and untrusted into one set,
+`accounted = auth_tokens | untrusted_tokens`, because novelty does not care which
+side accounted a token. Untrusted membership ACCOUNTS a token under A2'. It is a
+novelty predicate over a token, not an attribution over an edge, and applying it
+at link time would decline to link on exactly the tokens that carry taint. Once
+unpooled, nothing of A2' remains but `extract_lineage_tokens`, which is the
+surface generating the false links rather than constraining them. Additionally
+`_token_accounted` is a closure inside `novel_lineage_check` (`context.py:1093`)
+and is not callable from a linker without extraction.
+
+## AM4 TRAP 3: THE PAYOFF ROWS DO NOT ISOLATE CROSS-HOP AS WRITTEN
+
+**Measured on the shipped single-hop engine, no linking:**
+
+```
+P1 sink send_payment  -> MATCH, cites fetch_url, tok 'mallory@evil.com', direction (B)
+P2 sink post_webhook  -> MATCH, cites fetch_url, needle 'bwfsbg9yeubldmlslmnvb',
+                                match_direction='raw_substring_scan'
+P5 sink send_email    -> None (no_match)
+depth-4 sink          -> None (no_match)
+```
+
+P1's and P2's BEFORE cells in section 2 are corrected: both measure **DENY**, not
+ALLOW, whenever the sink's own parameters carry the untrusted value or an encoded
+form of it. P1's original `MEASURED ALLOW` came from the two adapter boundary
+tests, which call the relay with `text="ignored"` so the value never enters the
+relay's input; section 2 already notes those are section-3 cases. P2 is caught by
+family 2's direction-(A) phase interiors at decision time.
+
+**Consequence for the payoff argument.** The rows that genuinely isolate
+cross-hop are those where the sink carries NO matchable form of the untrusted
+value, only the intermediate hop's content. Those are P5 and the depth rows, and
+both measure `no_match` on the shipped engine. **P5 and P3/P4 are the real
+must-catch set. P1 and P2 as constructed are family-1 and family-2 rows.**
+
+The free-inheritance claim itself holds mechanically: the encoded hop links, in
+both directions, under both simulated linkers. But note for the writeup that
+under the frozen control (AM5) the encoded link does not come from family 2 at
+all: C links to B because B's output IS the base64 blob and C's input carries it
+verbatim. Family 2 remains load-bearing for the single-hop DECISION and is not
+load-bearing for the LINK.
+
+## AM5 THE FROZEN SELECTION RULE (the one new piece)
+
+The residual in AM3 is not a floor set too low. `ticket-88213` and
+`po-2026-0042` are 12 characters, correctly extracted, above every floor, and
+genuinely present in both a trusted and an untrusted entry. **Token overlap is
+not derivation evidence when the haystack is ordinary prose**, because benign
+tool outputs share vocabulary and identifiers with each other and with attacker
+text by default. No token-side control separated the false links from the real
+catches: curating to url/email kinds took the ticket collision from 4/4 to 0 and
+simultaneously took P5 and depth-4 to `parent=None`, because their carrying token
+was `acknowledgement`.
+
+FROZEN: the link predicate is REPLACED by whole-content carriage, in two tiers.
+
+**Tier 1, candidacy (containment).** At ingestion, before the append at
+`context.py:674`, with `leaves = [v.lower() for _p, v in _iter_param_leaves(params)]`:
+a prior entry `e` is a CANDIDATE PARENT iff `c = (e.content or "").strip().lower()`
+satisfies `len(c) >= CONTAIN_MIN` and `c` is a substring of at least one leaf.
+
+**Tier 2, selection.** Let `C` be the candidate set. Partition by whether a
+candidate is UNTRUSTED or has an untrusted ancestor through already-set links
+(computable at ingestion, since prior parents are resolved).
+
+  1. If any candidate is taint-reachable, select from that subset.
+  2. Otherwise select from the full candidate set.
+  3. Within the selected subset: most recent by log index, then longest
+     `content`, then lexically by `provenance_id`.
+  4. If `C` is empty, `parent_provenance_id = None`.
+
+**Binding side conditions.** Reverse-order iteration is required, not cosmetic:
+forward order attaches to the oldest containing ancestor and flattens the chain.
+No auth short-circuit at ingestion: inheriting `parameter_lineage_check`'s
+`tok in auth_blob` skip (`context.py:875-877`) was measured deleting true edges
+(with the user naming the ticket id, T1 and T2 got no parent at all and the real
+T2 -> T1 derivation was suppressed). This answers the FL4 open question in
+section 4: containment does not need the short-circuit, because coincidental
+overlap no longer sets a link.
+
+**Under this rule the AM3 conflict case dissolves.** A token present in both a
+trusted and an untrusted entry sets NO link from either. The honest answer to
+"did this value derive from the trusted or the untrusted origin" is that the
+token does not say, and a parent link is a permanent claim of fact amplified over
+every descendant. The rule declines to assert an edge rather than guessing one.
+
+**Measured, same corpora:**
+
+```
+MUST-CATCH   P1 verbatim         B->A linked; C(sink) parent=None (extraction hop,
+                                 already denied single-hop, see AM4)
+             P2 base64 hop       C->B->A, all correct
+             P5 paraphrase       C->B->A, all correct
+             depth-4             D->B3->B2->B1->A, all four correct
+MUST-NOT-TRIP ticket head-of-chain  3 links, all correct, 0 tainted
+             shared email           3 links, all correct, 0 tainted
+             shared domain          3 links, all correct, 0 tainted
+             benign 6-call          4 links, all correct, 0 tainted
+             benign 6-call + untrusted page  4 links, all correct, 0 tainted
+             echo chain             terminates, 0 tainted
+```
+
+Zero false links on every must-not-trip corpus, correct parents throughout, and
+the encoded hop still crosses.
+
+**Reuse: none.** Containment uses `_iter_param_leaves` (`context.py:494`) and the
+`ContextProvenance.content` field (`context.py:555`). It does NOT use
+`extract_lineage_tokens`, `_canonical_blob_suffix`, `_encoded_blob_suffix`,
+`_encoded_scan_needles`, `_SCAN_FLOORS`, `_SCAN_KINDS`, `_ENCODED_MIN_LEN`,
+`min_len`, or `kind_rank`. It is a fourth comparison orientation: prior content
+as needle, param leaf as haystack, no tokenization. This is genuinely new code.
+
+## AM6 ERROR DIRECTION, pre-registered as a security decision
+
+**The rule errs toward MISSED links, which is the direction in which an attack
+slips.** Stated plainly rather than argued away. Measured and structural misses:
+extraction hops (P1's sink, `parent=None`), outputs below `CONTAIN_MIN`, and any
+re-serialization, whitespace collapse, truncation, or reformatting that breaks
+the substring.
+
+The justification is not that missing is preferable in the abstract. It is that
+containment is not deployed alone: the shipped single-hop check still runs at
+decision time and covers precisely the extraction case (AM4 measures P1 and P2
+denying there). Token matching catches chains where a matchable form SURVIVES to
+the sink; containment catches chains where the value is TRANSFORMED beyond
+matching but the whole payload is relayed. The composite covers both.
+
+**The choice being made:** prefer under-linking in the linker and recover through
+the decision-time check that already ships, rather than prefer over-linking and
+take the amplifying failure. A false link is not one wrong verdict. It is
+persistent, inherited by every descendant for the remainder of the session, and
+at saturation collapses cross-hop into the pre-existing `post_authoritative_taint`
+gate while producing citations that all name the same origin, which is this
+document's FL3 terminal failure and is invisible to a pass/fail attack corpus.
+
+**Where fail-closed DOES fire, and why the reversal is consistent.** Tier 2 step
+1 prefers the taint-reachable candidate. That is safe for a reason that does not
+hold at token level: **every carriage candidate is a true parent**, so preferring
+the tainted one adds no false edge, it only chooses which true edge the
+single-valued `parent_provenance_id` (`context.py:551`) records. This is FL5's
+pre-registered incompleteness resolved fail-closed. At token level, candidacy
+itself is uncertain, so a fail-closed preference manufactures edges. The
+principle: **fail-closed selection is correct when candidacy is certain and wrong
+when candidacy is what is in doubt.**
+
+**NEW MUST-NOT-CLAIM ROW, pre-registered as uncaught.** A chain whose
+intermediate hop BOTH transforms the text (breaking containment) AND drops every
+matchable token (breaking single-hop). Concretely, transform-then-extract: B
+paraphrases the untrusted page, then C forwards one extracted sentence of B's
+paraphrase. Neither predicate fires. This is NOT N1: a tool was in the loop for
+both steps, so it does not fall inside the permanent boundary of section 3. It is
+a genuine coverage gap of this control and is recorded here as row N3.
+
+## AM7 THE COMPLETE FROZEN BUILD SPEC
+
+1. **Match-before-write ordering.** Inside `record_write` or
+   `notify_context_write`, strictly before `context.py:674`. Resolves R4.
+2. **Input arguments at ingestion.** `notify_context_write` (`gate.py:2450`) has
+   no parameter for the call's input arguments and neither adapter passes any.
+   New public API surface plus changes to both adapters.
+3. **The containment link predicate**, tier 1 and tier 2 as frozen in AM5,
+   including reverse order, no auth short-circuit, and `CONTAIN_MIN`.
+4. **The transitive cycle-guarded walk. MUST BE BUILT.** It does not exist. See
+   C1 and the correction at the top of this document.
+5. **The reachability taint predicate**, replacing the flat
+   `authority == UNTRUSTED` test at three call sites in `context.py`. Unchanged
+   from component 3 of the original classification, and still the component with
+   blast radius.
+6. **Families 1 and 2 unchanged.** Their floors and curation transfer unchanged
+   and remain load-bearing for the single-hop DECISION. They are not the control
+   that resolves the linking residual, and no family-1 or family-2 code is
+   modified.
+
+Payoff: encoded multi-hop links, measured (AM4, AM5), with the attribution
+correction that the link comes from carriage rather than from family 2.
+Ceiling: N1 and N2, unchanged, plus the new N3 of AM6. **P4 and P5 are NOT the
+ceiling; they are measured must-catch rows (AM4, AM5).**
+
+## AM8 OPEN, TO BE DECIDED BEFORE THE BUILD, NOT DURING IT
+
+1. **The mirrored-content ambiguity.** Two prior entries with identical content,
+   one trusted and one untrusted, both carried into a later input. Nothing
+   distinguishes which the value derived from. Tier 2 step 1 resolves it
+   fail-closed. Consequence to accept or reject explicitly: **an attacker who
+   mirrors legitimate content into an untrusted entry can induce taint on a chain
+   that genuinely derived from the trusted copy.** Cheap to trigger. The
+   alternative, declining to link when candidates are content-identical across
+   authorities, has the opposite failure mode.
+2. **Tier 2 is unmeasured.** No corpus produced a multi-candidate ingestion. The
+   tie-break is reasoned, not measured. Needs its own rows, specifically the
+   merge-tool shape.
+3. **`CONTAIN_MIN`.** Run at 24. Chosen, not calibrated. Needs the treatment
+   `_ENCODED_MIN_LEN = 8` received at `context.py:300-317`. It is separate from
+   `min_len` and does not extend that standing hazard.
+4. **Normalization before comparison.** Raw, whitespace-collapsed, or unicode-
+   normalized? Decides whether a JSON re-serialization keeps or loses a link.
+   Unmeasured; the probe compared `.strip().lower()` only.
+5. **Nested-content candidacy.** In an append-style chain where a later entry's
+   content contains an earlier one's, both are candidates. Benign for taint,
+   both being true ancestors, but it determines the cited proximate parent, and
+   citation stability was a family-1 requirement. Unmeasured.
+6. **FL3 re-specification.** Parent identity, not link count. See AM3.
+
+## AM9 STATUS AT TIME OF WRITING
+
+No mechanism code exists. Nothing in the engine or either adapter was modified by
+this probe series; all simulation was scratch, outside the repo. The section 5
+prerequisite is MET: the crewai session-id asymmetry is fixed, `_provenance_session_id`
+at `crewai-agentlock/src/.../wrapper.py:38` used at `:244`, commit `1b69b6d`,
+resolving the same way MCP does. The next step is the build against the frozen
+spec in AM7, with the AM8 decisions made first.
