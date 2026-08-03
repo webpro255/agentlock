@@ -248,6 +248,34 @@ declaration that weakens gating: that one requires a human.
   on your tools. A single mislabeled tool accounted for the entire slack
   residual before we found it. Classification auditing is a deployment
   requirement, not an afterthought, which is why v1.4 ships the audit.
+- Multi-hop laundering, through a framework adapter. Adapter enforcement
+  is single-hop: it catches a value going from an untrusted tool's output
+  straight into a later tool's parameters. A value routed through an
+  intermediate tool that rewrites it is not caught, because no parent
+  link is recorded across the hop.
+- Recognizing an encoding of something it never saw. v1.6 matches encoded
+  forms by encoding the untrusted values it already has and looking for
+  them, never by decoding your parameters. That is what keeps a benign
+  value that merely looks like base64 from being misread. The price is
+  that a payload whose plaintext never entered the session as untrusted
+  content has nothing to match against.
+- Selection influence. Untrusted content that merely chooses among values
+  the user already supplied plants nothing, so there is nothing for a
+  provenance match to fire on. The session write-gate covers the gated
+  case; parameter lineage does not.
+- Telling a legitimate quotation from an attack. A summary that genuinely
+  quotes an attacker-supplied address really does carry that value, so it
+  is denied. Deciding it was benign would mean judging what the value is
+  for, which is the content judgement this gate refuses to make.
+
+The v1.6 encoding claim is measured at the engine, with a lineage policy
+configured and untrusted sources declared. It is not a claim about any
+adapter's defaults. The novelty branch has a real false-positive cost, it
+is measured on a frozen corpus rather than estimated, and it is off by
+default.
+
+Full statement, both registers, every number with its corpus and
+denominator: [docs/LIMITATIONS_v16.md](docs/LIMITATIONS_v16.md).
 
 We found two defects in our own engine during v1.4 development: a version
 comparison that failed open at schema version 1.10, and a deferred-commit
