@@ -22,10 +22,31 @@ from .model import (
     Session,
     validate_session,
 )
-from .sessions_reconstructed import BENIGN_6CALL
+from .sessions_reconstructed import (
+    BENIGN_6CALL,
+    BENIGN_6CALL_PLUS_UNTRUSTED,
+    ECHO_CHAIN,
+    SHARED_DOMAIN,
+    SHARED_EMAIL,
+    TEN_CALL,
+    TEN_CALL_PLUS_UNTRUSTED,
+    TICKET_HEAD_OF_CHAIN,
+    TICKET_HEAD_USER_NAMES_ID,
+)
 
 REGISTRY = Registry()
-for _s in (BENIGN_6CALL,):
+for _s in (
+    # Reconstructed from the preserved probe series (phase 2).
+    TICKET_HEAD_OF_CHAIN,
+    SHARED_EMAIL,
+    SHARED_DOMAIN,
+    BENIGN_6CALL,
+    BENIGN_6CALL_PLUS_UNTRUSTED,
+    ECHO_CHAIN,
+    TEN_CALL,
+    TEN_CALL_PLUS_UNTRUSTED,
+    TICKET_HEAD_USER_NAMES_ID,
+):
     REGISTRY.add(_s)
 
 __all__ = [
