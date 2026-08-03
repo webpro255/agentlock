@@ -275,7 +275,9 @@ is measured on a frozen corpus rather than estimated, and it is off by
 default.
 
 Full statement, both registers, every number with its corpus and
-denominator: [docs/LIMITATIONS_v16.md](docs/LIMITATIONS_v16.md).
+denominator: [docs/LIMITATIONS_v16.md](docs/LIMITATIONS_v16.md). How the
+v1.6 work was predicted, measured and corrected, and where the raw
+amendment chain is: [docs/DESIGN_NOTES_v16.md](docs/DESIGN_NOTES_v16.md).
 
 We found two defects in our own engine during v1.4 development: a version
 comparison that failed open at schema version 1.10, and a deferred-commit

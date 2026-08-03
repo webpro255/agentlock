@@ -212,11 +212,12 @@ Family 1, four frozen probe corpora, denominators are the corpus row counts
 | probe 4 obfuscated attacks, novelty off (8) | 8/8 reach ALLOW | 4/8 reach ALLOW |
 | probe 3 composites (6) | varies by amendment | 6/6 blocked |
 | probe 1 attacks (7) | 7/7 blocked | 7/7 blocked |
-| probe 2 benign false positives (9) | 5/9 | 5/9 unchanged |
+| probe 2 benign false positives, novelty on (9) | 5/9 | 5/9 unchanged |
 
 The two probe-4 configurations differ by design, and the difference is the
 finding: the symmetry half of the fix is novelty-independent and closes its rows
-in both settings, the composite-aware half is novelty-dependent.
+in both settings, the composite-aware half is novelty-dependent. The probe-2 row
+is the novelty-on figure; its novelty-off counterpart is the 1/9 in section 4.
 
 Family 2, three cuts, frozen family-2 corpora. Attributed means a denial carrying
 the matched token and naming the parent `cprov_` provenance entry, not a refusal
