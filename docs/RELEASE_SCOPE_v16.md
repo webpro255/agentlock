@@ -914,3 +914,121 @@ This amendment is dated so the correction is on the record rather than silent,
 on the same footing as the corrections at the top of the cross-hop document and
 AM1.0: a number that reached a public artifact by way of this document is
 corrected here, not quietly in the artifact alone.
+
+---
+
+## AMENDMENT 6 (2026-08-03): the two AgentDojo items carried forward are DEFERRED, and the open list is stated at the cut
+
+This amendment dispositions the two items AM3.6 carried forward (`:618-622`) and
+states where every open item stands at the release cut. It makes no mechanism
+change, no claim change and no gate change. The original document and Amendments
+1 through 5 are left intact.
+
+### AM6.1. The confirmatory second baseline run: DEFERRED, does not gate
+
+AM3.3 recorded that every v16-default number moved slightly up against baseline,
+utility and security alike, and named a confirmatory SECOND BASELINE run as the
+clean separation between single-run variance and a subtle real effect. That
+record stands exactly as written: the drift is most plausibly variance, and it is
+not asserted as variance established.
+
+The run is DEFERRED and does not gate v1.6.0. Three reasons, none of which
+weakens AM3.3:
+
+- **The gate this release needed is AM1.4's, and it is satisfied.** AM3.2 records
+  the three-column no-regression gate as run and PASSED, with no suite regressed
+  and slack pinned at 4.76 in all three columns. A second baseline column does
+  not re-decide that result; it characterizes the baseline's own run-to-run
+  spread, which is a property of the harness rather than of v1.6.
+- **The deferral is a deferral, not a dismissal, and the adverse direction is
+  named.** The drift is upward on BOTH axes, and upward on the security axis
+  (combined 2.00 to 2.53) is the unfavorable direction, so a real effect there
+  would be adverse rather than flattering. That is exactly why AM3.3 refuses to
+  assert variance as established and why this check is scheduled rather than
+  dropped. What it is not is a release gate: AM3.2 judged the no-regression gate
+  on the columns as measured, and a second baseline would characterize the
+  harness's spread rather than re-decide those columns.
+- **No public artifact claims the drift.** The changelog and the limitations
+  document carry the three combined-utility figures and the no-regression
+  sentence, and neither attributes anything to the drift. There is no claim in
+  the release whose correctness the deferred run would settle.
+
+**Disposition:** the confirmatory second baseline run accompanies the next
+release that changes any benchmark-adjacent claim, rather than gating this one.
+Recorded here as a scheduled measurement with a stated trigger, so that a later
+reader finds a deferral with a condition attached rather than an item that
+quietly lapsed.
+
+### AM6.2. The custom encoded-injection variant: DEFERRED to a future arc
+
+AM2.5 recorded this option with its value and its limitation both stated, and
+AM3.6 carried it forward as "the one path toward external capability evidence,
+still authored-by-us and so not independent in the AM1.5 sense."
+
+It is DEFERRED to a future arc, and the rationale is recorded because the
+asymmetry it turns on is the reason, not the cost of building it.
+
+A self-authored benchmark variant demonstrating a self-built capability carries a
+credibility asymmetry the frozen corpora do not. The corpora were pre-registered
+before the mechanism existed, they carry falsifiers and must-not-trip columns
+that freeze the rows which must NOT move, and they ship as committed tests a
+reader can run. A variant authored after the mechanism exists, over target values
+we choose to encode and in encodings we know the engine covers, has none of those
+three properties: it cannot be falsified by a run it was written against, and
+AM2.5 already recorded that it is not independent in the AM1.5 sense. Building it
+at release time would spend the release's evidence on self-validation while
+adding no independence, and the honest reading of such a table is one a skeptical
+reader would reach on their own.
+
+**What would make it worth building, named so the deferral has a trigger rather
+than a date:** an external instrument to measure against (a third-party
+encoded-injection suite, or a benchmark that presents encoded payloads on its
+own), or a multi-hop story to measure, where a variant would exercise task shapes
+the frozen corpora structurally cannot. Absent one of those, it stays deferred.
+
+This changes nothing about AM2.3 or AM3.5. Capability evidence remains the frozen
+corpora only, AgentDojo remains restricted to the no-regression sentence, and the
+release makes no external capability claim. Deferring the variant leaves that
+division exactly where the chain already put it.
+
+### AM6.3. Where every open item stands at the cut
+
+- **The v1.6 version number:** CLOSED, 1.6.0 (AM1.1), bumped on the release
+  branch.
+- **Whether Defect A blocks v1.6:** CLOSED, it does not (AM1.2).
+- **The predictions-docs disposition:** CLOSED, ship the raw chain with a
+  distilled document as its entry point (AM1.3), discharged by
+  `docs/DESIGN_NOTES_v16.md`.
+- **Whether an evaluation run gates:** CLOSED, it gated, ran and passed (AM1.4,
+  AM3.2).
+- **The final public-claim wording:** CLOSED and FROZEN (AM4.2).
+- **Cut construction:** CLOSED, a release branch at `d911afe` (AM4.4).
+- **The `enabled` quirk:** CLOSED as documented behavior (AM4.3, residual 2),
+  carried publicly at `LIMITATIONS_v16.md` S8.
+- **The confirmatory second baseline run:** DEFERRED with a trigger (AM6.1).
+- **The custom encoded-injection variant:** DEFERRED with a trigger (AM6.2).
+- **The IP composite fix shape and its family-1 regression:** OPEN, and
+  deliberately left open here. This amendment does not close it and should not be
+  read as closing it. It was already dispositioned: section 6 records it as
+  explicitly NOT gating, section 7 carries it as roadmap item 1 measured against
+  a shipped baseline, and family-2 AM7.4 names option (a) as the preferred shape
+  while recording that even the preferred shape is NOT CONTAINED and requires
+  family-1 regression measurement. It is an open post-release DECISION, not an
+  open release question.
+
+**Status, stated exactly:** with AM6.1 and AM6.2, no open item gates v1.6.0, and
+every item this document carries is now closed, explicitly deferred with a stated
+trigger, or carried as a named post-release roadmap item with its blast radius
+already measured. One item, the IP composite fix shape, remains genuinely open as
+a decision; recording the list as fully closed would misstate it.
+
+### AM6.4. The cut this amendment ships with
+
+v1.6.0, cut at `d911afe` per AM4.4, where a detached worktree re-measured **1364
+passed, 0 skipped** with `ruff check agentlock/ tests/` clean. This amendment and
+the release-branch documentation commits that precede it (the version bump, the
+changelog, the README updates, the limitations document and the design notes) are
+documentation only and touch no test; the suite on the release branch measures
+1364 passed at the time of writing, matching the cut. Per the standing rule, the
+version and test-count claims in any release artifact are verified against the
+tag rather than carried from this document.

@@ -196,7 +196,7 @@ Measured after the symmetry and composite-aware fix, from the table at
 | probe 4 obfuscated attacks, novel OFF (8) | 8/8 reach ALLOW | 4/8 reach ALLOW |
 | probe 3 composites (6) | varies by amendment | 6/6 blocked |
 | probe 1 attacks (7) | 7/7 blocked | 7/7 blocked |
-| probe 2 benign FP (9) | 5/9 | 5/9 unchanged |
+| probe 2 benign FP, novelty on (9) | 5/9 | 5/9 unchanged |
 
 The two probe-4 configurations differ by design and the difference is the
 finding: the symmetry half is novelty-independent, so those rows close in both
