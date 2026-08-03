@@ -625,3 +625,230 @@ encoding catch or the novelty cost.
 
 The gating decision (AM1.4) is satisfied: the no-regression gate ran and passed
 (AM3.2). The IP composite fix shape (item 8) is untouched by this run.
+
+---
+
+## AMENDMENT 4 (2026-08-03): the claim wording is corrected and frozen, and the public cut is constructed at d911afe
+
+This amendment closes the final item-8 open question (the public-claim wording)
+and decides how the v1.6.0 public cut is constructed, which the original document
+raised only as a merge-mechanism question (`:219-221`) and never resolved. It is
+written from a read-only verification pass over `agentlock/`, the frozen family-1
+and family-2 corpora, both adapter repositories, and the branch history. No
+mechanism change. The original document and Amendments 1, 2 and 3 are left
+intact.
+
+### AM4.1. Two defects in the section-2 claim wording
+
+**Defect 1, `:66`, "and this holds in the shipped default configuration".** Made
+DEPLOYMENT-FALSE by a finding dated after this document. `crewai-agentlock`
+commit `7536074` (2026-08-01) records that "Two omissions made AgentLock's
+lineage checks unreachable from CrewAI. Both are required; either one alone
+leaves enforcement inert", and its fix keeps the default unchanged: "The default
+is unchanged (TOOL_OUTPUT / DERIVED), so existing deployments behave exactly as
+before. Callers opt in per tool by passing WEB_CONTENT, RETRIEVED_DOCUMENT or
+PEER_AGENT". Without that per-tool opt-in there is no UNTRUSTED entry in the log,
+so `parameter_lineage_check` returns at `context.py:801` with the qualifier
+`no_untrusted_context` and nothing is attributed. Measured: an otherwise
+identical session whose untrusted write is recorded as `TOOL_OUTPUT` returns
+ALLOW with outcome `{'ran': True, 'result': 'no_match', 'qualifier':
+'no_untrusted_context'}`.
+
+**Defect 2, `:91-95`, "param_lineage is on by default".** Not staled. WRONG WHEN
+WRITTEN, against the schema this branch already shipped: `schema.py:371` is
+`param_lineage_enabled: bool = False`, `schema.py:334` is `enabled: bool = False`,
+and `schema.py:502` is `lineage_policy: LineagePolicyConfig | None = None`, so a
+tool registered without a lineage policy has no lineage gating at all. The
+charitable reading is that "default" there meant the NOVELTY flag's default,
+which the rest of that bullet is about. A claim sentence is judged as written.
+
+**A first proposed correction was verified FALSE before it was frozen, and is
+recorded here because the rejected wording is part of the record.** The proposal
+opened "In a deployment with a lineage policy enabled and untrusted context
+sources declared". `LineagePolicyConfig.enabled` does not gate parameter lineage:
+`gate.py:807` consults only `_lp is not None and _lp.param_lineage_enabled`, and
+`policy.py:619-624` gates the denial on the same flag. Measured on the shipped
+engine with base64(`evil.com`), novelty off:
+
+```
+enabled=True,  param_lineage_enabled=True,  WEB_CONTENT  -> DENY:param_lineage
+enabled=False, param_lineage_enabled=True,  WEB_CONTENT  -> DENY:param_lineage
+enabled=True,  param_lineage_enabled=False, WEB_CONTENT  -> ALLOW
+enabled=True,  param_lineage_enabled=True,  TOOL_OUTPUT  -> ALLOW (no_untrusted_context)
+```
+
+Row 3 is the falsification: a reader who follows "lineage policy enabled" and
+sets `enabled=True` alone gets ALLOW. **The failure shape, named: the correction
+was SCHEMA-MENTIONING WITHOUT BEING SCHEMA-TRUE.** It cited a real field and
+still described a configuration in which the claim does not hold, which is the
+same defect as `:91-95` relocated one field over. A wording that names
+configuration must be measured in that configuration, not merely checked for
+plausible field names.
+
+A fourth precondition the rejected wording omitted entirely, also measured:
+`permissions.version` must be at least 1.3 (`gate.py:784`). The same session
+returns ALLOW at `version="1.2"` and `DENY:param_lineage` at `"1.3"` and `"1.5"`.
+
+### AM4.2. The corrected claim, FROZEN
+
+> In a deployment that registers the tool at permissions version 1.3 or later
+> with `param_lineage_enabled` set, and declares the untrusted context source on
+> the writes it records, a tool-call parameter carrying a bare or composite
+> encoded form of a url-kind or email-kind untrusted value, under base64, hex, or
+> natural-URL encoding, is attributed back to its parent untrusted provenance
+> entry, without decoding any parameter value, with novelty gating off.
+
+This replaces the section-2 claim at `:62-66` and closes the item-8 open
+"the exact public claim wording". The AM2.6 and AM3.5 constraints on citing
+AgentDojo are unaffected and still bind: this claim is CAPABILITY, and its
+evidence is the frozen corpora only.
+
+**Evidence, clause by clause, all verified at this branch tip.**
+
+- **The configuration is the one the corpora were measured in.** The frozen
+  fixtures register `version="1.5"` with `lineage_policy={"enabled": True,
+  "param_lineage_enabled": True, "param_lineage_action": "deny",
+  "novel_lineage_enabled": novel, "novel_lineage_action": "step_up"}` and record
+  the untrusted write as `ContextSource.WEB_CONTENT`
+  (`tests/test_v16_family2_encoding.py:60-89`, and the identical fixtures at
+  `tests/test_v16_family2_composite.py:44-56` and
+  `tests/test_v16_family2_base64composite.py:53-65`).
+- **Bare and composite.** Bare, four counted rows:
+  `test_v16_family2_encoding.py:104-131`. Hex and natural-URL composites:
+  `test_v16_family2_composite.py:94-116`. Base64 composites, both counted values
+  across three phases, terminal and non-terminal:
+  `test_v16_family2_base64composite.py:102-127`.
+- **url-kind or email-kind.** Pinned at
+  `test_v16_family2_composite.py:367-381`: `assert {"url", "email"} ==
+  ctx._SCAN_KINDS`, with `str` and `date` needles asserted absent. The two
+  counted values are `evil.com` (url) and `mallory@evil.com` (email).
+- **Exactly three encodings.** `context.py:327` `_encoded_forms` emits base64,
+  hex and natural-URL and nothing else; `context.py:298` `_URL_SIGNIFICANT` is
+  the structurally-significant form only, matching this document's `:80-82`
+  exclusion of per-character enumeration.
+- **Attribution reaches the record, not only the decision.** Every must-catch
+  test asserts `untrusted_provenance_id` starts with `cprov_` and
+  `untrusted_source_ref` starts with `fetch_url:cprov_` alongside the verdict
+  (`encoding.py:126-131`, `composite.py:113-115`, `base64composite.py:123-126`).
+  Measured on a live denial, `denial["detail"]` names the parent entry
+  (`fetch_url:cprov_...`, matching the untrusted entry's own `provenance_id`),
+  and the audit path preserves it: `_lineage_evidence` (`gate.py:297-321`) routes
+  the whole match in, and the stripper removes only `matched_value`
+  (`audit.py:87`).
+- **Zero decode.** `_encoded_forms` is encode-only by construction, and two
+  independent guards grep the module for decode primitives
+  (`test_v16_family2_encoding.py:282-297`,
+  `test_v16_family2_base64composite.py:360-370`), forbidding `b64decode`,
+  `urlsafe_b64decode`, `b16decode`, `b32decode`, `fromhex`, `unquote` and
+  `bytes.fromhex`.
+- **Novelty off.** Every must-catch table is parametrized
+  `@pytest.mark.parametrize("novel", [True, False], ids=["novel_on",
+  "novel_off"])` and passes in both, so novelty-off is not a survival case but
+  the case the soundness contribution lives in.
+
+**The claim UNDERSTATES bare coverage, and that is accepted.** The url/email
+curation governs the direction-(A) composite scan only; the direction-(B) blob
+emission is all-kinds, so bare encoded forms of `str`-kind values are also
+covered, as this document already records at `:70-75`. Understating measured
+coverage in a public claim is acceptable in a way overstating is not, and no
+correction is made.
+
+### AM4.3. Two residuals that ship with this amendment, because wording cannot fix them
+
+**Residual 1: this is an ENGINE-level claim.** "Declares the untrusted context
+source" is satisfied at engine level by the write call itself, which is what the
+frozen fixtures do. The adapter-level equivalent is
+`wrap_tool(..., context_source=ContextSource.WEB_CONTENT)`, available only since
+`crewai-agentlock 7536074` (2026-08-01). **No encoded corpus has ever been run
+through an adapter.** Verified: a grep for `b64encode`, `base64`, `.hex()` and
+`%2e` across `crewai-agentlock/tests` and `mcp-agentlock/tests` returns nothing.
+A DEPLOYMENT-level encoded claim would require an adapter-level corpus that does
+not exist, so no such claim may be made from this evidence. Recorded as a named
+residual rather than left to be discovered by a reader who assumes the adapters
+were in the measurement.
+
+**Residual 2: `enabled=False` with `param_lineage_enabled=True` still denies**
+(measured, row 2 of AM4.1). **Disposition, decided: DOCUMENTED BEHAVIOR, not a
+pre-release defect.** Changing gate semantics un-pre-registered at release time
+is exactly the move this project refuses; the frozen corpora were all measured
+with `enabled=True`, and no measured result anywhere in the chain depends on the
+quirk. A semantics cleanup, deciding whether `enabled` should be a master switch
+over parameter lineage, may be considered for a future version under its own
+pre-registration. It is counter-intuitive enough to be worth stating once, which
+is what this paragraph is.
+
+### AM4.4. Cut construction, DECIDED: a release branch at d911afe, not the tip
+
+**The public v1.6.0 cut is taken at `d911afe`, via a release branch, NOT at the
+branch tip.**
+
+Evidence for the boundary:
+
+- `d911afe` is the DIRECT PARENT of `11ec389`, the first cross-hop commit
+  (`git log -1 --format="%h parent=%p" 11ec389` returns `11ec389
+  parent=d911afe`). `11ec389` is dated 2026-08-01 and introduces exactly one
+  file, `docs/PREDICTIONS_crosshop.md`, 662 insertions.
+- The tree at `d911afe` contains NO cross-hop material:
+  `git ls-tree -r --name-only d911afe | grep -iE "crosshop|probe|corpora"`
+  returns nothing.
+- Families 1 and 2 are complete there: all seven v16 test files are present
+  (`test_v16_additive_emission.py`, `test_v16_composite_aggregation.py`,
+  `test_v16_composite_aware.py`, `test_v16_family1_normalization.py`,
+  `test_v16_family2_encoding.py`, `test_v16_family2_composite.py`,
+  `test_v16_family2_base64composite.py`).
+- Re-measured in a detached worktree at `d911afe`: **1364 passed, 0 skipped**,
+  1364 collected, and `ruff check agentlock/ tests/`, the exact CI command,
+  clean.
+
+**Cross-hop material ships NOTHING in v1.6.0**: `docs/PREDICTIONS_crosshop.md`,
+`probes/crosshop-am3-am5/`, `tests/crosshop_corpora/`, and
+`tests/test_v16_crosshop_parent_identity.py` are all after the cut and await
+their own release decision under their own pre-registration.
+
+This decision does three things at once. It resolves the merge-mechanism question
+this document raised at `:219-221` and left to a later call. It closes the scope
+hole that AM1.3's publication decision ("ship the raw amendment chain, with a
+distilled document as its ENTRY POINT") was made on 2026-07-24 and therefore
+covers only the four source documents listed at `:12-17`, none of which is the
+cross-hop chain that did not yet exist. And it removes the accident risk in
+pushing a working branch wholesale: at the tip, a push to `origin` would expose
+44 commits including a frozen build spec, a provisional undecided cell, and an
+acceptance test whose skip reason enumerates five unbuilt components.
+
+The version bump to 1.6.0 (AM1.1), the changelog entry, the README updates, and
+the distilled entry point all land ON THE RELEASE BRANCH cut at `d911afe`, not on
+this working branch.
+
+### AM4.5. Consequential corrections, and one measurement that does not match the framing
+
+The stale counts in this document are NOT edited, because the amendment
+discipline is to correct on the record rather than rewrite. What they mean after
+AM4.4:
+
+- **Test counts are CORRECT FOR THE CUT.** `:19-21` and `:128` read 1364, and
+  `d911afe` re-measures 1364 passed, 0 skipped. They are stale only for the tip,
+  which is 1405 collected, 1387 passed, 18 skipped, the skips being the cross-hop
+  acceptance tests that are not in the cut at all.
+- **Commit counts are stale EVERYWHERE, including for the cut.** The framing
+  supplied to this amendment was that the original 32 would be correct for the
+  cut. It is not, and the measurement wins. `git rev-list --count b5750a4..`
+  gives 32 at `16094ac`, the commit immediately BEFORE this document was written,
+  33 at this document's own commit `4be7d5c`, and **36 at `d911afe`**, the cut.
+  The tip is 44. So `:19-21` and `:219` were accurate when drafted and are stale
+  by four at the cut. Nothing depends on the number; it is recorded so a later
+  reader does not treat 32 as a verified property of the release.
+- **The core README is queued for release-branch writing work.** `README.md:43-47`
+  describes parameter lineage unconditionally ("Every tool-call parameter is
+  checked for values that trace to untrusted content"), with no mention of the
+  `context_source` opt-in that AM4.1's defect 1 turns on. The adapter README
+  already carries the corrected register (`crewai-agentlock/README.md:117-122`,
+  "enforcement is **single-hop** ... Do not rely on this as a defense against
+  multi-hop laundering"). The core README must match it before publish.
+
+### AM4.6. Item-8 status after this amendment
+
+Closed here: the final public-claim wording (AM4.2). Newly decided, having been
+open outside item 8: cut construction (AM4.4), and the disposition of the
+`enabled` quirk (AM4.3). Still OPEN, unchanged: the IP composite fix shape and
+its family-1 regression, the confirmatory second baseline run (AM3.6), and the
+custom encoded-injection variant (AM2.5).
