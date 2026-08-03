@@ -40,10 +40,15 @@ mechanisms enforce on that record:
 - Session write-gate. Once untrusted content enters the session,
   consequential writes are blocked. The gate never reads the payload, so
   there is no wording that gets around it.
-- Parameter lineage. Every tool-call parameter is checked for values that
-  trace to untrusted content but not to the user's own request. An
-  attacker-planted URL or email is denied even when the call looks
-  legitimate.
+- Parameter lineage, opt-in per tool. Register a tool at permissions
+  version 1.3 or later with param_lineage_enabled set on its lineage
+  policy, and every parameter of a call to that tool is checked for
+  values that trace to untrusted content but not to the user's own
+  request. An attacker-planted URL or email is denied even when the call
+  looks legitimate. It is off by default, and it only sees what a caller
+  has recorded: a write reported without an untrusted context source
+  produces no untrusted entry, so there is nothing to trace to and the
+  check returns no match.
 - Deferred commit. Consequential actions are queued and re-decided at end
   of turn against the complete session provenance, so content that
   arrives after the call can still deny it.
@@ -254,6 +259,7 @@ changelog. That is how we intend to keep working.
 
 | version | highlights | tests |
 |---------|-----------|-------|
+| 1.6.0   | value-identity normalization; encoded-form attribution, bare and composite, base64/hex/natural-URL, zero decode | 1364 |
 | 1.5.0   | grant basis, execution confirmation, provenance on denials, deferred-resolution logging; LangChain and CrewAI adapters moved out of core | 1141 |
 | 1.4.0   | selective action-class gating, novel lineage, action-class audit, needs_approval surfacing | 1041 |
 | 1.3.0   | provenance-lineage gating, parameter lineage, deferred commit, AgentDojo evaluation | 868 |
