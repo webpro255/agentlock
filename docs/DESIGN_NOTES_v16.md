@@ -262,7 +262,7 @@ cannot validate a mechanism it never presents an input for. One further note
 from that run: every v1.6 number moved slightly up relative to baseline, utility
 and security alike, and a uniform sign is also the signature of a subtle real
 effect, so the chain records it as most plausibly single-run variance with a
-confirmatory second baseline run still open (AM3.3), rather than asserting
+confirmatory second baseline run deferred (AM3.3, AM6.1), rather than asserting
 variance as established.
 
 ### What a reader can check
