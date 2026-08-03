@@ -1065,3 +1065,264 @@ prerequisite is MET: the crewai session-id asymmetry is fixed, `_provenance_sess
 at `crewai-agentlock/src/.../wrapper.py:38` used at `:244`, commit `1b69b6d`,
 resolving the same way MCP does. The next step is the build against the frozen
 spec in AM7, with the AM8 decisions made first.
+
+---
+
+# AMENDMENT 2 (2026-08-03): the AM8 decisions, resolved
+
+Everything above this line is the prediction of record plus AMENDMENT 1, both
+unedited. This amendment resolves the six AM8 items. It is written from a
+read-only verification pass over this document, `agentlock/context.py`,
+`agentlock/gate.py`, the frozen family-2 guard tests, and both adapters. No
+mechanism code exists at time of writing and nothing in the engine or either
+adapter was modified.
+
+The resolution below is NOT the split the commissioning proposal supplied
+("decide 1 and 4 now, defer 2, 3, 5, 6"). Two items move. Decision 6 cannot be
+deferred, because it changes the acceptance criterion rather than the mechanism.
+Decision 1 cannot be ratified, because the case that defines it falsifies the
+premise the existing rule is justified on. Both corrections are recorded in the
+same register as AM1.0: the split is corrected here rather than carried into the
+build.
+
+## AM10 DECIDED BEFORE THE BUILD
+
+### AM10.1 DECISION 6 (FL3 success criterion). DECIDED. Must land before build.
+
+**Re-specified: the acceptance criterion is PARENT IDENTITY, not link count.**
+
+The section 6 link-precision criterion (`:596-598`) requires that "parent links
+set must equal the true derivation count exactly". AM3 measured a graph that
+passes it and is two thirds wrong: on the 10-call benign session, linker B set
+**6 links for 6 true derivations, of which 2 named the correct parent and 4 did
+not** (`:810-813`). A criterion that certifies that graph is not a criterion. It
+fails for the same reason a verdict-only measurement cannot see saturation: it
+counts the right number of the wrong thing.
+
+**This is not mechanism work and it is not a constant. It is the gate the build
+is judged against**, and it carries pre-build corpus work that does not exist
+yet: **every benign corpus row needs per-entry DECLARED GROUND-TRUTH PARENTS**.
+AM3's 2-of-6 figure was obtainable only because ground truth was declared for
+that one hand-built session. No frozen corpus carries it. Measuring parent
+identity is impossible until it does.
+
+Recorded plainly: **changing a success criterion after the build launches is the
+exact drift the CORRECTION block at the top of this document and AM1.0 both
+exist to prevent.** Deferring this item to "spec cleanup during the build" would
+mean launching against a gate already measured to pass a wrong graph, then
+re-specifying the gate once results are in hand. That is the shape of the
+failure, independent of intent.
+
+### AM10.2 DECISION 4 (normalization). CEILING DECIDED, level deferred.
+
+FROZEN: **one symmetric pure normalization helper, applied identically to the
+candidate content and to the parameter leaf, no decode primitives, no parsing.**
+
+**Safe core, adopted for the first cut:** strip, case fold, whitespace-run
+collapse. Whitespace collapse is admitted because it does not alter token
+content, so it closes reformatting without widening what can collide.
+
+**HARD CEILING, code-enforced, not a preference.** Percent-decoding and
+hex-decoding are structurally forbidden:
+`tests/test_v16_family2_base64composite.py:360-370` and
+`tests/test_v16_family2_encoding.py:282` grep the whole of `context.py` for
+`unquote` and `fromhex` (among other decode primitives) and fail if any is
+present. A URL-normalizing or hex-normalizing containment implemented in
+`context.py` breaks a frozen family-2 guard. This is a shipped constraint on the
+normalization choice, discovered by reading the tests, and it bounds the option
+space before any measurement is run.
+
+**JSON canonicalization is OUT.** It requires deciding that an opaque content
+string is JSON, which is content-type inference, which is content classification.
+That is the thing the core thesis rejects and the thing
+`PREDICTIONS_v16_family2.md` section 1 rejected reverse-decode over. It also adds
+a parse surface on attacker-controlled content at ingestion.
+
+**NFKC is guard-permitted but DEFERRED to a false-link measurement**, not adopted.
+It is the one candidate normalization that is coupled to decision 1: see AM12.2.
+
+**Re-serialization evasion is recorded as a KNOWN MISS, not as a new open risk.**
+AM6 (`:974-976`) already froze "any re-serialization, whitespace collapse,
+truncation, or reformatting that breaks the substring" as a structural miss in
+the chosen error direction. The consequence is bounded and should be stated at
+its true width: JSON key reorder and whitespace change break CONTAINMENT while
+leaving the lineage tokens intact, so the decision-time single-hop check still
+denies at the sink. What is lost is the link and the chain citation, not the
+denial. A full escape needs re-serialization PLUS token loss, which is the
+already-pre-registered N3 of AM6.
+
+### AM10.3 DECISION 1 (mirrored content). RE-SPECIFIED AND PROVISIONAL.
+
+**Tier 2 step 1 is NOT ratified for this cell.**
+
+AM6 licenses step 1 on one premise: "every carriage candidate is a true parent,
+so preferring the tainted one adds no false edge" (`:995-1000`). In the mirrored
+case, two prior entries with identical content, **at most one is the true
+parent**. The case falsifies the premise the rule is justified on. AM6's own
+stated principle resolves it in the opposite direction: "fail-closed selection is
+correct when candidacy is certain and wrong when candidacy is what is in doubt",
+and which of two identical-content candidates the value derived from is precisely
+what is in doubt. AM5 (`:936-941`) already applied that principle at token level
+and DECLINED to assert an edge. Ratifying fail-closed here would be recording a
+control on a premise the case itself defeats, which is the C3 error of AM1.0 in a
+new place.
+
+FROZEN, in two parts:
+
+1. **General multi-candidate case (candidates differ in content): Tier 2 step 1
+   STANDS.** AM6's premise holds there, every candidate genuinely carries, and
+   preferring the taint-reachable one only chooses which true edge the
+   single-valued `parent_provenance_id` (`context.py:551`) records.
+2. **Mirrored cell (content-identical candidates that DISAGREE on
+   taint-reachability): DECLINE to link.** No parent is set from either.
+
+**Correction to this document's own alternative wording.** AM8 item 1 states the
+alternative as "declining to link when candidates are content-identical across
+authorities". As written that is wrong and would break must-catch rows: a
+verbatim relay produces an UNTRUSTED entry and a DERIVED entry with IDENTICAL
+content, which is content-identical across authorities, and both are
+taint-reachable, so the chain must still link (by recency, to the proximate
+relay). The correct scope is **disagreement on TAINT-REACHABILITY, not on
+authority**. Under that scope the relay case is untouched and only the genuinely
+ambiguous cell declines.
+
+**What declining costs, measured against the code.** It costs attribution, not
+denial. `parameter_lineage_check` scans every UNTRUSTED entry with content
+independently of any link (`context.py:795-799`), and the mirror's tokens are
+identical to its trusted twin's, so a matchable form reaching the sink still
+denies at decision time. This is AM6's composite argument applied to this cell,
+and it is why "decline" is under-linking in the direction AM6 already froze,
+rather than a laundering bypass.
+
+**Two things the fail-closed reading understates, recorded so the trade is not
+mis-stated in a writeup.** First, the induced-taint failure is not only
+availability: it writes a FALSE DERIVATION into the audit record, asserting the
+value came from the untrusted mirror when it came from the trusted copy. Second,
+that falseness is NOT visible, because the two contents are identical by
+construction, so the citation reads as correct to an operator. AM3's definitional
+finding (`:850-854`) states why no downstream check recovers it: at this layer
+there is no implementable difference between a trusted entry that ACCOUNTS FOR
+content and one that merely CONTAINS it. The magnitude is measured: one poisoned
+head link took the chain to **4/4 tainted** (AM3 `:832-837`).
+
+**One interaction with the shipped engine, recorded because it decides where the
+induced-taint failure bites.** AM5 removes the auth short-circuit at ingestion
+(`:930-935`) while `context.py:875` keeps it per-token at decision time. So
+descendants of an induced link that carry the value VERBATIM still clear at
+decision time, while descendants whose content was TRANSFORMED do not. The
+mirrored failure therefore concentrates on transformed chains, which are exactly
+the chains cross-hop is being built to catch.
+
+**Status: PROVISIONAL.** Tier 2 has zero measurements (AM8 item 2). This cell is
+resolved by reasoning and by the falsified premise, and it is finalized by the
+merge-tool corpus of AM11.1. Marked provisional so that a measurement contradicting
+it reads as a measurement, not as a re-litigation.
+
+### AM10.4 DECISION 5 (nested-content candidacy). CLOSED.
+
+**AM5 step 3 already decides it: most recent by log index.** In an append-style
+chain the containing entry is always the later one, so recency selects the
+correct proximate parent, deterministically, and family 1's citation-stability
+requirement holds without further specification.
+
+One interaction, recorded rather than left implicit: **step 1 runs before step 3**,
+so nested candidates that disagree on taint-reachability get the taint preference
+and may cite a non-proximate ancestor. Taint remains correct (the ancestor is a
+true ancestor); proximate attribution degrades. Under AM10.3 the content-identical
+sub-case of that disagreement declines instead.
+
+Item 5 is no longer carried as open, and it needs no measurement.
+
+## AM11 DEFERRED TO BUILD-TIME MEASUREMENT, each with its condition
+
+### AM11.1 DECISION 2 (Tier 2 unmeasured). Deferred. NOT independent of decision 1.
+
+The merge-tool corpus is the right shape and building it during the build is
+fine. **But 1 and 2 are ONE question, not two.** Decision 1 IS Tier 2 step 1, and
+the merge-tool corpus that measures item 2 is the evidence that finalizes item 1.
+The original split, which ratified 1 by reasoning while conceding 2 is unmeasured,
+ratified the exact rule it simultaneously recorded as having no evidence.
+
+Deferring 2 is coherent here only because 1 is marked PROVISIONAL in AM10.3. The
+corpus must produce genuine multi-candidate ingestions, including the mirrored
+cell (content-identical candidates disagreeing on taint-reachability) and the
+merge-tool shape AM8 named.
+
+### AM11.2 DECISION 3 (`CONTAIN_MIN` = 24). Number deferred, two conditions.
+
+**(a) Recalibration invalidates the measured zeros.** Every must-not-trip zero in
+AM5 (`:951-957`), 0 false links across six corpora, was measured AT 24. A change
+to `CONTAIN_MIN` requires **RE-RUNNING ALL SIX corpora**, not adding rows to
+them. The zeros are conditional results, not standing ones.
+
+**(b) The `_ENCODED_MIN_LEN` derivation does not transfer.** That justification
+(`context.py:300-317`) is a bits-per-character argument over a folded 36 to 38
+symbol alphabet, roughly 5.25 bits per character. English prose carries on the
+order of ten times less entropy per character, so an analogous derivation for
+whole-content prose carriage lands nowhere near 24. "Calibrate it the way
+`_ENCODED_MIN_LEN` was calibrated" names the right discipline and the wrong
+arithmetic; the derivation must be redone for the alphabet actually being
+compared.
+
+**Pre-registered falsifier, because `CONTAIN_MIN` is the ONLY Tier 1 precision
+control.** If calibration finds a false-candidacy class that no threshold
+separates, standard error strings, boilerplate, legal footers, anything that
+exceeds any length one would pick and appears verbatim across unrelated outputs,
+then that is a **SHAPE finding, not a constant**: length is the wrong predicate
+for prose distinctiveness and the candidacy test needs a different control. A
+larger number would not be the fix and recording one would hide the finding.
+
+## AM12 TWO COUPLINGS, recorded because the original split treated them as independent
+
+### AM12.1 Decisions 1 and 2 are one question.
+
+See AM11.1. Decision 1 is Tier 2 step 1; decision 2 is the measurement of Tier 2.
+They cannot be resolved on different schedules except by marking 1 provisional,
+which AM10.3 does.
+
+### AM12.2 Decisions 1 and 4 are coupled through normalization aggressiveness.
+
+**Normalization directly controls how often decision 1's ambiguous cell occurs.**
+The more aggressive the normalization, the more distinct contents collapse to
+identical normal forms, and the mirrored cell fires on identity of the NORMALIZED
+content, not of the raw bytes. NFKC folds width variants, ligatures, and
+compatibility forms, so adopting it converts the mirrored case from exotic to
+routine, and it does so silently, since nothing in the link record shows which
+normalization step produced the collision.
+
+This is why AM10.2 defers NFKC to a false-link measurement rather than adopting
+it with the safe core. The measurement is not only "does NFKC add false links";
+it is also "how many additional content-identical candidate pairs does NFKC
+create", which is decision 1's frequency.
+
+## AM13 CORRECTED PRE-BUILD CHECKLIST
+
+1. **Decision 6, fully** (AM10.1), including the per-entry ground-truth parent
+   annotations added to every benign corpus.
+2. **Decision 4, ceiling** (AM10.2): symmetric pure helper, no decode primitives,
+   no parsing, safe core adopted, NFKC and JSON canonicalization out of the first
+   cut.
+3. **Decision 1, re-specified and provisional** (AM10.3): step 1 stands for the
+   general case, declines for the mirrored cell scoped on taint-reachability
+   disagreement, finalized by AM11.1's corpus.
+4. **Decision 5, closed** (AM10.4). No further work.
+
+Deferred with conditions attached: decision 2 (AM11.1), decision 3 (AM11.2),
+decision 4's level (AM10.2, AM12.2).
+
+**FIRST BUILD TASK: add per-entry declared ground-truth parents to the benign
+corpora.** It is decision 6's prerequisite and it is first because the build
+cannot be JUDGED without it. Every other build task in AM7 produces a graph whose
+correctness is unmeasurable until the ground truth exists, and the criterion that
+would pass in its absence is the link count AM3 already measured certifying a
+two-thirds-wrong graph.
+
+## AM14 STATUS AT TIME OF WRITING
+
+No mechanism code exists. Nothing in the engine or either adapter was modified by
+this verification pass. One build-spec fact confirmed along the way and recorded
+because AM7 does not state it: both adapters ALREADY populate untruncated output
+content on their provenance writes (`crewai-agentlock/src/crewai_agentlock/wrapper.py:85`,
+`content=str(output)`; `mcp-agentlock/src/mcp_agentlock/wrapper.py:280`,
+`content=text`), so Tier 1's needle side needs no adapter change. AM7 item 2's new
+public API surface is the INPUT side only.
