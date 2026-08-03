@@ -55,6 +55,19 @@ DECLINE = "decline"
 """Record ``None`` DESPITE real carriage candidates, because the selection rule
 declines to assert an edge it cannot attribute (AM5 ``:936-941``, AM10.3)."""
 
+SELECT = "select"
+"""Record one NAMED true parent, because a selection rule picks it out of
+several.
+
+The distinction from :data:`DERIVE` is the point of the field. Under DERIVE any
+true parent is a correct recording, which is FL5's allowance for a single-valued
+field. Under SELECT the corpus asserts more: that Tier 2 must pick a PARTICULAR
+one of them, for example the taint-reachable candidate over the merely recent
+one (AM5 ``:922``), or the proximate relay by recency (AM10.3 ``:1184-1185``).
+That is a spec claim, so it carries a reason and it cannot be mistaken for a
+fact about the session.
+"""
+
 
 @dataclass(frozen=True)
 class Entry:
@@ -63,6 +76,16 @@ class Entry:
     ``label`` is the short name the probe series and the doc's tables use
     (``B(relay)``, ``C5``, ``N(sink)``), so a measured row can be read against
     the doc without a translation step.
+
+    ``also_carried`` names FURTHER ancestors whose content this entry's input
+    also carries whole, so they are Tier 1 candidates too, but which are not the
+    proximate parent. This is AM8 item 5's nested-content candidacy, closed by
+    AM10.4: in an append-style chain the containing entry is the later one, and
+    recency selects the proximate parent. Recording an ``also_carried`` ancestor
+    instead is not a false edge, since the ancestor is real; it is the degraded
+    citation AM10.4 describes as "taint stays correct, proximate attribution
+    degrades". The corpus records the fact and still requires the proximate one,
+    because citation stability was a family-1 requirement.
     """
 
     label: str
@@ -71,7 +94,9 @@ class Entry:
     output: str
     source: ContextSource
     true_parents: tuple[str, ...] = ()
+    also_carried: tuple[str, ...] = ()
     expect: str = DERIVE
+    expect_label: str | None = None
     expect_reason: str = ""
     provisional: bool = False
 
@@ -79,11 +104,14 @@ class Entry:
         """The set of recordings that count as CORRECT for this entry.
 
         ``None`` is a member when the entry has no true parent, or when the
-        expectation is an explicit DECLINE. Otherwise every true parent is
-        acceptable, which is FL5's single-valued-field allowance.
+        expectation is an explicit DECLINE. Under SELECT exactly one named
+        parent is acceptable. Otherwise every true parent is acceptable, which
+        is FL5's single-valued-field allowance.
         """
         if self.expect == DECLINE or not self.true_parents:
             return frozenset({None})
+        if self.expect == SELECT:
+            return frozenset({self.expect_label})
         return frozenset(self.true_parents)
 
 
@@ -154,8 +182,34 @@ def validate_session(s: Session) -> list[str]:
                     f"{where}: true parent {p!r} is not an EARLIER entry "
                     "(a parent link may only point backwards in the log)"
                 )
-        if e.expect not in (DERIVE, DECLINE):
+        for p in e.also_carried:
+            if p not in seen:
+                problems.append(
+                    f"{where}: also_carried {p!r} is not an EARLIER entry"
+                )
+            if p in e.true_parents:
+                problems.append(
+                    f"{where}: {p!r} is both a true parent and also_carried; "
+                    "an entry is either the proximate parent or a further "
+                    "ancestor, not both"
+                )
+        if e.expect not in (DERIVE, DECLINE, SELECT):
             problems.append(f"{where}: unknown expect {e.expect!r}")
+        if e.expect == SELECT:
+            if e.expect_label not in e.true_parents:
+                problems.append(
+                    f"{where}: SELECT names {e.expect_label!r}, which is not "
+                    "one of this entry's true parents"
+                )
+            if not e.expect_reason:
+                problems.append(
+                    f"{where}: SELECT must carry the rule that selects, since "
+                    "it asserts more than the facts do"
+                )
+        if e.expect != SELECT and e.expect_label is not None:
+            problems.append(
+                f"{where}: expect_label is set but expect is {e.expect!r}"
+            )
         if e.expect == DECLINE and not e.true_parents:
             problems.append(
                 f"{where}: DECLINE with no true parents is indistinguishable "

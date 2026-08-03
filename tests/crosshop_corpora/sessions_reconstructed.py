@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from agentlock.types import ContextSource
 
-from .model import CONTROL, MUST_NOT_TRIP, Entry, Session
+from .model import CONTROL, MUST_NOT_TRIP, SELECT, Entry, Session
 from .sources import (
     BENIGN_MEMO,
     BENIGN_SUMMARY,
@@ -559,6 +559,13 @@ ECHO_CHAIN = Session(
             output=ECHO_TEXT,
             source=TOOL,
             true_parents=("E1", "E2"),
+            expect=SELECT,
+            expect_label="E2",
+            expect_reason=(
+                "AM10.4: most recent by log index selects the proximate "
+                "producer. Both are true, so either is sound; E2 is the one "
+                "citation stability requires."
+            ),
         ),
     ),
 )

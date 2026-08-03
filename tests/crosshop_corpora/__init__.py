@@ -17,10 +17,21 @@ from .model import (
     DERIVE,
     MUST_CATCH,
     MUST_NOT_TRIP,
+    SELECT,
     Entry,
     Registry,
     Session,
     validate_session,
+)
+from .sessions_new import (
+    DEPTH_4,
+    MERGE_TOOL,
+    MERGE_TOOL_TAINT_VS_RECENCY,
+    MIRRORED_CELL,
+    P1_VERBATIM,
+    P2_BASE64,
+    P5_PARAPHRASE,
+    RELAY_CONTROL,
 )
 from .sessions_reconstructed import (
     BENIGN_6CALL,
@@ -46,6 +57,16 @@ for _s in (
     TEN_CALL,
     TEN_CALL_PLUS_UNTRUSTED,
     TICKET_HEAD_USER_NAMES_ID,
+    # Built for AM11.1: the shapes no probe file contains (phase 3).
+    MERGE_TOOL,
+    MERGE_TOOL_TAINT_VS_RECENCY,
+    MIRRORED_CELL,
+    RELAY_CONTROL,
+    # The must-catch chains, with AM5's measured parentage declared.
+    P1_VERBATIM,
+    P2_BASE64,
+    P5_PARAPHRASE,
+    DEPTH_4,
 ):
     REGISTRY.add(_s)
 
@@ -56,6 +77,7 @@ __all__ = [
     "MUST_CATCH",
     "MUST_NOT_TRIP",
     "REGISTRY",
+    "SELECT",
     "Entry",
     "Registry",
     "Session",
