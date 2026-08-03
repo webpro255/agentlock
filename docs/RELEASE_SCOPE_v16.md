@@ -852,3 +852,65 @@ open outside item 8: cut construction (AM4.4), and the disposition of the
 `enabled` quirk (AM4.3). Still OPEN, unchanged: the IP composite fix shape and
 its family-1 regression, the confirmatory second baseline run (AM3.6), and the
 custom encoded-injection variant (AM2.5).
+
+---
+
+## AMENDMENT 5 (2026-08-03): AM3.4's novelty false-positive number is corrected
+
+This amendment corrects ONE number in AM3.4. It changes no decision, no gate, no
+claim, and no scope. It exists because the number is now also carried in a public
+artifact, `docs/LIMITATIONS_v16.md`, and a frozen record that disagrees with the
+artifact it licenses is worse than either alone. The original document and
+Amendments 1 through 4 are left intact.
+
+### AM5.1. What AM3.4 states, and why the corpus does not support it
+
+AM3.4 (`:594-596`) states:
+
+> The real FP cost of novel-on was measured at 88.9 percent on benign MINTED
+> values (order IDs, UUIDs, computed totals) in family 1's probe 2
+
+Line-checked against the family-1 document, that reading is not supported.
+**88.9 percent is `8/9`, the PRE-family-1 baseline benign false-positive rate
+across all NINE probe-2 rows** (`PREDICTIONS_v16_family1.md:309-311`, section
+"Benign false-positive rate (probe 2, all 9 rows)", "Before: **8/9 = 88.9%**
+(measured)"). It is a baseline over the whole benign corpus, not a novelty delta,
+and not a rate over minted values. The minted rows are named a few lines later
+(`:313-315`) as part of the four that REMAIN false positives after family 1,
+which is a different fact than the one AM3.4 attaches the percentage to.
+
+### AM5.2. The measured novelty cost
+
+The cost of enabling the novelty branch, measured on the same corpus, is
+`PREDICTIONS_v16_family1.md:1267-1268`:
+
+> the same flip flags four benign rows (probe 2, 1/9 to 5/9)
+
+**1/9 with novelty off, 5/9 with novelty on, a delta of 4/9 on probe 2.** That
+figure, with its corpus and its denominator, is the one any public statement of
+the novelty cost must use.
+
+### AM5.3. AM3.4's argument is unaffected
+
+Only the number moves. AM3.4's point stands unchanged and is not restated
+weaker: the novelty false-positive cost is a FROZEN-CORPUS number, AgentDojo does
+not exercise it because its benign tasks supply their values in the user
+instruction and generate almost no novel-but-clean material, and the flat
+novel-on column in the AM3.1 run is therefore consistent with probe 2 rather
+than evidence that novel-on is cheap. The AM3.4 instruction that the limitations
+section must attribute the cost to the frozen corpora and not to the benchmark
+also stands, and is now discharged.
+
+### AM5.4. Where the corrected figure is carried
+
+`docs/LIMITATIONS_v16.md`, register two, item C3, states 1/9 to 5/9 with the
+probe-2 denominator and with the second bound the family-1 document attaches to
+it: the number is measured in a session that HAS an authoritative baseline, and
+the same flip in a session without one shows zero benign delta, which reads as a
+calm gate but is an artifact of having nothing to be novel against
+(`PREDICTIONS_v16_family1.md:1262-1268`).
+
+This amendment is dated so the correction is on the record rather than silent,
+on the same footing as the corrections at the top of the cross-hop document and
+AM1.0: a number that reached a public artifact by way of this document is
+corrected here, not quietly in the artifact alone.
