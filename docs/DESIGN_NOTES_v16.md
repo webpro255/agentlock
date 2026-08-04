@@ -2,6 +2,22 @@
 
 The public entry point to the v1.6 prediction chain.
 
+In plain terms: the gate decides whether a tool call may run from where each of
+its values came from, not from reading the values and judging what they say.
+v1.6 adds this, that a value which arrived from an untrusted source and then
+turns up in a parameter in a rewritten or scrambled shape is still traced back
+to the source it came from, and that tracing is done without ever unscrambling
+anything. What it cannot do follows from how it works, that it recognizes
+shapes of values it already knows arrived untrusted, so it never unscrambles a
+parameter to look inside, and a value an attacker restates in different words
+is outside its reach. The numbers here come from small fixed sets of test
+cases, each written down before the code existed together with the result that
+would have proved the claim wrong, and each reported with the size of the set
+it was measured over, so a number is evidence that one claim survived one test
+and not a statement about coverage or about cases outside those sets.
+Everything below this line is the audit trail behind that summary, and it ships
+with the predictions that turned out to be wrong left in place.
+
 v1.6 was built against pre-registered predictions: every claim below was written
 down, with its falsifier, before the code that would satisfy it existed. Those
 documents ship in this repository with their amendments intact, including the
@@ -63,11 +79,13 @@ deployment configuration is not a safe default (F1).
 
 So, concretely, before v1.6: in a session with parameter lineage enabled and
 the untrusted source declared, with the novelty branch at its shipped default
-of off, a tool call whose parameter carried `zxzpbc5jb20=`, the base64 of an
+of off, a tool call whose parameter carried `ZXZpbC5jb20=`, the base64 of an
 `evil.com` the session had already recorded as untrusted web content, reached
-ALLOW. The frozen family-2 must-catch corpus records 0 of 4 encoded attack rows
-blocked in that configuration before the work, across base64 of a domain, base64
-of an email address, a percent-encoded domain, and a hex-encoded domain. The
+ALLOW (the gate folds case on both sides, so it cites the matched form as
+`zxzpbc5jb20=`). The frozen family-2 must-catch corpus records 0 of 4 encoded
+attack rows blocked in that configuration before the work, across base64 of a
+domain, base64 of an email address, a percent-encoded domain, and a
+hex-encoded domain. The
 base64 cell was measured in family 1; the other three were pre-registered as
 predicted BEFORE cells and the probe confirmed them
 (`PREDICTIONS_v16_family2.md`, section 3 and AMENDMENT 6).
@@ -210,7 +228,7 @@ Family 1, four frozen probe corpora, denominators are the corpus row counts
 |---|---|---|
 | probe 4 obfuscated attacks, novelty on (8) | 6/8 reach ALLOW | 0/8 reach ALLOW |
 | probe 4 obfuscated attacks, novelty off (8) | 8/8 reach ALLOW | 4/8 reach ALLOW |
-| probe 3 composites (6) | varies by amendment | 6/6 blocked |
+| probe 3 composites (6) | 2/6 blocked at first measure (AM2) | 6/6 blocked |
 | probe 1 attacks (7) | 7/7 blocked | 7/7 blocked |
 | probe 2 benign false positives, novelty on (9) | 5/9 | 5/9 unchanged |
 
@@ -218,6 +236,9 @@ The two probe-4 configurations differ by design, and the difference is the
 finding: the symmetry half of the fix is novelty-independent and closes its rows
 in both settings, the composite-aware half is novelty-dependent. The probe-2 row
 is the novelty-on figure; its novelty-off counterpart is the 1/9 in section 4.
+The probe-3 before figure is the AMENDMENT 2 falsification measurement, four of
+those six reaching ALLOW, and that amendment records both of the two blocks as
+coincidental rather than principled.
 
 Family 2, three cuts, frozen family-2 corpora. Attributed means a denial carrying
 the matched token and naming the parent `cprov_` provenance entry, not a refusal

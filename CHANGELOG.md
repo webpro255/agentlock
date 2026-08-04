@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.6.0] - 2026-08-03
+## [1.6.0] - 2026-08-04
 
 The encoding release. A parameter that carries an encoded form of untrusted content is now attributed to the entry it came from, and nothing is ever decoded to do it.
 
