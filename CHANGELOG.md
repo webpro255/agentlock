@@ -17,7 +17,7 @@ The encoding release. A parameter that carries an encoded form of untrusted cont
 
 Every qualifier in that sentence is load-bearing and each one is measured. Parameter lineage is **off by default** and is opt-in per tool; a session whose untrusted writes were recorded without an untrusted context source has no untrusted entry, so there is nothing for the check to trace to and it returns a no-match with the reason `no_untrusted_context`. Attribution means a named `cprov_` parent entry in the denial and in the audit record, not merely a refusal. "With novelty gating off" is the shipped novelty default, so this is a soundness improvement in the default rather than one that needs the novelty branch turned on.
 
-Suite: **1364 tests, 0 failures.**
+Suite: **1364 tests, 0 failures, with the `crypto` and `mcp` extras installed** (`pip install -e ".[crypto,mcp]"`). A bare install runs **1351 passed, 13 skipped**, the 13 being the optional-extra tests: 12 need PyNaCl, from the `crypto` extra, for signed receipts and hash-chained context, and 1 needs `mcp`. No test fails in either environment.
 
 ### Added
 

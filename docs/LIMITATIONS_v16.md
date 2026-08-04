@@ -228,6 +228,9 @@ Each cut's result as recorded in that cut's closing amendment.
   configurations. Benign rows uniformly no-match, FP delta **0**, with the JWT
   and data-URI canaries holding. Suite **1364** at this cut, which is the
   release cut. (`PREDICTIONS_v16_family2_base64composite.md`, AMENDMENT 1.)
+  That suite total is measured with the `crypto` and `mcp` extras installed. A
+  bare install runs **1351** and skips the 13 optional-extra tests, none of
+  which belong to the corpora above.
 
 These corpora are the ONLY capability evidence for the encoding work. See C4.
 

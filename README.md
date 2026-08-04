@@ -289,11 +289,17 @@ changelog. That is how we intend to keep working.
 
 | version | highlights | tests |
 |---------|-----------|-------|
-| 1.6.0   | value-identity normalization; encoded-form attribution, bare and composite, base64/hex/natural-URL, zero decode | 1364 |
+| 1.6.0   | value-identity normalization; encoded-form attribution, bare and composite, base64/hex/natural-URL, zero decode | 1364 (1351 without optional extras) |
 | 1.5.0   | grant basis, execution confirmation, provenance on denials, deferred-resolution logging; LangChain and CrewAI adapters moved out of core | 1141 |
 | 1.4.0   | selective action-class gating, novel lineage, action-class audit, needs_approval surfacing | 1041 |
 | 1.3.0   | provenance-lineage gating, parameter lineage, deferred commit, AgentDojo evaluation | 868 |
 | 1.2.x   | adaptive hardening, decision types (final Apache 2.0 line) | 847 |
+
+The 1.6.0 count of 1364 passing, 0 skipped, is measured with the `crypto`
+and `mcp` extras installed (`pip install -e ".[crypto,mcp]"`). A bare
+install runs 1351 passed and skips the 13 optional-extra tests, 12 of
+which need PyNaCl and 1 of which needs `mcp`. Nothing fails in either
+environment.
 
 Full feature history:
 [v1.1](docs/history.md#v11-memory--context-permissions),

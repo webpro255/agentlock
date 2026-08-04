@@ -253,7 +253,9 @@ on its own:
   non-terminal, attributed in both configurations. Benign rows uniformly
   no-match, false-positive delta 0, with the JWT and data-URI canaries at
   2-character closest shared runs. Suite 1364 at this cut, which is the release
-  cut.
+  cut, measured with the `crypto` and `mcp` extras installed. A bare install
+  runs 1351 and skips the 13 optional-extra tests, none of which belong to the
+  family-2 corpora above.
 
 That canary result is recorded in the chain as the corpus not hitting rather than
 as proof of safety. A 10-character base64 needle carries more per-alignment
