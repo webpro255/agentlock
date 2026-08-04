@@ -194,14 +194,17 @@ Measured after the symmetry and composite-aware fix, from the table at
 |---|---|---|
 | probe 4 obfuscated attacks, novel ON (8) | 6/8 reach ALLOW | 0/8 reach ALLOW |
 | probe 4 obfuscated attacks, novel OFF (8) | 8/8 reach ALLOW | 4/8 reach ALLOW |
-| probe 3 composites (6) | varies by amendment | 6/6 blocked |
+| probe 3 composites (6) | 2/6 blocked at first measure (AM2) | 6/6 blocked |
 | probe 1 attacks (7) | 7/7 blocked | 7/7 blocked |
 | probe 2 benign FP, novelty on (9) | 5/9 | 5/9 unchanged |
 
 The two probe-4 configurations differ by design and the difference is the
 finding: the symmetry half is novelty-independent, so those rows close in both
 configurations, while the composite-aware half is novelty-dependent, so its rows
-close only with novelty ON.
+close only with novelty ON. The probe-3 before figure is the AMENDMENT 2
+falsification measurement (`PREDICTIONS_v16_family1.md:687-731`), four of those
+six reaching ALLOW, and that amendment records both of the two blocks as
+coincidental rather than principled, so the principled before figure is 0/6.
 
 ### C2. Family 2, three cuts, frozen family-2 corpora
 

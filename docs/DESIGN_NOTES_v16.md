@@ -18,12 +18,9 @@ and not a statement about coverage or about cases outside those sets.
 Everything below this line is the audit trail behind that summary, and it ships
 with the predictions that turned out to be wrong left in place.
 
-v1.6 was built against pre-registered predictions: every claim below was written
-down, with its falsifier, before the code that would satisfy it existed. Those
-documents ship in this repository with their amendments intact, including the
-predictions that turned out to be wrong. This page is a map of that record and
-does not stand in for it, and where a number appears here it carries the corpus
-it was measured on and the denominator it was measured over. The chain itself:
+This page is a map of that record and does not stand in for it, and where a
+number appears here it carries the corpus it was measured on and the
+denominator it was measured over. The chain itself:
 
 - [`RELEASE_SCOPE_v16.md`](RELEASE_SCOPE_v16.md), the release decision and five dated amendments
 - [`PREDICTIONS_v16_family1.md`](PREDICTIONS_v16_family1.md), value-identity normalization
