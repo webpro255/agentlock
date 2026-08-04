@@ -40,10 +40,15 @@ mechanisms enforce on that record:
 - Session write-gate. Once untrusted content enters the session,
   consequential writes are blocked. The gate never reads the payload, so
   there is no wording that gets around it.
-- Parameter lineage. Every tool-call parameter is checked for values that
-  trace to untrusted content but not to the user's own request. An
-  attacker-planted URL or email is denied even when the call looks
-  legitimate.
+- Parameter lineage, opt-in per tool. Register a tool at permissions
+  version 1.3 or later with param_lineage_enabled set on its lineage
+  policy, and every parameter of a call to that tool is checked for
+  values that trace to untrusted content but not to the user's own
+  request. An attacker-planted URL or email is denied even when the call
+  looks legitimate. It is off by default, and it only sees what a caller
+  has recorded: a write reported without an untrusted context source
+  produces no untrusted entry, so there is nothing to trace to and the
+  check returns no match.
 - Deferred commit. Consequential actions are queued and re-decided at end
   of turn against the complete session provenance, so content that
   arrives after the call can still deny it.
@@ -243,6 +248,36 @@ declaration that weakens gating: that one requires a human.
   on your tools. A single mislabeled tool accounted for the entire slack
   residual before we found it. Classification auditing is a deployment
   requirement, not an afterthought, which is why v1.4 ships the audit.
+- Multi-hop laundering, through a framework adapter. Adapter enforcement
+  is single-hop: it catches a value going from an untrusted tool's output
+  straight into a later tool's parameters. A value routed through an
+  intermediate tool that rewrites it is not caught, because no parent
+  link is recorded across the hop.
+- Recognizing an encoding of something it never saw. v1.6 matches encoded
+  forms by encoding the untrusted values it already has and looking for
+  them, never by decoding your parameters. That is what keeps a benign
+  value that merely looks like base64 from being misread. The price is
+  that a payload whose plaintext never entered the session as untrusted
+  content has nothing to match against.
+- Selection influence. Untrusted content that merely chooses among values
+  the user already supplied plants nothing, so there is nothing for a
+  provenance match to fire on. The session write-gate covers the gated
+  case; parameter lineage does not.
+- Telling a legitimate quotation from an attack. A summary that genuinely
+  quotes an attacker-supplied address really does carry that value, so it
+  is denied. Deciding it was benign would mean judging what the value is
+  for, which is the content judgement this gate refuses to make.
+
+The v1.6 encoding claim is measured at the engine, with a lineage policy
+configured and untrusted sources declared. It is not a claim about any
+adapter's defaults. The novelty branch has a real false-positive cost, it
+is measured on a frozen corpus rather than estimated, and it is off by
+default.
+
+Full statement, both registers, every number with its corpus and
+denominator: [docs/LIMITATIONS_v16.md](docs/LIMITATIONS_v16.md). How the
+v1.6 work was predicted, measured and corrected, and where the raw
+amendment chain is: [docs/DESIGN_NOTES_v16.md](docs/DESIGN_NOTES_v16.md).
 
 We found two defects in our own engine during v1.4 development: a version
 comparison that failed open at schema version 1.10, and a deferred-commit
@@ -254,10 +289,17 @@ changelog. That is how we intend to keep working.
 
 | version | highlights | tests |
 |---------|-----------|-------|
+| 1.6.0   | value-identity normalization; encoded-form attribution, bare and composite, base64/hex/natural-URL, zero decode | 1364 (1351 without optional extras) |
 | 1.5.0   | grant basis, execution confirmation, provenance on denials, deferred-resolution logging; LangChain and CrewAI adapters moved out of core | 1141 |
 | 1.4.0   | selective action-class gating, novel lineage, action-class audit, needs_approval surfacing | 1041 |
 | 1.3.0   | provenance-lineage gating, parameter lineage, deferred commit, AgentDojo evaluation | 868 |
 | 1.2.x   | adaptive hardening, decision types (final Apache 2.0 line) | 847 |
+
+The 1.6.0 count of 1364 passing, 0 skipped, is measured with the `crypto`
+and `mcp` extras installed (`pip install -e ".[crypto,mcp]"`). A bare
+install runs 1351 passed and skips the 13 optional-extra tests, 12 of
+which need PyNaCl and 1 of which needs `mcp`. Nothing fails in either
+environment.
 
 Full feature history:
 [v1.1](docs/history.md#v11-memory--context-permissions),
