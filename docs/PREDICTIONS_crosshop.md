@@ -1833,3 +1833,35 @@ three gap constructions are the rows a built increment 3 must reproduce.
 
 AM7 item 5 remains unbuilt. The 399-test floor stands at 399 passing, and the
 crosshop acceptance file stands at 41 passing.
+
+---
+
+# AMENDMENT 5 (2026-08-11): AM23.4 resolved, a pointer
+
+Everything above this line is the prediction of record plus AMENDMENTS 1 through
+4, all unedited. This amendment is a CROSS-REFERENCE, not a record in its own
+right. It exists so that AM23.4's open decision cannot be read as still open, and
+so that the resolution lives in exactly one place.
+
+## AM25 AM23.4 IS RESOLVED: option (a)
+
+AM23.4 left the increment-3 scope decision OPEN between option (a) and option
+(b). It is now **RESOLVED as option (a)**:
+
+- `novel_lineage_check` REMAINS on the flat authority test.
+- `parameter_lineage_check`, `lineage_summary`, and `untrusted_sources` broaden
+  to the transitive reachability predicate.
+
+**The decision, its rationale, the mechanism to be built, the acceptance
+criterion, and the falsifiers are recorded in
+`docs/PREDICTIONS_crosshop_increment3.md`**, frozen at commit `2357541` before
+any mechanism code existed. That document is the record; this section is the
+pointer to it and deliberately does not restate it.
+
+The evidentiary corpus the freeze is judged against is
+`tests/test_v16_crosshop_decision_time.py`, committed at `500e6d1` with measured
+shipped baselines.
+
+**Nothing in AM20 through AM24 is modified or superseded by this resolution.**
+Those measured findings stand exactly as recorded, including the ones that argue
+the cost of the option not taken.
