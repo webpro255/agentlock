@@ -1537,3 +1537,299 @@ acceptance result evidences it; its termination on malformed cyclic logs was
 demonstrated outside the repository.
 
 Decision 1 is no longer PROVISIONAL.
+
+---
+
+# AMENDMENT 4 (2026-08-11): the increment-3 floor pass and the novel_lineage contraction probe
+
+Everything above this line is the prediction of record plus AMENDMENTS 1 through
+3, all unedited. This amendment records two READ-ONLY measurement passes run
+before any increment-3 pre-registration: a floor pass over the decision-time call
+sites AM7 item 5 would change, and a probe of the one asymmetry that pass
+surfaced. No mechanism code was built by either pass, and nothing in the engine
+or either adapter was modified.
+
+Both passes bear on AM7 item 5, which remains UNBUILT. Increments 1 and 2 are
+built (`3f9ab12` frozen, `a585c80` built; `26ef567` frozen, `38a4bb6` built) and
+neither changes any verdict a shipped check returns.
+
+## AM20 THE FLOOR PASS
+
+### AM20.1 Degenerate collapse on every shipped path, measured
+
+The regression floor for item 5 is 16 test files exercising the decision-time
+sites, **399 tests, all passing** at time of writing. Instrumented, that floor
+produces:
+
+```
+provenance writes                                            661
+writes passing the ingestion `parameters` kwarg                0
+entries carrying a recorded parent_provenance_id               0
+entries where _taint_reachable disagrees with the flat test    0
+```
+
+**On all 661 entries the two predicates return the identical value**, because a
+walk with no links to follow terminates at the entry itself. Section 6 of this
+document predicted exactly this ("on a single-hop corpus no entry has a parent
+link, so reachability degenerates to exactly the flat `authority == UNTRUSTED`
+test it replaces"). That prediction is now MEASURED true rather than reasoned.
+
+The consequence is the part that matters for the freeze: **the byte-equality
+floor is satisfied VACUOUSLY today. A green floor after increment 3 is evidence
+of nothing**, because the predicate it is meant to test cannot differ on any path
+that floor drives.
+
+### AM20.2 There are FOUR flat-authority sites, not three
+
+AM7 item 5 names "three call sites in `context.py`". There are four, and the
+fourth belongs in any increment-3 scope:
+
+| site | lines | role |
+|---|---|---|
+| `parameter_lineage_check` | `1007-1011`, the `untrusted_entries` haystack | GATES, via `gate.py:808` |
+| `novel_lineage_check` | `1250-1255`, the partition that drops DERIVED outright | GATES, via `gate.py:823` |
+| `lineage_summary` | `928` (`tainted`) and `941-942` (`post_authoritative_taint`) | GATES, via `gate.py:796`, `2254`, `2314` |
+| `untrusted_sources` | `1194-1195` | REPORTS, feeds `context_provenance_ids` on denial records via `gate.py:351`, `2395` |
+
+The first three decide; the fourth describes. All four read the same flat
+membership test and all four would move together under item 5.
+
+### AM20.3 The direction of change is NOT uniform
+
+Measured against fixtures that carry recorded links, driving the shipped
+functions:
+
+- **`parameter_lineage_check` EXPANDS.** On a P5 paraphrase chain the shipped
+  engine returns no match and the broadened one matches: ALLOW becomes
+  `DENY:param_lineage`. This is the cross-hop payoff arriving at decision time.
+- **`lineage_summary` EXPANDS on `post_authoritative_taint`**, measured flipping
+  False to True where an untrusted entry precedes the last authoritative entry
+  and a tainted descendant follows it. `tainted` provably cannot move in either
+  direction: a reachable entry exists only if an untrusted ancestor is already in
+  the log, so `tainted` is already True whenever broadening adds anything.
+- **`untrusted_sources` reports MORE rows.**
+- **`novel_lineage_check` CONTRACTS.** A token carried in a taint-reachable
+  DERIVED entry stops classifying as novel, because that entry's tokens move from
+  being dropped at `:1255` into `untrusted_tokens`.
+
+**The two gating changes can swap a denial's reason on a single call.** Measured:
+the same request denies as `novel_lineage` shipped and as `param_lineage`
+broadened. The allow/deny bit is preserved; the reason code, the matched fields,
+and the cited provenance ids all change.
+
+### AM20.4 Broadening distribution: concentrated on attack chains
+
+Across the 17 committed crosshop sessions, **14 flat-untrusted entries become 29
+taint-reachable, a factor of 2.07**. The distribution matters more than the
+factor: **all 8 must-not-trip (benign) sessions are unchanged**, at 0 to 0 or 1
+to 1, and every added entry lies on a must-catch chain. That is the FL3
+anti-saturation requirement of section 4 holding at the decision layer, and it is
+the strongest available evidence that the predicate change is targeted rather
+than a slide toward tainting everything.
+
+### AM20.5 Discrimination: verdict (b) at the engine, verdict (c) one layer up
+
+**Nothing shipped or in the corpus discriminates the two predicates today.** The
+floor set records zero links (AM20.1), and the crosshop acceptance file never
+reaches decision time: it calls `notify_context_write` and reads
+`parent_provenance_id` back, and never calls `authorize()` or any of the four
+sites. The two bodies of evidence are disjoint by construction, ingestion on one
+side and decision on the other.
+
+**But discriminating cases are buildable NOW through the public API**, with no
+adapter change, because `notify_context_write` accepts `parameters` as of
+increment 1. Three were built and measured in the floor pass: the P5 paraphrase
+chain (`parameter_lineage_check`, expanding), a novel token inside a
+taint-reachable derived entry (`novel_lineage_check`, contracting), and a
+post-authoritative ordering case (`lineage_summary`, expanding).
+
+**Verdict (c) applies one layer up only.** No DEPLOYED flow can discriminate
+until the adapters pass the ingestion parameters
+(`crewai-agentlock/.../wrapper.py:78`, `mcp-agentlock/.../wrapper.py:273`), which
+is AM7 item 2's adapter side, deliberately left undone by increments 1 and 2.
+**Increment 3 is therefore measurable now but inert in deployment until the
+adapters are threaded.** Both layers are recorded because they answer different
+questions: whether the change can be evidenced, and whether it changes anything
+that ships.
+
+### AM20.6 The acceptance criterion must be reformulated
+
+**On linked paths literal byte-equality is unachievable BY DESIGN**, and not only
+because new detections appear. Measured: denials swap reason between
+`novel_lineage` and `param_lineage` with the allow/deny bit unchanged, and
+`context_provenance_ids` grows from 1 row to as many as 5 on the depth-4 shape.
+
+So increment 3's acceptance criterion must be **a verdict floor plus an
+explicitly enumerated set of permitted citation changes**, with discriminating
+cases as the actual evidence. The 399-test floor and the single-hop
+byte-equality floor of section 6 remain NECESSARY conditions and must still hold,
+but neither is acceptance evidence, because both are satisfied vacuously by
+AM20.1.
+
+## AM21 THE CONTRACTION PROBE: verdict COINCIDENTAL
+
+The floor pass left one question open: is `novel_lineage`'s contraction always
+compensated by `param_lineage`'s expansion in the same joint configuration? The
+probe answers it.
+
+**Verdict: COINCIDENTAL.** Compensation held on the P5 chain because the
+paraphrase hop RELAYED the untrusted content, so the broadened haystack had
+something for direction (B) to match. It fails when the tainted tool INTRODUCES
+the token rather than relaying it.
+
+**The contracted class, precisely.** A token `T` stops firing `novel_lineage`
+under the joint broadening exactly when: `T` is extracted at `min_len` 6 from the
+content of a taint-reachable DERIVED entry; `T` is NOT an exact token of any
+AUTHORITATIVE entry and NOT an exact token of any directly-UNTRUSTED entry; and
+the call's parameter carries `T`.
+
+The third condition is what makes the finding sharp. A RELAYED token is already
+in `untrusted_tokens` through its ancestor's own extraction, so it never fired
+`novel_lineage` in the first place. The contracted class is therefore exactly the
+class `novel_lineage` exists for: a target that traces to nothing the session can
+account for.
+
+All probe measurements ran under the JOINT broadening, all four sites together,
+with reachability over recorded links only. Testing the contraction in isolation
+would not have been well formed, because the compensation question only exists in
+the configuration that broadens the haystack while it contracts novelty.
+
+## AM22 THE THREE MEASURED GAPS, AND THE TWO NON-GAPS
+
+### AM22.1 Gap A, DEFAULT CONFIG. The load-bearing one.
+
+`parameter_lineage_check` skips a candidate token with a SUBSTRING test,
+`if tok in auth_blob: continue` (`context.py:1086-1087`), while
+`novel_lineage_check` uses EXACT token-set membership, deliberately, because
+substring membership launders look-alikes. A token that is a substring of
+authoritative content WITHOUT being an exact authoritative token is therefore
+novel today and can never be matched by param, in any configuration.
+
+Constructed and measured: the user says `PO-2026-0042-AMENDED`, an untrusted page
+is fetched, a tool called with that page introduces `PO-2026-0042`, and the call
+carries it.
+
+```
+SHIPPED  : DENY reason=novel_lineage
+BROADENED: ALLOW
+broadened param_lineage: no match
+```
+
+A control differing ONLY in the user's wording, so that the token is no longer an
+authoritative substring, flips the broadened outcome to `DENY:param_lineage` with
+the token matched. That control pins the auth-substring skip as the sole
+mechanism, and it makes the trigger cheap: a user mentioning a longer identifier
+that contains the one a tool later returns.
+
+### AM22.2 Gap B, non-default configuration. Floor mismatch.
+
+`gate.py:823` calls `novel_lineage_check` with no `min_len`, so it runs at the
+default 6, while `gate.py:808` passes `_lp.param_lineage_min_len`. Under any
+policy setting `param_lineage_min_len` above 6, tokens in the gap are classified
+by novel and are never param candidates. Measured losing at
+`param_lineage_min_len=12`: `DENY:novel_lineage` becomes ALLOW.
+
+### AM22.3 Gap E, configuration-dependent action strength.
+
+Compensation can exist and still be weaker than what it replaces. On one fixture
+with `novel_lineage_action="deny"` throughout:
+
+```
+param_lineage_action=deny     SHIPPED DENY:novel_lineage -> BROADENED DENY:param_lineage
+param_lineage_action=step_up  SHIPPED DENY:novel_lineage -> BROADENED DENY:param_lineage, needs_approval
+param_lineage_action=log      SHIPPED DENY:novel_lineage -> BROADENED ALLOW
+```
+
+A hard refusal becomes approval-gated under `step_up` and disappears under `log`.
+Both are configurations the schema permits.
+
+### AM22.4 The two NON-gaps, measured rather than assumed
+
+- **Canonicalization (Gap C) cannot lose.** A token present in the derived entry
+  only in a non-canonical surface form is still matched, because
+  `_canonical_blob_suffix` puts canonical forms in the blob. Measured: reason
+  swap `DENY:novel_lineage` to `DENY:param_lineage`, no loss.
+- **Direction-(A) scan curation (Gap D) cannot lose.** `_SCAN_KINDS`,
+  `_SCAN_FLOORS`, and `_ENCODED_MIN_LEN` govern the direction-(A) needle set and
+  are additive-only on top of an uncurated direction-(B) substring test. Any
+  token novel gains from a derived entry's content is by construction present in
+  that entry's content and therefore in its blob. Every attempted losing case in
+  this family fell through to a (B) match.
+
+Recorded because the family-2 curation was the first suspected source of the
+asymmetry and is NOT where it lives. The asymmetry lives in the AUTHORITATIVE
+side comparison (exact versus substring) and in a floor that is configured on one
+check and defaulted on the other.
+
+## AM23 THE INCREMENT-3 SCOPE OPTIONS, measured, decision OPEN
+
+### AM23.1 Option (a): leave `novel_lineage_check` on the flat test, broaden the other three
+
+**Viable on every measured case.** It preserves both losing cases as
+`DENY:novel_lineage` and keeps both expansions as `DENY:param_lineage`. It also
+closes Gap E, since `novel_lineage` is untouched and its DENY stands regardless
+of how `param_lineage_action` is configured.
+
+**Its measured cost is an inconsistency in the record, not a lost denial.** The
+same token draws contradictory classifications from the two checks in one
+request: `novel` per the flat check, and `untrusted` with a provenance citation
+per the broadened one. Both land in `request_metadata`. Gate ordering
+(`gate.py:808` before `:823`) means `param_lineage` decides, so the contradiction
+is RECORDED rather than acted on, and an audit record can assert both "traces to
+nothing" and "traces to this untrusted entry" about one value.
+
+### AM23.2 Option (b): broaden all four, carry the contraction as a named limitation
+
+**Viable**, and the limitation is now precisely enumerable rather than vague:
+Gap A under the default configuration, Gap B under a non-default floor, and Gap E
+under weak action configurations, all concentrated on the introduced-token class
+of AM21.
+
+### AM23.3 Option (c): gate novel's broadening behind an additional condition. DEGENERATE.
+
+The natural condition is to add a reachable derived entry's tokens to
+`untrusted_tokens` only when the token is also present in a directly-untrusted
+ancestor's content, which would keep Gap A novel while killing novelty for
+relayed tokens. Measured across all 17 committed sessions plus the probe
+fixtures:
+
+```
+tokens the JOINT broadening adds to novel's untrusted set : 24
+tokens the condition adds                                 :  0
+```
+
+Zero, because any token already present in a directly-untrusted entry's content
+was already extracted from that entry. **The condition collapses exactly to
+option (a).** The other candidate, suppressing novelty only when `param_lineage`
+also matched, is a compensation guard rather than a taint definition and is
+behaviourally option (a) again under the shipped gate ordering.
+
+A condition that genuinely separates INTRODUCED from RELAYED requires per-field
+or per-token provenance on read tools. That is the read-side lever already on the
+roadmap, and it is not available at this layer.
+
+### AM23.4 Status of the decision
+
+**The increment-3 scope decision is between option (a) and option (b). It is OPEN
+as of this amendment and is not made here.** Whichever is chosen gets its own
+pre-registration freeze, carrying the reformulated acceptance criterion of AM20.6
+and discriminating cases pinned by measurement rather than a floor that passes
+vacuously.
+
+## AM24 PROVENANCE OF THESE FIGURES
+
+Every figure in this amendment comes from two READ-ONLY passes, the floor pass
+and the contraction probe. They are instrumentation and simulation against
+shipped code and committed corpora: the built `_taint_reachable` and the shipped
+decision-time functions were driven directly, and the joint broadening was
+emulated by relabeling taint-reachable entries, which is exactly what each site's
+membership test would see under item 5. No mechanism was built.
+
+**Where increment 3 is later built, these figures are PREDICTIONS to be
+re-checked against it, and any mismatch is an audit trigger**, of the same kind
+as every other in this document. In particular the reason swaps, the citation
+growth, the 2.07 broadening factor with zero movement on benign sessions, and the
+three gap constructions are the rows a built increment 3 must reproduce.
+
+AM7 item 5 remains unbuilt. The 399-test floor stands at 399 passing, and the
+crosshop acceptance file stands at 41 passing.
