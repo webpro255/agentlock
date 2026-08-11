@@ -1865,3 +1865,85 @@ shipped baselines.
 **Nothing in AM20 through AM24 is modified or superseded by this resolution.**
 Those measured findings stand exactly as recorded, including the ones that argue
 the cost of the option not taken.
+
+---
+
+# AMENDMENT 6 (2026-08-11): increment 3 built and matched, and two record-keeping items
+
+Everything above this line is the prediction of record plus AMENDMENTS 1 through
+5, all unedited. Pointer style, as with AMENDMENT 5: the build reports and the
+freeze documents are the record, and this closes the loop on them.
+
+## AM26 INCREMENT 3 IS BUILT AND MATCHED ITS FREEZE
+
+**AM7 item 5 is built, under option (a), at commit `daf73c9`**, measured
+exact-match against the freeze at `2357541`:
+
+- decision-time file `13 passed / 0 failed / 7 skipped`, the predicted mirror
+  flip;
+- full suite `1418 passed / 0 failed / 7 skipped`;
+- all five corpus sessions recording their frozen outcomes;
+- the Gap A must-not-regress row holding `DENY:novel_lineage`;
+- the split-classification metadata matching its declared shape;
+- every observed reason and citation movement inside the freeze's part-2.C
+  enumeration;
+- both protected code regions, `parameter_lineage_check`'s auth-substring skip
+  and `novel_lineage_check`'s authority dispatch, verified untouched by diff hunk
+  ranges and by grep.
+
+The verdict floor held: the 399-test set, the crosshop acceptance file at
+`41 / 0 / 0`, and both adapter single-hop suites. Per AM20.6 it is cited as a
+NECESSARY CONDITION and not as acceptance evidence, because AM20.1 measured those
+paths carrying zero recorded links.
+
+**With this, AM7 items 1 through 5 are all built, each against a prediction
+frozen before its code existed, and each matched exactly.**
+
+## AM27 STALE LINE REFERENCE, immaterial, recorded rather than edited
+
+`docs/PREDICTIONS_crosshop_increment3.md` cites `BROADENING_SYMBOL` at
+`tests/test_v16_crosshop_decision_time.py:76`. Its actual location at build time
+was line 73, the drift coming from an unused-import removal before that file was
+committed. The discriminator keys on the CONSTANT'S NAME, which was unchanged, so
+no substance was affected and no prediction rested on the number.
+
+Recorded here rather than corrected in the frozen document, per the append-only
+rule: a frozen file is not edited after its build launches, and a wrong line
+number in it is a fact about the record, not an error to erase.
+
+## AM28 OUTSTANDING DEBT: the cycle guard's verification
+
+Re-recorded so it does not evaporate between passes.
+
+The cycle guard in `_taint_reachable` remains verified ONLY by increment 2's
+out-of-repo termination demonstration: three synthetic malformed logs, including
+a self-parent edge and a cycle containing an untrusted entry, each driven under
+an alarm and each terminating. Increment 2's report deferred a permanent in-repo
+regression test to increment 3. **Increment 3's freeze did not carry it and its
+build did not add it, so that deferral statement is now stale.**
+
+The debt stands: a unit test driving the walk with a synthetic cyclic log belongs
+in whichever future pass next touches the engine test suite, with its own suite
+delta pre-registered rather than folded silently into another increment's
+numbers.
+
+The guard's firing condition remains unreachable by construction on any graph the
+engine builds, since a parent is only ever selected from strictly earlier log
+entries and every recorded link points backward. **This is hardening verification
+debt, not a live risk**, and it is recorded at that width.
+
+## AM29 ARC STATE
+
+Increments 1 through 3 are built and matched, giving cross-hop linking at
+ingestion and reachability at decision time. Decision 1 is resolved (AMENDMENT
+3); the increment-3 scope decision is resolved as option (a) (AMENDMENT 5).
+Enforcement in DEPLOYMENT is still gated on the adapter threading prerequisite
+recorded in AM20.5, `crewai-agentlock/.../wrapper.py:78` and
+`mcp-agentlock/.../wrapper.py:273`, which must pass the call's input arguments
+before any link is recorded outside a test: that is a future arc and it gets its
+own pre-registration. The read-side per-field provenance lever remains the
+recorded path to any revisit of `novel_lineage`'s broadening, since no predicate
+at this layer can separate a token a tool INTRODUCED from one it RELAYED. The
+AM18 mixed-set residual and the deferred conditions, `CONTAIN_MIN` recalibration
+(AM11.2) and decision 4's normalization level including NFKC (AM10.2, AM12.2),
+stand unchanged.
