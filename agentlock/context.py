@@ -662,6 +662,36 @@ def _taint_reachable(
     return False
 
 
+def _reachable_untrusted_entries(
+    log: list[ContextProvenance],
+) -> list[ContextProvenance]:
+    """The entries a DECISION-TIME check should treat as untrusted, in log order.
+
+    AM7 item 5, built as increment 3 under the option (a) scope frozen in
+    ``docs/PREDICTIONS_crosshop_increment3.md``: an entry counts when it is
+    UNTRUSTED by its own authority, OR when it chains to an untrusted ancestor
+    through links the mechanism RECORDED earlier in the session.  Same relation
+    increment 2's ingestion selection uses, one definition, so this function is
+    the decision-time CONSUMER of :func:`_taint_reachable` rather than a second
+    reading of what taint means.
+
+    Three consumers: ``parameter_lineage_check``'s haystack,
+    ``lineage_summary``'s two facts, and ``untrusted_sources``' evidence rows.
+
+    ``novel_lineage_check`` is deliberately NOT a consumer.  Broadening it too
+    was measured LOSING a denial under the default configuration, on the class
+    of token a tainted tool INTRODUCES rather than relays, which is the class
+    that check exists for.  The two notions of taint that leaves in this module
+    are a recorded cost of the frozen scope, not an oversight, and unifying them
+    needs read-side per-field provenance rather than a wider predicate here.
+
+    The walk is over recorded links only and never over declared parentage from
+    any corpus, and its cycle guard cannot fire on a graph this engine built.
+    """
+    by_id = {e.provenance_id: e for e in log}
+    return [e for e in log if _taint_reachable(e, by_id)]
+
+
 def _containment_parent(
     prior: list[ContextProvenance],
     parameters: Any,
@@ -924,9 +954,15 @@ class ContextTracker:
             return {"tainted": False, "post_authoritative_taint": False}
 
         log = state.provenance_log
-        tainted = any(
-            entry.authority == ContextAuthority.UNTRUSTED for entry in log
-        )
+        # AM7 item 5: both facts key on REACHABILITY, not on authority alone.
+        # ``tainted`` provably cannot change value against the flat test, since a
+        # reachable entry exists only when an untrusted ancestor is already in
+        # the log.  If it ever moves, that is an audit trigger and not a
+        # tolerance.  ``post_authoritative_taint`` is the fact that can move, and
+        # it moves in one direction: a tainted descendant landing after the last
+        # authoritative entry is visible where its untrusted ancestor was not.
+        reachable = {e.provenance_id for e in _reachable_untrusted_entries(log)}
+        tainted = bool(reachable)
 
         # Index of the last authoritative entry (-1 if none exists).
         last_authoritative_idx = -1
@@ -938,8 +974,7 @@ class ContextTracker:
         # With no authoritative entry (idx == -1), every untrusted entry
         # (index >= 0) counts as post-authoritative.
         post_authoritative_taint = any(
-            entry.authority == ContextAuthority.UNTRUSTED
-            and i > last_authoritative_idx
+            entry.provenance_id in reachable and i > last_authoritative_idx
             for i, entry in enumerate(log)
         )
 
@@ -1004,10 +1039,12 @@ class ContextTracker:
             for e in state.provenance_log
             if e.authority == ContextAuthority.AUTHORITATIVE and e.content
         )
+        # AM7 item 5: the haystack is the REACHABLE set, so an intermediate hop's
+        # own output is scanned once it chains to an untrusted ancestor.  That is
+        # what lets a value transformed beyond token matching still be attributed
+        # at the sink.  The auth-first skip below is NOT touched by this change.
         untrusted_entries = [
-            e
-            for e in state.provenance_log
-            if e.authority == ContextAuthority.UNTRUSTED and e.content
+            e for e in _reachable_untrusted_entries(state.provenance_log) if e.content
         ]
         if not untrusted_entries:
             _note_outcome(outcome, "no_match", "no_untrusted_context")
@@ -1180,6 +1217,11 @@ class ContextTracker:
             if entry.authority == ContextAuthority.AUTHORITATIVE:
                 last_authoritative_idx = i
 
+        # AM7 item 5: the evidence rows follow the same reachable set the
+        # decision followed, so a denial cites every entry that carried the
+        # value rather than only the one that introduced it.
+        reachable = {e.provenance_id for e in _reachable_untrusted_entries(log)}
+
         return [
             {
                 "provenance_id": entry.provenance_id,
@@ -1192,7 +1234,7 @@ class ContextTracker:
                 "post_authoritative": i > last_authoritative_idx,
             }
             for i, entry in enumerate(log)
-            if entry.authority == ContextAuthority.UNTRUSTED
+            if entry.provenance_id in reachable
         ]
 
     def novel_lineage_check(
