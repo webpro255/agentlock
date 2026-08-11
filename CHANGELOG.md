@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-08-04
+
+The encoding release. A parameter that carries an encoded form of untrusted content is now attributed to the entry it came from, and nothing is ever decoded to do it.
+
+**The claim, at the strength the measurements support:**
+
+> In a deployment that registers the tool at permissions version 1.3 or later with `param_lineage_enabled` set, and declares the untrusted context source on the writes it records, a tool-call parameter carrying a bare or composite encoded form of a url-kind or email-kind untrusted value, under base64, hex, or natural-URL encoding, is attributed back to its parent untrusted provenance entry, without decoding any parameter value, with novelty gating off.
+
+Every qualifier in that sentence is load-bearing and each one is measured. Parameter lineage is **off by default** and is opt-in per tool; a session whose untrusted writes were recorded without an untrusted context source has no untrusted entry, so there is nothing for the check to trace to and it returns a no-match with the reason `no_untrusted_context`. Attribution means a named `cprov_` parent entry in the denial and in the audit record, not merely a refusal. "With novelty gating off" is the shipped novelty default, so this is a soundness improvement in the default rather than one that needs the novelty branch turned on.
+
+Suite: **1364 tests, 0 failures, with the `crypto` and `mcp` extras installed** (`pip install -e ".[crypto,mcp]"`). A bare install runs **1351 passed, 13 skipped**, the 13 being the optional-extra tests: 12 need PyNaCl, from the `crypto` extra, for signed receipts and hash-chained context, and 1 needs `mcp`. No test fails in either environment.
+
+### Added
+
+- **Value-identity normalization (family 1).** The same value written a different way is now the same value to the gate. Canonical forms are emitted for dates, phone numbers (E.164), amounts, and defanged URLs, alongside the raw token rather than instead of it, so no match that worked before stops working. A hop that writes `evil[.]com` for `evil.com` is attributed for the same reason the raw form is.
+- **Directional encoding, bare forms (family 2, first cut).** The base64, hex, and natural-URL encodings of a session's untrusted tokens are emitted into the untrusted comparison blob, so a parameter carrying an encoded form of a known untrusted value matches it. Four counted encoded attacks move from ALLOW to an attributed `DENY:param_lineage` naming the parent entry, in both the novelty-on and the shipped novelty-off configuration.
+- **Composite encoded forms (family 2, composite cut).** A direction-(A) scan makes each emitted untrusted form a needle against the raw parameter leaf, so an encoded value embedded inside a longer opaque token is caught, not only a bare one. Covers hex and natural-URL composites.
+- **base64 composites at every alignment (family 2, base64 composite cut).** base64 groups three input bytes into four output characters, so an encoded value cuts at both ends depending on where it starts and whether it ends the payload. The scan needle is the three phase interiors, which match at any offset and with any surrounding content, so base64 composites are caught terminal and non-terminal at all three phases rather than only in the phase-0-and-terminal corner.
+- **Zero decode, by construction and by guard.** Every needle is a forward encoding of a known untrusted value. Nothing in the parameter is ever decoded or inverted, which is the whole false-positive argument: a benign value that merely looks like base64 is never turned into anything. A test greps the context module for decode primitives (`b64decode`, `urlsafe_b64decode`, `b16decode`, `b32decode`, `fromhex`, `unquote`, `bytes.fromhex`) and fails if one appears, so a decode path cannot be added silently.
+- **Curation and floors, so the wider scan does not cost precision.** The direction-(A) composite scan admits only url-kind and email-kind values, and carries per-encoding length floors (hex 16, base64 10, natural-URL 10). The direction-(B) blob emission keeps its wider all-kinds coverage, and its own floor stays at 8.
+
+### Evidence, and what each source is allowed to establish
+
+- **Capability is established by the frozen corpora only.** The encoded catches above are measured on versioned, frozen corpora with pre-registered must-catch and must-not-trip columns, and every must-catch row is asserted with both the verdict and the parent provenance id it cites.
+- **AgentDojo establishes no regression, and nothing else.** A three-column run (v1.5.0 baseline, v1.6 default, v1.6 novelty-on) over the four suites, `gpt-4o-mini-2024-07-18`, `tool_knowledge` attack, 984 episodes per column, zero crashes. Combined utility moved 33.40 to 34.56 to 34.67 and no suite regressed. The run supports exactly one public statement: **v1.6 does not regress v1.5's benchmark behavior on the four AgentDojo suites.** It does **not** corroborate the encoding capability, because the benchmark contains no encoded payload anywhere in any suite: every injected value appears as literal plaintext. A benchmark cannot validate what it never presents.
+- **The novelty branch's false-positive cost is likewise a frozen-corpus number, not a benchmark number.** Novelty-on did not drop utility in the run above, but that is a property of the benchmark's task shapes, which supply their values in the user instruction and so generate almost no novel-but-clean material. The measured cost lives in the frozen corpora.
+
+### Limitations
+
+Each was found internally, by a read-only measurement or a pre-build check, not by an external report.
+
+- **Composites are url-kind and email-kind only.** Values that tokenize only as `str`, including bare IPv4/IPv6 addresses and `host:port` forms, are covered in their bare encoded form but not inside a composite. This is the curation decision above doing exactly what it was set to do, not a tokenizer miss.
+- **Per-character URL enumeration is not emitted.** Only the natural-encoder form is, meaning the structurally significant characters. Adversarial spellings such as `%65vil.com` and the subsets of encoded positions are combinatorial and are not covered.
+- **Values below the distinctiveness floor are not traceable.** A value shorter than `min_len` is not tokenized, so it cannot be encoded or matched. This is the floor working as specified.
+- **The claim is an engine-level claim.** "Declares the untrusted context source" is satisfied at engine level by the write call. The framework-adapter equivalent is an opt-in on the wrapper, and no encoded corpus has been run through an adapter, so no deployment-level encoded claim is made here.
+- **`enabled` is not a master switch over parameter lineage.** A lineage policy with `enabled=False` and `param_lineage_enabled=True` still denies on a parameter-lineage match. This is documented behavior, not a defect: the frozen corpora were measured with `enabled=True` and no measured result depends on it. Any change to that relationship belongs to a later version, on its own record.
+
 ## [1.5.0] - 2026-07-16
 
 The evidence release. v1.5 records strictly more and decides identically.
