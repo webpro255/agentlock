@@ -561,6 +561,109 @@ class ContextProvenance:
         return hashlib.sha256(content.encode()).hexdigest()
 
 
+# ---------------------------------------------------------------------------
+# v1.6 cross-hop -- the containment link predicate (increment 1)
+# ---------------------------------------------------------------------------
+# ``docs/PREDICTIONS_crosshop.md`` AM5 replaces token overlap as the linking
+# condition with WHOLE-CONTENT CARRIAGE: a prior entry is a parent candidate
+# when its whole recorded content is carried, intact, inside one of the current
+# call's parameter leaves.  Token overlap was measured setting false links on
+# ordinary prose (AM3), and a false link is not one wrong verdict: it is
+# inherited by every descendant for the rest of the session.
+#
+# This is a FOURTH comparison orientation, not a reuse of the lineage matcher:
+# prior content is the needle, a parameter leaf is the haystack, and there is no
+# tokenization on either side.  It deliberately does NOT use
+# ``extract_lineage_tokens``, the blob or encoded-form helpers, ``_SCAN_KINDS``,
+# ``_SCAN_FLOORS``, ``_ENCODED_MIN_LEN``, ``min_len``, or ``kind_rank``.  Its
+# only reuses are ``_iter_param_leaves`` and ``ContextProvenance.content``.
+#
+# INCREMENT 1 SCOPE (docs/PREDICTIONS_crosshop_increment1.md, frozen at
+# 3f9ab12): tier 1 candidacy plus tier 2 steps 3 and 4 only.  Tier 2 steps 1
+# and 2 (the taint-reachability preference), the AM10.3 mirrored-cell decline,
+# the transitive walk (AM7 item 4), and the reachability taint predicate (AM7
+# item 5) are NOT built here.  Two corpus rows are pre-registered to fail
+# because of exactly those omissions.
+
+# AM11.2: run at 24, CHOSEN and not calibrated.  The ``_ENCODED_MIN_LEN``
+# derivation does not transfer (that argument is bits-per-character over a
+# folded 36-to-38 symbol alphabet; prose carries roughly ten times less entropy
+# per character).  A change here invalidates the measured must-not-trip zeros
+# and requires re-running all six AM5 corpora, not adding rows to them.
+CONTAIN_MIN = 24
+
+
+def _contain_normalize(text: str) -> str:
+    """The AM10.2 safe core, applied SYMMETRICALLY to both comparison sides.
+
+    Strip, whitespace-run collapse, case fold.  Nothing else: no decode
+    primitives and no parsing.  Percent- and hex-decoding are structurally
+    forbidden here, and the family-2 guards enforce it by grepping this whole
+    module (``tests/test_v16_family2_encoding.py``,
+    ``tests/test_v16_family2_base64composite.py``).  NFKC and JSON
+    canonicalization are out of the first cut: NFKC is deferred to a false-link
+    measurement because it controls how often the mirrored cell fires (AM12.2),
+    and JSON canonicalization would require deciding that an opaque string is
+    JSON, which is content-type inference.
+
+    The symmetry is load-bearing, not stylistic.  Normalizing one side more
+    aggressively than the other changes which contents compare equal, and the
+    pre-registered figures were produced with one helper on both sides.
+    """
+    return " ".join(text.split()).casefold()
+
+
+def _containment_parent(
+    prior: list[ContextProvenance],
+    parameters: Any,
+) -> str | None:
+    """Select the parent provenance id for a write, by whole-content carriage.
+
+    ``prior`` is the session's provenance log as it stands BEFORE this write is
+    appended, so the caller's ordering is what makes this match-before-write
+    (AM2).  Write-before-match was measured self-linking on any tool whose
+    output contains its own input, and on a relay the self-link REPLACED the
+    true parent and destroyed the catch.
+
+    Tier 1 (candidacy).  A prior entry ``e`` is a candidate iff its normalized
+    content ``c`` satisfies ``len(c) >= CONTAIN_MIN`` and ``c`` is a substring
+    of at least one normalized parameter leaf.
+
+    Tier 2 (selection), steps 3 and 4 only for this increment: most recent by
+    log index, then longest normalized content, then lexically by provenance
+    id.  An empty candidate set records no parent.
+
+    The log is walked in REVERSE, which AM5 records as binding rather than
+    cosmetic: forward order attaches to the oldest containing ancestor and
+    flattens the chain.  There is no authoritative short-circuit here; that
+    skip belongs to decision-time token matching, and inheriting it at
+    ingestion was measured deleting true edges.
+    """
+    leaves = [_contain_normalize(v) for _path, v in _iter_param_leaves(parameters)]
+    if not leaves:
+        return None
+
+    best_key: tuple[int, int, str] | None = None
+    best_id: str | None = None
+    for index in range(len(prior) - 1, -1, -1):
+        entry = prior[index]
+        content = _contain_normalize(entry.content or "")
+        if len(content) < CONTAIN_MIN:
+            continue
+        if not any(content in leaf for leaf in leaves):
+            continue
+        # Step 3's three keys in order.  Log index is unique per entry, so the
+        # length and lexical keys cannot decide anything against the current
+        # single-parent log shape; they are written because the rule is frozen
+        # with them and a later selection tier may compare within a subset.
+        key = (index, len(content), entry.provenance_id)
+        if best_key is None or key > best_key:
+            best_key = key
+            best_id = entry.provenance_id
+
+    return best_id
+
+
 @dataclass
 class ContextState:
     """Tracks the provenance and trust state of a session's context."""
@@ -610,6 +713,7 @@ class ContextTracker:
         metadata: dict[str, Any] | None = None,
         content: str = "",
         policy: ContextPolicyConfig | None = None,
+        parameters: Any = None,
     ) -> ContextProvenance:
         """Record a context write and evaluate trust degradation.
 
@@ -620,14 +724,28 @@ class ContextTracker:
             writer_id: Identity of the writer.
             tool_name: Tool that produced the content, if any.
             token_id: Execution token, if from an authorized call.
-            parent_provenance_id: Parent provenance, if derived.
+            parent_provenance_id: Parent provenance, if derived.  An explicit
+                value is always kept; the cross-hop linker only fills a parent
+                the caller did not supply.
             metadata: Additional context (URL, filename, etc.).
             policy: Context policy to evaluate triggers against.
+            parameters: The INPUT arguments of the call that produced this
+                content, if the caller has them.  Supplying them is what lets
+                the containment linker establish a cross-hop parent link; with
+                no parameters no link is established and behaviour is exactly
+                what it was before the linker existed.
 
         Returns:
             The created provenance record.
         """
         state = self.get_or_create(session_id)
+
+        # Cross-hop link, established BEFORE the append below, so the linker
+        # sees prior entries only (AM2 match-before-write).
+        if parent_provenance_id is None and parameters is not None:
+            parent_provenance_id = _containment_parent(
+                state.provenance_log, parameters
+            )
 
         # Resolve authority from policy
         authority = ContextAuthority.UNTRUSTED

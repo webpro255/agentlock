@@ -2459,6 +2459,7 @@ class AuthorizationGate:
         parent_provenance_id: str | None = None,
         metadata: dict[str, Any] | None = None,
         content: str = "",
+        parameters: dict[str, Any] | None = None,
     ) -> ContextProvenance:
         """Report that content has entered the agent's context window.
 
@@ -2475,6 +2476,11 @@ class AuthorizationGate:
             token_id: Execution token, if from an authorized call.
             parent_provenance_id: Parent provenance, if derived.
             metadata: Additional context (URL, filename, etc.).
+            parameters: The INPUT arguments of the call that produced this
+                content.  Optional, and omitting it leaves behaviour exactly
+                as it was: a caller that supplies it lets the engine establish
+                a cross-hop parent link by whole-content carriage, at
+                ingestion, before the entry is appended to the log.
 
         Returns:
             The created provenance record.
@@ -2499,6 +2505,7 @@ class AuthorizationGate:
             metadata=metadata,
             content=content,
             policy=policy,
+            parameters=parameters,
         )
 
         # Audit the trust degradation if it just happened.
