@@ -578,12 +578,22 @@ class ContextProvenance:
 # ``_SCAN_FLOORS``, ``_ENCODED_MIN_LEN``, ``min_len``, or ``kind_rank``.  Its
 # only reuses are ``_iter_param_leaves`` and ``ContextProvenance.content``.
 #
-# INCREMENT 1 SCOPE (docs/PREDICTIONS_crosshop_increment1.md, frozen at
-# 3f9ab12): tier 1 candidacy plus tier 2 steps 3 and 4 only.  Tier 2 steps 1
-# and 2 (the taint-reachability preference), the AM10.3 mirrored-cell decline,
-# the transitive walk (AM7 item 4), and the reachability taint predicate (AM7
-# item 5) are NOT built here.  Two corpus rows are pre-registered to fail
-# because of exactly those omissions.
+# BUILT HERE, in two pre-registered increments:
+#   increment 1 (docs/PREDICTIONS_crosshop_increment1.md, frozen at 3f9ab12):
+#     tier 1 candidacy, and tier 2 steps 3 and 4.
+#   increment 2 (docs/PREDICTIONS_crosshop_increment2.md, frozen at 26ef567):
+#     tier 2 step 1 (the taint preference) with step 2's fallback, the AM10.3
+#     mirrored-cell decline, and AM7 item 4, the ingestion-time cycle-guarded
+#     reachability walk.  The walk is a prerequisite of step 1 rather than a
+#     later refinement of it: a direct-authority-only preference was measured
+#     REGRESSING three rows that increment 1 already passed, by promoting an
+#     untrusted ancestor over the proximate parent carrying it.
+#
+# NOT built here: AM7 item 5, the reachability taint predicate replacing the
+# flat ``authority == UNTRUSTED`` test at the three decision-time call sites in
+# this module.  That is increment 3, and it is the component carrying the
+# family-1 and family-2 byte-equality floor.  Nothing in the two increments
+# above changes any verdict a shipped check returns.
 
 # AM11.2: run at 24, CHOSEN and not calibrated.  The ``_ENCODED_MIN_LEN``
 # derivation does not transfer (that argument is bits-per-character over a
@@ -613,6 +623,45 @@ def _contain_normalize(text: str) -> str:
     return " ".join(text.split()).casefold()
 
 
+def _taint_reachable(
+    entry: ContextProvenance,
+    by_id: dict[str, ContextProvenance],
+) -> bool:
+    """Whether ``entry`` is UNTRUSTED or chains back to an untrusted ancestor.
+
+    This is AM7 item 4, the transitive walk, and it is the ONE reachability
+    definition: both tier 2 step 1 and the AM10.3 decline call it.  Two corpus
+    sessions constrain it from opposite sides, and only the transitive reading
+    satisfies both.  The mirrored cell needs a decline to FIRE on a genuine
+    disagreement.  The relay control needs it NOT to fire on an untrusted entry
+    and the verbatim relay of it, which are content-identical and which agree on
+    taint only because the relay reaches the untrusted entry through its link.
+    AM10.3's own wording says of that pair that "both are taint-reachable, so
+    the chain must still link", and that sentence is true only transitively.
+
+    The walk follows the links the MECHANISM RECORDED earlier in this session,
+    read off ``parent_provenance_id``.  It never consults declared parentage
+    from any corpus or fixture: a linker scored against ground truth it also
+    reads would be grading its own exam.
+
+    Cycle-guarded by the ``seen`` set.  The guard cannot fire on a graph this
+    engine built, because a parent is only ever selected from strictly earlier
+    log entries and every recorded link therefore points backward.  It is
+    defensive hardening for a log the engine did not build (restored, merged,
+    or supplied by a caller), and its presence is deliberately NOT evidenced by
+    any corpus result.
+    """
+    seen: set[str] = set()
+    current: ContextProvenance | None = entry
+    while current is not None and current.provenance_id not in seen:
+        seen.add(current.provenance_id)
+        if current.authority is ContextAuthority.UNTRUSTED:
+            return True
+        parent_id = current.parent_provenance_id
+        current = by_id.get(parent_id) if parent_id else None
+    return False
+
+
 def _containment_parent(
     prior: list[ContextProvenance],
     parameters: Any,
@@ -629,9 +678,16 @@ def _containment_parent(
     content ``c`` satisfies ``len(c) >= CONTAIN_MIN`` and ``c`` is a substring
     of at least one normalized parameter leaf.
 
-    Tier 2 (selection), steps 3 and 4 only for this increment: most recent by
-    log index, then longest normalized content, then lexically by provenance
-    id.  An empty candidate set records no parent.
+    The AM10.3 decline, evaluated over the FULL candidate set and strictly
+    BEFORE step 1 subsets it.  The ordering is load-bearing: on the mirrored
+    cell, subsetting first leaves only the untrusted twin in the working set,
+    the content-identical pair no longer coexists, no disagreement is visible,
+    and the linker records the very edge the decline exists to refuse.
+
+    Tier 2 (selection).  Step 1: if any candidate is taint-reachable, select
+    within that subset; otherwise within the full set.  Steps 3 and 4: most
+    recent by log index, then longest normalized content, then lexically by
+    provenance id.  An empty candidate set records no parent.
 
     The log is walked in REVERSE, which AM5 records as binding rather than
     cosmetic: forward order attaches to the oldest containing ancestor and
@@ -643,8 +699,7 @@ def _containment_parent(
     if not leaves:
         return None
 
-    best_key: tuple[int, int, str] | None = None
-    best_id: str | None = None
+    candidates: list[tuple[int, str, ContextProvenance]] = []
     for index in range(len(prior) - 1, -1, -1):
         entry = prior[index]
         content = _contain_normalize(entry.content or "")
@@ -652,6 +707,45 @@ def _containment_parent(
             continue
         if not any(content in leaf for leaf in leaves):
             continue
+        candidates.append((index, content, entry))
+
+    if not candidates:
+        return None
+
+    by_id = {e.provenance_id: e for e in prior}
+    reachable = {
+        index: _taint_reachable(entry, by_id) for index, _content, entry in candidates
+    }
+
+    # AM10.3, part 2: "Mirrored cell (content-identical candidates that DISAGREE
+    # on taint-reachability): DECLINE to link.  No parent is set from either."
+    #
+    # The trigger is a condition on the CANDIDATE SET, which is what the frozen
+    # sentence states; nothing in it refers to the selection outcome.  Candidates
+    # that are content-identical and AGREE on reachability do not decline, which
+    # is AM10.3's own correction: the scope is disagreement on taint-reachability,
+    # not on authority, so the verbatim relay pair is untouched.
+    #
+    # UNMEASURED, and deliberately not fossilized as spec: a candidate set holding
+    # a disagreeing content-identical PAIR alongside a distinct THIRD candidate.
+    # AM10.3 part 1 is scoped to candidates that differ in content and part 2 to
+    # the mirrored cell, so neither covers that mix, and no committed session
+    # produces one.  Declining outright is implemented because the trigger is a
+    # set condition; whether a distinct third candidate should remain selectable
+    # needs a discriminating session and a dated amendment before it is treated
+    # as decided.
+    for i, (index_a, content_a, _entry_a) in enumerate(candidates):
+        for index_b, content_b, _entry_b in candidates[i + 1 :]:
+            if content_a == content_b and reachable[index_a] != reachable[index_b]:
+                return None
+
+    # Tier 2 step 1, then steps 3 and 4 WITHIN the selected subset.
+    tainted = [c for c in candidates if reachable[c[0]]]
+    pool = tainted or candidates
+
+    best_key: tuple[int, int, str] | None = None
+    best_id: str | None = None
+    for index, content, entry in pool:
         # Step 3's three keys in order.  Log index is unique per entry, so the
         # length and lexical keys cannot decide anything against the current
         # single-parent log shape; they are written because the rule is frozen
