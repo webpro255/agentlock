@@ -1326,3 +1326,214 @@ content on their provenance writes (`crewai-agentlock/src/crewai_agentlock/wrapp
 `content=str(output)`; `mcp-agentlock/src/mcp_agentlock/wrapper.py:280`,
 `content=text`), so Tier 1's needle side needs no adapter change. AM7 item 2's new
 public API surface is the INPUT side only.
+
+---
+
+# AMENDMENT 3 (2026-08-11): provisional decision 1, RESOLVED by measurement
+
+Everything above this line is the prediction of record plus AMENDMENT 1 and
+AMENDMENT 2, all unedited. This amendment records that decision 1, frozen
+PROVISIONAL in AM10.3, is now resolved by measurement rather than by reasoning.
+It is written after the increment 2 build (commit `38a4bb6`), which was
+pre-registered in `docs/PREDICTIONS_crosshop_increment2.md` (frozen at `26ef567`)
+and measured against that freeze.
+
+Nothing above is edited. AM10.3 stays exactly as written, including its
+PROVISIONAL marking, because it was correct at the time it was written and the
+record of what was reasoned before the evidence existed is the point of freezing
+it. This amendment supersedes the marking; it does not revise the text.
+
+## AM15 THE RESOLUTION
+
+**Decision 1, the mirrored-content tie-break, is RESOLVED.** All three parts
+below are load-bearing and are recorded in full, because a reimplementation that
+matches two of them and not the third does not reproduce the measured behavior.
+
+### AM15.1 Trigger: a condition on the candidate-set CONFIGURATION
+
+The decline fires when the Tier 1 candidate set contains content-identical
+candidates (identical normalized content) that DISAGREE on taint-reachability.
+The trigger is a property of the candidate set, not of the selection outcome:
+it is enough that such a pair EXISTS among the candidates.
+
+**Textual basis, recorded because the alternative reading would have been
+plausible and unfalsifiable.** AM10.3 part 2 states the trigger as a property of
+the candidates themselves ("content-identical candidates that DISAGREE on
+taint-reachability"). Nothing in the frozen text, in part 2 or anywhere else in
+AM10.3, refers to what WOULD BE SELECTED. The outcome-dependent reading, under
+which a pair declines only when it would decide the selection, requires importing
+a run-selection-first-then-check step that appears nowhere in the frozen text, so
+it has no textual basis. The existence reading is what increment 2 implemented
+and shipped.
+
+The committed corpus cannot distinguish the two readings: no session produces a
+candidate set where they differ. The resolution rests on the frozen text, and
+that is recorded here rather than left implicit, so a later measurement that
+distinguishes them reads as new evidence against a stated basis rather than as a
+re-litigation.
+
+### AM15.2 Reachability: the transitive definition, shared
+
+Taint-reachability is: the candidate's own authority is UNTRUSTED, OR it chains
+to an untrusted ancestor through recorded `parent_provenance_id` links. The walk
+is cycle-guarded.
+
+Two properties are part of the resolution:
+
+- It is computed over the links the MECHANISM RECORDED earlier in the same
+  session, never over declared ground-truth parentage. A linker that read the
+  declarations it is scored against would be grading its own exam.
+- It is ONE definition, shared identically by the decline and by Tier 2 step 1.
+  Not two definitions that happen to agree.
+
+### AM15.3 Ordering: decline over the FULL candidate set, BEFORE step 1
+
+The decline is evaluated over the full Tier 1 candidate set, strictly before
+step 1's taint subsetting. If it fires, `parent_provenance_id = None` is recorded
+and selection stops. Step 1 and steps 3 and 4 run only when no decline fires.
+
+**This is part of the resolution and not an implementation detail.** If step 1
+subsets first, the mirrored cell's taint-reachable subset holds only the
+untrusted member of the pair, the content-identical pair no longer coexists in
+the working set, no disagreement is visible, the decline never fires, and the
+mirrored cell wrongly links to the untrusted mirror. A reimplementation matching
+AM15.1 and AM15.2 exactly, but ordering the decline after subsetting, breaks the
+measured behavior on the one cell decision 1 is about.
+
+## AM16 THE EVIDENCE
+
+AM11.1 states what finalizing decision 1 required:
+
+> **But 1 and 2 are ONE question, not two.** Decision 1 IS Tier 2 step 1, and
+> the merge-tool corpus that measures item 2 is the evidence that finalizes item 1.
+> The original split, which ratified 1 by reasoning while conceding 2 is unmeasured,
+> ratified the exact rule it simultaneously recorded as having no evidence.
+>
+> Deferring 2 is coherent here only because 1 is marked PROVISIONAL in AM10.3. The
+> corpus must produce genuine multi-candidate ingestions, including the mirrored
+> cell (content-identical candidates disagreeing on taint-reachability) and the
+> merge-tool shape AM8 named.
+
+That corpus exists, is committed, and is measured. **Both directions are
+measured, which is what makes this a resolution rather than a confirmation.**
+
+- **The FIRE case.** `mirrored cell :: B(mirror-consumer)` declines: the
+  mechanism records `None`, where the declared acceptable recording is `{None}`.
+  The two candidates are content-identical at normalized length 125 and disagree
+  on taint-reachability.
+- **The MUST-NOT-FIRE case.** `relay control :: C(consumer)` does NOT decline:
+  the mechanism records `B(relay)`, where the declared acceptable recording is
+  `{B(relay)}`. Its two candidates are also content-identical, at normalized
+  length 128, and they AGREE on taint-reachability under the transitive walk,
+  because the relay reaches the untrusted entry through its recorded link.
+
+A rule measured only on the fire case would be indistinguishable from one that
+declines on every content-identical pair, which is precisely the alternative
+AM10.3's own scope correction rejected as breaking must-catch rows.
+
+The genuine multi-candidate ingestions AM11.1 required are also measured:
+`merge-tool multi-candidate :: M(merged)` and
+`merge-tool, taint preference against recency :: M(merged)` both record `W(web)`,
+each against a declared acceptable set of `{W(web)}`, and the second is the row
+where recency alone would have selected `P(policy)`, so step 1 is measured firing
+against recency rather than merely agreeing with it.
+
+Measured totals at commit `38a4bb6`:
+
+```
+tests/test_v16_crosshop_parent_identity.py    41 passed, 0 failed, 0 skipped
+all 17 committed sessions                     every entry's parent correct
+full repo suite                               1405 passed, 0 failed, 0 skipped
+```
+
+## AM17 THE LOAD-BEARING FINDING, AND THE SCOPE INVERSION THAT PRODUCED IT
+
+**The decline's correctness REQUIRES the transitive reachability definition. A
+direct-authority-only decline is wrong, and it is wrong on a row this document
+already contains.**
+
+Under direct-only reachability, `relay control` manufactures a false
+disagreement: `A(untrusted)` is directly untrusted, and `B(relay)` reads clean
+despite relaying `A` verbatim, because its own authority is DERIVED. The pair
+then appears to disagree, the decline fires, and the mechanism records no parent
+for a chain that AM10.3's own scope correction says must still link:
+
+> a verbatim relay produces an UNTRUSTED entry and a DERIVED entry with IDENTICAL
+> content, which is content-identical across authorities, and both are
+> taint-reachable, so the chain must still link (by recency, to the proximate
+> relay).
+
+"Both are taint-reachable" is true only transitively. AM10.3's correction
+silently presupposed the walk. **This is why AM7 item 4 was a prerequisite of the
+decline rather than a separable companion**, and it is the reason increment 2 was
+scoped as step 1 plus decline plus walk together.
+
+**Scope-inversion history, recorded because the correction ran opposite to the
+anticipated risk.** The pre-build risk analysis anticipated a VACUOUS PASS: that
+if every row turned on a directly untrusted candidate, a direct-authority-only
+build would score identically to a walk-based one and the acceptance number would
+say nothing about item 4. A read-only discrimination pass over the committed
+corpus measured the opposite. A direct-only build would have REGRESSED three rows
+that increment 1 already passed:
+
+```
+row                                                direct-only   walk-based   acceptable
+merge-tool multi-candidate :: S(sink)              W(web)        M(merged)    {M(merged)}
+merge-tool taint-preference :: S(sink)             W(web)        M(merged)    {M(merged)}
+relay control :: C(consumer)                       None          B(relay)     {B(relay)}
+```
+
+The mechanism of the first two: step 1 without the walk cannot see that the
+proximate parent is transitively tainted, so the taint subset collapses to the
+directly untrusted entry alone and the rule promotes an ANCESTOR over the
+proximate parent that carries it. Increment 1 passed those rows by plain recency,
+with no taint preference at all, so a partial build would have read as a
+regression rather than as a missing capability. That projection was then measured
+correct in both directions: increment 2 landed at 41 of 41 with the walk, and the
+walk-less projection of 38 passed, 3 failed was pre-registered as the diagnosis
+for its absence.
+
+## AM18 ONE UNMEASURED RESIDUAL, explicitly NOT resolved here
+
+**A candidate set holding a disagreeing content-identical PAIR alongside a
+distinct THIRD candidate is not covered by AM10.3's frozen text and is not
+decided by this amendment.**
+
+AM10.3 part 1 is scoped to the general multi-candidate case where candidates
+DIFFER in content. Part 2 is scoped to the mirrored cell. The mixed set falls in
+neither, and part 2's closing sentence, "No parent is set from either", leaves
+open whether it forbids a parent entirely or only forbids taking one from either
+member of the pair, which would leave a distinct third candidate selectable.
+
+**No committed session produces such a candidate set**, verified by direct
+inspection of every Tier 1 candidate set the 17 sessions generate, so the corpus
+cannot decide it and no measurement here bears on it. Increment 2 declines
+outright in that case, and the code comment at the decline marks the behavior
+UNMEASURED and not fossilized as spec.
+
+Resolving it requires two things, and neither is done here: a discriminating
+session added to the corpus, which is itself a change to the evidentiary base and
+belongs in a dated amendment, and then a dated amendment here recording the
+measured resolution. **It is not resolved by decision 1's resolution, and this
+amendment does not decide it.**
+
+## AM19 STATUS AT TIME OF WRITING
+
+Increment 1 (tier 1 candidacy, tier 2 steps 3 and 4) and increment 2 (tier 2
+step 1, the AM10.3 decline, and AM7 item 4's ingestion-time cycle-guarded walk)
+are built and committed. AM7 item 5, the reachability taint predicate replacing
+the flat `authority == UNTRUSTED` test at the three decision-time call sites in
+`context.py`, is NOT built, and it is the component carrying the family-1 and
+family-2 byte-equality floor of section 6. Nothing built so far changes any
+verdict a shipped check returns.
+
+Still carried as open, with their conditions unchanged: decision 3
+(`CONTAIN_MIN`, run at 24, chosen and not calibrated, AM11.2), decision 4's
+normalization LEVEL (NFKC deferred to a false-link measurement, AM10.2 and
+AM12.2), and the AM18 residual above. The cycle guard required by AM7 item 4 is
+present and is unreachable by construction on any graph the engine builds, since
+a parent is only ever selected from strictly earlier log entries, so no
+acceptance result evidences it; its termination on malformed cyclic logs was
+demonstrated outside the repository.
+
+Decision 1 is no longer PROVISIONAL.
