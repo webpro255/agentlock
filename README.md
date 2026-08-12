@@ -248,11 +248,16 @@ declaration that weakens gating: that one requires a human.
   on your tools. A single mislabeled tool accounted for the entire slack
   residual before we found it. Classification auditing is a deployment
   requirement, not an afterthought, which is why v1.4 ships the audit.
-- Multi-hop laundering, through a framework adapter. Adapter enforcement
-  is single-hop: it catches a value going from an untrusted tool's output
-  straight into a later tool's parameters. A value routed through an
-  intermediate tool that rewrites it is not caught, because no parent
-  link is recorded across the hop.
+- Laundering that breaks carriage. As of 1.7, enforcement is bounded by
+  carriage rather than by hop count: a value relayed through an
+  intermediate tool is denied `param_lineage` citing the relay entry,
+  because the relaying write records the untrusted entry as its parent
+  and decision-time checks walk the recorded link. The link is
+  established only when the ingesting call's parameters carry the prior
+  entry's whole content, at or above the containment floor. A value that
+  the intermediate tool rewrites, paraphrases, or truncates below the
+  floor, or that never reaches that call's parameters, does not link,
+  and the chain stops there.
 - Recognizing an encoding of something it never saw. v1.6 matches encoded
   forms by encoding the untrusted values it already has and looking for
   them, never by decoding your parameters. That is what keeps a benign
@@ -289,17 +294,21 @@ changelog. That is how we intend to keep working.
 
 | version | highlights | tests |
 |---------|-----------|-------|
+| 1.7.0   | cross-hop provenance linking; parent attribution at ingestion by whole-content carriage; taint-reachability walk at decision time | 1418 with optional extras, 7 skipped |
 | 1.6.0   | value-identity normalization; encoded-form attribution, bare and composite, base64/hex/natural-URL, zero decode | 1364 (1351 without optional extras) |
 | 1.5.0   | grant basis, execution confirmation, provenance on denials, deferred-resolution logging; LangChain and CrewAI adapters moved out of core | 1141 |
 | 1.4.0   | selective action-class gating, novel lineage, action-class audit, needs_approval surfacing | 1041 |
 | 1.3.0   | provenance-lineage gating, parameter lineage, deferred commit, AgentDojo evaluation | 868 |
 | 1.2.x   | adaptive hardening, decision types (final Apache 2.0 line) | 847 |
 
-The 1.6.0 count of 1364 passing, 0 skipped, is measured with the `crypto`
-and `mcp` extras installed (`pip install -e ".[crypto,mcp]"`). A bare
-install runs 1351 passed and skips the 13 optional-extra tests, 12 of
-which need PyNaCl and 1 of which needs `mcp`. Nothing fails in either
-environment.
+Both counts are measured with the `crypto` and `mcp` extras installed
+(`pip install -e ".[crypto,mcp]"`). For 1.6.0 that is 1364 passing and 0
+skipped; a bare install runs 1351 passed and skips the 13 optional-extra
+tests, 12 of which need PyNaCl and 1 of which needs `mcp`. For 1.7.0 it
+is 1418 passing and 7 skipped, the 7 being pre-increment-3 baselines that
+stand down once the broadened reachability predicate is present; a bare
+install additionally skips the same 13 optional-extra tests. Nothing
+fails in any of these environments.
 
 Full feature history:
 [v1.1](docs/history.md#v11-memory--context-permissions),

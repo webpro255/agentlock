@@ -153,14 +153,26 @@ wrapper.
 measured at the engine and not at a deployment, and no deployment-level encoded
 claim is made from this evidence.
 
-Two adapter-level bounds follow from the adapters' own documentation and hold
-independently of this release. Provenance enforcement is opt-in per tool: a
-wrapper that does not declare a tool's output as untrusted records it as derived,
-which leaves no untrusted entry for any lineage check to fire on. And adapter
-enforcement is **single-hop**: it catches a value going from an untrusted tool's
-output directly into a later tool's parameters, and a value laundered through an
-intermediate tool that rewrites it is not caught, because no parent link is
-recorded across hops.
+Two adapter-level bounds follow from the adapters' own documentation. The first
+holds independently of this release and is unchanged: provenance enforcement is
+opt-in per tool, and a wrapper that does not declare a tool's output as untrusted
+records it as derived, which leaves no untrusted entry for any lineage check to
+fire on.
+
+**The second bound, that enforcement is single-hop, is CORRECTED as of 1.7.0 and
+only in its cross-hop half.** Cross-hop linking is present: a relaying write whose
+ingestion carries a prior entry's whole content records that entry as its parent,
+and decision-time checks walk the recorded link, so a value relayed through an
+intermediate tool is denied `param_lineage` citing the relay entry. Enforcement
+is now bounded by carriage rather than by hop count, and a value the intermediate
+tool rewrites, or that never reaches the ingesting call's parameters, still does
+not link.
+
+**The encoded-corpus residual above is NOT corrected and still stands.** No
+encoded corpus has been run through an adapter (AM4.3, residual 1). That is a
+distinct open item with its own retirement arc, and cross-hop linking being
+present does nothing to retire it. Only the single-hop half of this section is
+corrected here.
 
 ### S8. `enabled` is not a master switch over parameter lineage
 
@@ -276,6 +288,11 @@ encoding capability is established by C2 and by nothing else here.
 
 ## What is not in this release
 
-Cross-hop derivation linking is not part of v1.6.0. Adapter enforcement is
-single-hop as described in S7, and a value laundered through an intermediate
-tool that rewrites it is not caught.
+Cross-hop derivation linking was not part of v1.6.0. **It is present as of
+1.7.0**, as described in the correction in S7: a relaying write records the
+untrusted entry its ingestion carried as its parent, and decision-time checks
+walk the recorded link. Enforcement is bounded by carriage rather than by hop
+count, so a value the intermediate tool rewrites, or that never reaches the
+ingesting call's parameters, still does not link. This document otherwise
+describes v1.6.0 and is left as the v1.6 record; the 1.7.0 limitations are in
+the changelog entry for that release.

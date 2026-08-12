@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-08-12
+
+The cross-hop release. A value that reaches a sink through an intermediate tool is now attributed to the untrusted entry it came from, and the link is recorded at ingestion rather than reconstructed at decision time.
+
+**The claim, at the strength the measurements support:**
+
+> In a deployment that registers the tool at permissions version 1.3 or later with `param_lineage_enabled` set, and declares the untrusted context source on the writes it records, a tool-call parameter carrying a value that a derived entry relayed from an untrusted entry, where the relaying entry's ingestion supplied the parameters carrying that untrusted entry's whole content, is attributed back through the relay to the untrusted parent, and the call denies with reason `param_lineage` citing the relay entry.
+
+Every qualifier is load-bearing. The link is established by whole-content carriage at ingestion: when a prior entry's recorded content appears inside one of the ingesting call's argument values, that entry becomes the new write's parent. Nothing is decoded to do it, and a caller that supplies no parameters establishes no link, which leaves behaviour exactly as it was before the linker existed. Attribution means a named `cprov_` parent entry in the denial and in the audit record.
+
+Suite: **1418 tests, 0 failures, 7 skipped, with the `crypto` and `mcp` extras installed** (`pip install -e ".[crypto,mcp]"`). The 7 skips are pre-increment-3 baselines that stand down once `_reachable_untrusted_entries` is present in `context.py`; they describe the engine before the broadening and are retired by it, not disabled.
+
+### Added
+
+- **Cross-hop provenance linking.** `notify_context_write` takes an optional `parameters` argument carrying the input arguments of the call that produced the content. A derived entry whose ingestion carries a prior entry's whole content records that entry as its parent. The parent lands in the existing `parent_provenance_id` field, so `SCHEMA_VERSION` stays at 1.4 and no record shape changes.
+- **Taint preference, the decline, and the walk.** The linker prefers a tainted ancestor when one is reachable, and declines to attribute when the evidence does not support a single parent rather than guessing. The walk is cycle-guarded, and the guard is unreachable by construction on any graph the engine builds, since a parent is only ever selected from strictly earlier log entries.
+- **Decision-time broadening over the walked chain.** `parameter_lineage_check`, `lineage_summary`, and `untrusted_sources` move from the flat `authority == UNTRUSTED` test to a transitive taint-reachability predicate, so a check consults every untrusted entry the recorded chain reaches rather than only the entries written in the current hop. A value relayed through a derived entry and then consumed denies `param_lineage` citing the relay entry.
+- **`novel_lineage` deliberately stays on the flat authority test.** This is the resolution of the increment-3 scope decision as option (a) (AM25). Broadening it too was measured to cost a detection loss under the default configuration: a token that a taint-reachable derived entry introduced rather than relayed, which is exactly the class novelty exists for, moves into `untrusted_tokens`, novelty stops firing, and nothing else catches it. Option (a)'s own cost is recorded under Limitations.
+
+### Evidence, and what each source is allowed to establish
+
+- **Capability is established by the frozen corpora and the pre-registered predictions only.** Each increment was frozen before any mechanism code existed and then measured exact-match against its freeze: `docs/PREDICTIONS_crosshop.md` with amendments 1 through 6, and `docs/PREDICTIONS_crosshop_increment1.md`, `_increment2.md`, `_increment3.md`. The evidentiary corpora are `tests/test_v16_crosshop_parent_identity.py` and `tests/test_v16_crosshop_decision_time.py`, the latter committed with measured shipped baselines before the broadening landed, so the mirror flip was predicted rather than observed and then explained.
+- **The suite count establishes no regression, and nothing else.** 1418 passing says every prior check still returns what it returned and the new corpora record their frozen outcomes. It is not capability evidence on its own: the capability rests on the corpus rows with declared ground-truth parentage, each asserted with both the verdict and the parent provenance id it cites.
+- **No benchmark number is claimed for this release.** No AgentDojo run was made for cross-hop, so nothing here corroborates or contests v1.6's no-regression result, and no deployment-level cross-hop claim is made from a benchmark.
+
+### Limitations
+
+Each was found internally, by a read-only measurement or a pre-build check, not by an external report.
+
+- **Linking requires whole-content carriage meeting the containment floor.** The parent link is established only when a prior entry's recorded content appears whole inside an argument value, at or above `CONTAIN_MIN`. A value that is rewritten, paraphrased, truncated below the floor, or never carried into the ingesting call's parameters does not link, and the chain stops there. The floor is run at 24, chosen and not calibrated (`PREDICTIONS_crosshop.md`, decision 3, AM11.2).
+- **Encoded-corpus behavior through an adapter remains unmeasured.** No encoded corpus has been run through a framework adapter (`RELEASE_SCOPE_v16.md`, AM4.3, residual 1). That residual is untouched by this release and keeps its own future arc. Cross-hop linking being present does not retire it.
+- **The AM18 mixed-set residual is not resolved.** A candidate set holding a disagreeing content-identical pair alongside a distinct third candidate is not covered by AM10.3's frozen text. No committed session produces such a set, verified by direct inspection of every Tier 1 candidate set the 17 sessions generate, so the corpus cannot decide it and no measurement here bears on it. The engine declines outright in that case, and the decline is marked UNMEASURED in the code rather than fossilized as spec.
+- **Option (a) records an inconsistency it never acts on.** On a split-classification session one token draws two answers: `novel_lineage` reporting `classification == "novel"` per the flat check, and `param_lineage` reporting a match with a non-empty `untrusted_provenance_id` per the broadened one. Both land in `request_metadata`. `param_lineage` decides the verdict per gate ordering, so no verdict depends on the disagreement, but a reader of the audit record will see both and should not read the two as independent corroboration. This is a predicted and tested property, pinned by `test_after_split_classification_is_recorded_by_both_checks`, not an incidental behavior.
+- **Normalization level is still deferred.** Decision 4's NFKC question remains deferred to a false-link measurement (AM10.2, AM12.2), unchanged by this release.
+
 ## [1.6.0] - 2026-08-04
 
 The encoding release. A parameter that carries an encoded form of untrusted content is now attributed to the entry it came from, and nothing is ever decoded to do it.
