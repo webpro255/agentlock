@@ -479,3 +479,139 @@ frame-capture emulation described in section 6, and instrumented every ingestion
 write to census the links formed. Neither adapter repository was modified. The
 four corrections in section 0 were each read from the current trees rather than
 carried from the briefing, which is why they are corrections.
+
+---
+
+## AMENDMENT 1: the arc built and matched
+# Date: August 12, 2026
+
+Pointer style. This amendment records outcomes and cites the commits that carry
+them; it does not restate the frozen sections above, and it edits none of them.
+
+### AM1.1. BUILT AND MATCHED
+
+Five commits, in landing order, each gated on exact match before the next began.
+
+| step | repo | commit | shape |
+|---|---|---|---|
+| corpus | `crewai-agentlock` | `d5fa2ea` | carriage sessions, sync and async, mirrored |
+| corpus | `mcp-agentlock` | `64a9fad` | carriage session over in-memory transport, mirrored |
+| increment A | `crewai-agentlock` | `92c97b5` | 4 added lines: helper signature, the forward, BOTH call sites including async |
+| increment B | `mcp-agentlock` | `5b87da6` | 3 added lines: helper signature, the forward, the one call site INSIDE the `record_provenance` branch |
+| documentation | `crewai-agentlock` | `094f779` | docstrings and README, AST-strip-verified documentation-only |
+| documentation | `mcp-agentlock` | `7b88efa` | docstrings and README, AST-strip-verified documentation-only |
+
+**Prediction 2.1, inertness, HELD.** Census over the shipped corpora under each
+BUILT adapter: crewai 13 writes, 13 carrying parameters, **0 linked**; mcp 24
+writes, 19 carrying parameters, **0 linked**, the 5 without being
+empty-arguments calls where `arguments or None` passes `None`. Exactly the
+figures section 2.1 pinned, now measured through the mechanism rather than
+through the emulation. Every pre-existing test unchanged in isolation: crewai
+58, mcp 66.
+
+**Prediction 2.2, activation, HELD, on all three paths.** Denial reason
+`param_lineage`; citation naming the **RELAY** entry and never the fetch entry;
+relay entry's `parent_provenance_id` equal to the fetch entry's
+`provenance_id`; two provenance entries because the sink never executed; and
+for mcp `isError` true over a live in-memory server. Verified on crewai sync,
+crewai async, and mcp.
+
+**Prediction 2.3, engine unmoved, HELD.** `1418 passed, 7 skipped` before every
+build, after every build, and at this amendment. No file under `agentlock/` was
+modified by any commit of this arc.
+
+**Triples matched exactly, and the mirrors were derived before building** as
+section 3.3 requires: crewai `65 / 0 / 3`, mcp `72 / 0 / 2`, each verified per
+test for the membership flip rather than by count alone.
+
+**One prompt-side expectation was wrong and is corrected here.** The brief for
+increment B expected mcp's mirror to be ASYMMETRIC, so that its triple would
+move across the build. It does not. Both mirrors are symmetric: crewai splits 4
+unconditional / 3 absence-gated / 3 presence-gated, mcp splits 4 / 2 / 2, so
+each triple is invariant across its own flip and only membership changes. mcp
+lacks crewai's sync-and-async carriage pair, which removes one gated pair, and
+gains the `record_provenance` opt-out guard, which crewai has no equivalent of.
+The derivation was performed and stated before building in both cases, which is
+why the discrepancy surfaced as a correction rather than as a surprise at
+measurement time. **No triple in section 2 is amended: 2.1 predicted the crewai
+and mcp suite behavior, not the arithmetic of the corpus mirrors, which did not
+exist when the freeze was written.**
+
+### AM1.2. AM20.5 IS CLOSED
+
+The deployment prerequisite recorded at `PREDICTIONS_crosshop.md` AM20.5, that
+neither shipped adapter passes a tool call's input arguments and therefore no
+cross-hop linking occurs in production, **is closed by increments A and B.**
+
+Cross-hop enforcement is now live end to end in both deployed adapter flows:
+ingestion linking, taint reachability, and the increment-3 broadened
+decision-time sites all have a live consumer. Section 2.2's note that no
+existing adapter test traversed that path is retired by the carriage rows,
+which traverse it in both repos.
+
+### AM1.3. DOCUMENTATION CORRECTED
+
+Both READMEs' single-hop sections are rewritten to the measured claim, which is
+cross-hop enforcement bounded by carriage rather than by hop count, with the
+three remaining bounds stated as a list: an uncarried value produces no link,
+linking requires whole-content carriage clearing the engine's containment
+floor, and encoded forms are measured at the engine with no adapter-level claim
+made. Both helper docstrings document `parameters` in the shape the engine's
+own `notify_context_write` uses. Both `tests/test_provenance.py` module
+docstrings are corrected, and mcp's README test count is refreshed with an
+explanation of what its two skips are.
+
+**One residue, recorded rather than silently carried.**
+`test_single_hop_is_still_enforced_after_a_relay_call` in `mcp-agentlock` keeps
+its now-stale name so its test id stays stable; its docstring records that the
+name predates cross-hop linking and states what the test actually measures. A
+rename is its own commit if it is ever wanted, and is not owed by this arc.
+
+Section 0.4's rewrite obligation is discharged.
+
+### AM1.4. OPEN ITEMS OF THIS ARC, carried and not dropped
+
+**a. The encoded-corpus follow-up of section 8 is STILL OPEN.** Promoting the
+measured S7-shape corpus into `mcp-agentlock` would retire AM4.3 residual 1,
+with the retirement amendment scoped to single-hop sessions per section 8's own
+note. Nothing in this arc retires that residual, and no adapter-level encoded
+claim may be made until it does.
+
+**b. The migration tripwire is now ARMED.** Section 4 recorded the condition;
+what was missing was the row that fires. Both repos now carry a carriage
+must-catch row, so a post-mcp-2.0 carriage re-run has something that fails
+visibly if a per-request `ServerSession` inversion scatters writes across
+per-request session logs. The standing condition on the migration arc is
+unchanged and now enforceable rather than aspirational.
+
+**c. The docstring and README claims are now load-bearing public statements.**
+They describe linker semantics in prose: whole-content carriage, and a
+containment floor. Any future change to those semantics, a `CONTAIN_MIN`
+recalibration or an NFKC admission among them, must sweep both adapters'
+READMEs and both helper docstrings in the same arc that changes the engine.
+This is a new maintenance obligation created by this arc and is recorded here
+because nothing else would carry it.
+
+### AM1.5. PUSH STATE AT AMENDMENT TIME, read rather than assumed
+
+Nothing in this arc has been pushed anywhere.
+
+| repo | local | remote | ahead |
+|---|---|---|---|
+| `agentlock` | `5ffeb9b` plus this commit | `private/v1.6-derivation-taint` at `192dd72` | 2 after this commit |
+| `crewai-agentlock` | `094f779` | `origin/main` at `b124280` | 4 |
+| `mcp-agentlock` | `7b88efa` | `origin/main` at `f102042` | 3 |
+
+Two corrections to the values this amendment was briefed with, both read from
+the repositories rather than carried forward:
+
+- **`mcp-agentlock` is 3 commits ahead, not 4.** Its arc is exactly corpus,
+  build, documentation. The brief said four.
+- **`agentlock`'s branch tracks `private/v1.6-derivation-taint`, not `origin`.**
+  `origin/main` is at `2287bae`, a different line entirely, so "remote tip
+  `192dd72`" is correct only against the private remote.
+
+`crewai-agentlock`'s four is correct as a count, with one qualification worth
+recording: only three of those four belong to this arc. `1b69b6d`, the
+provenance write-target resolution, predates the arc and was already unpushed
+when the freeze was written.
