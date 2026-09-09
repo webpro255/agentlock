@@ -1738,3 +1738,414 @@ increment 2 does not do is measure that end to end. Nothing here exercises an
 adapter, and the claim that a declared block reaches Step 8 through `mcp.py:167` or
 `fastapi.py:197` is at present an inference from the shape of those call sites
 rather than a measurement of them. Increment 3 measures it.
+
+---
+
+## INCREMENT 3a FREEZE (2026-09-09): integration end-to-end
+
+Measured on `v1.8-recipient-enforcement` at `a9c38ca docs: AMENDMENT 4, increment 2
+built and matched`. Working tree clean at measurement time. This section is written
+before any increment 3a test code exists. It appends to this document and edits
+nothing above.
+
+Increment 3a adds no engine code. Nothing under `agentlock/` and nothing under
+`schema/` is touched. AMENDMENT 4 closed with the statement that the claim that a
+declared block reaches Step 8 through the in-repo integrations "is at present an
+inference from the shape of those call sites rather than a measurement of them."
+This increment measures it where it can be measured, and records a limitation where
+it cannot.
+
+---
+
+### STEP 0a. Full suite
+
+`pytest -rs`. Summary line, verbatim:
+
+```
+================= 1493 passed, 8 skipped, 14 warnings in 3.13s =================
+```
+
+1493 passed, 0 failed, 8 skipped. Skip list, verbatim, identical to A8, M7 and
+AMENDMENT 4:
+
+```
+SKIPPED [1] tests/test_v15_integration_confirmation.py:113: could not import 'mcp': No module named 'mcp'
+SKIPPED [5] tests/test_v16_crosshop_decision_time.py:479: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:491: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:502: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+```
+
+The stop condition on 0a did not fire.
+
+### STEP 0b. The six `authorize()` call sites in `agentlock/integrations/`
+
+`grep -n "authorize(" agentlock/integrations/*.py` returns six call sites, plus four
+docstring mentions. Each call, verbatim.
+
+`agentlock/integrations/autogen.py:119-124`:
+
+```python
+            auth = gate.authorize(
+                func_name,
+                user_id=user_id,
+                role=role,
+                parameters=kwargs or None,
+            )
+```
+
+`agentlock/integrations/mcp.py:167-172`:
+
+```python
+                    auth = gate.authorize(
+                        name,
+                        user_id=user_id,
+                        role=role,
+                        parameters=arguments or None,
+                    )
+```
+
+`agentlock/integrations/fastapi.py:197-201`:
+
+```python
+        auth = self.gate.authorize(
+            tool_name,
+            user_id=user_id,
+            role=role,
+        )
+```
+
+`agentlock/integrations/fastapi.py:290-294`:
+
+```python
+        auth = gate.authorize(
+            tool_name,
+            user_id=user_id,
+            role=role,
+        )
+```
+
+`agentlock/integrations/flask.py:163-167`:
+
+```python
+            auth = gate.authorize(
+                tool_name,
+                user_id=user_id,
+                role=role,
+            )
+```
+
+`agentlock/integrations/flask.py:271-275`:
+
+```python
+        auth = self.gate.authorize(
+            tool_name,
+            user_id=user_id,
+            role=role,
+        )
+```
+
+| Call site | Passes `parameters`? |
+|---|---|
+| `autogen.py:119` | YES, `parameters=kwargs or None` |
+| `mcp.py:167` | YES, `parameters=arguments or None` |
+| `fastapi.py:197` | NO |
+| `fastapi.py:290` | NO |
+| `flask.py:163` | NO |
+| `flask.py:271` | NO |
+
+As expected: two of six pass `parameters`, four pass only `user_id` and `role`.
+
+This corrects one sentence in AMENDMENT 4, which said of the six that "each of the
+six already forwards the caller's parameter dict to `authorize()`". Two do. Four do
+not. The correction is recorded here rather than by editing that amendment, which is
+append-only. It does not change any increment 2 verdict: no Q prediction concerned
+the adapters, and Q5's file list excluded all four integration files, which were and
+remain untouched. It changes only the reach claim, and R3 below states the corrected
+reach.
+
+### STEP 0c. `tests/test_v15_integration_confirmation.py` `TestMcpServerWrapper`, in full
+
+`tests/test_v15_integration_confirmation.py:109-148`, verbatim:
+
+```python
+class TestMcpServerWrapper:
+    def test_the_mcp_handler_reports_its_execution(self):
+        """The MCP server owns execution: the gate learns the outcome only
+        because the wrapper tells it."""
+        pytest.importorskip("mcp")
+        from agentlock.integrations.mcp import AgentLockMCPServer
+
+        backend = InMemoryAuditBackend()
+        gate = AuthorizationGate(audit_backend=backend)
+
+        class FakeServer:
+            """Stands in for an MCP Server: it only has to hand us the
+            call_tool decorator the wrapper patches."""
+
+            def __init__(self):
+                self.handler = None
+
+            def call_tool(self):
+                def decorator(fn):
+                    self.handler = fn
+                    return fn
+
+                return decorator
+
+        server = FakeServer()
+        AgentLockMCPServer(
+            server, gate, {"read_file": _perms()}, default_role="user"
+        )
+
+        @server.call_tool()
+        async def handler(name: str, arguments: dict) -> str:
+            return f"read {arguments['path']}"
+
+        result = asyncio.run(server.handler("read_file", {"path": "/etc/hosts"}))
+        assert result == "read /etc/hosts"
+
+        attempt, completed = _executions(backend)
+        assert attempt.action == "execution_attempted"
+        assert completed.metadata["status"] == "succeeded"
+        assert completed.metadata["reported_by"] == "caller"
+```
+
+This is the fixture pattern R2 reuses: `pytest.importorskip("mcp")` first, then a
+local `FakeServer` whose only job is to hand back the `call_tool` decorator that
+`AgentLockMCPServer._install_hook` patches, then `asyncio.run` on the captured
+handler.
+
+### STEP 0d. `import mcp`
+
+Verbatim:
+
+```
+$ python -c "import mcp"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import mcp
+ModuleNotFoundError: No module named 'mcp'
+```
+
+`ModuleNotFoundError`, as expected. This is the environment fact behind the first
+line of the A8 skip list.
+
+### STEP 0e. `agentshield` grep
+
+```
+$ grep -ri agentshield agentlock tests schema | wc -l
+0
+```
+
+Zero, as expected, unchanged from `e6631f4` and `a9c38ca`.
+
+### STEP 0f (added at measurement time). `import autogen`, and what CI installs
+
+Not in the frozen 0-series. Measured because R1 as first drafted assumed
+`protect_functions` had no hard dependency on the `autogen` package, and it does.
+
+```
+$ python -c "import autogen"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import autogen
+ModuleNotFoundError: No module named 'autogen'
+```
+
+`agentlock/integrations/autogen.py:39-47`, verbatim, is why this matters:
+
+```python
+def _check_autogen_available() -> None:
+    """Verify that AutoGen is importable."""
+    try:
+        import autogen  # noqa: F401
+    except ImportError as exc:
+        raise ImportError(
+            "AutoGen is required for this integration. "
+            "Install it with: pip install pyautogen"
+        ) from exc
+```
+
+It is called unconditionally at `AgentLockFunctionMap.__init__`
+(`agentlock/integrations/autogen.py:79`), which `protect_functions` constructs at
+`agentlock/integrations/autogen.py:200`. Without `pyautogen` installed,
+`protect_functions` raises `ImportError` before any gate call happens. R1 as first
+written could not pass in this environment, and R4 as first written, which counted
+the new autogen tests as passed and predicted nine skips, was unsatisfiable with it.
+
+`grep -rn "autogen" tests/` returns zero hits: **there is no autogen integration
+test in `tests/` at all before this increment.** The path has never been exercised
+by the suite.
+
+R1 and R4 are restated below before the build, on the same footing as AMENDMENT 1
+and AMENDMENT 3. R1 is guarded by `pytest.importorskip("autogen")`, the same idiom
+as the `mcp` guard measured at 0c. R4's arithmetic follows from that guard.
+
+**What CI installs.** `.github/workflows/ci.yml:27-30`, verbatim:
+
+```yaml
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+```
+
+The test step, `.github/workflows/ci.yml:39-40`, verbatim:
+
+```yaml
+      - name: Run tests
+        run: pytest --cov=agentlock --cov-report=xml -v
+```
+
+`dev` is defined at `pyproject.toml:63-69`, verbatim:
+
+```toml
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "pytest-asyncio>=0.23",
+    "mypy>=1.10",
+    "ruff>=0.4",
+]
+```
+
+It contains neither `pyautogen` nor `mcp`. Those live in separate extras
+(`pyproject.toml:50-51`: `autogen = ["pyautogen>=0.2"]`, `mcp = ["mcp>=1.0"]`) and in
+the `all` extra (`pyproject.toml:55-62`), and CI installs none of them.
+
+**Therefore: CI does NOT install the autogen or all extras before pytest.** The R1
+and R2 tests do not execute for real in CI on push, and they do not execute locally
+in this venv. They are not exercised anywhere in the automated path. **This is an
+open item for the release, recorded here as such.** The nearest existing precedent
+is the v1.7.0 release note at `CHANGELOG.md:56`, which reports its suite figure "with
+the `crypto` and `mcp` extras installed (`pip install -e ".[crypto,mcp]"`)", a manual
+step outside CI that covers `mcp` but not `autogen`. Closing this open item means
+either adding the extras to the CI install line or running the suite once under
+`pip install -e ".[all]"` before the release and recording that figure. Neither is
+done in increment 3a, which touches no CI file.
+
+---
+
+### Predictions for increment 3a
+
+R1 and R4 are the restated forms. R1 as first drafted, and R4 as first drafted, are
+retained in the two blockquotes below rather than deleted, in keeping with the
+append-only discipline used for D7.
+
+#### R1 (as first drafted, SUPERSEDED at 0f, 2026-09-09)
+
+> ~~autogen. `protect_functions` over a `send_email` callable that increments a
+> counter and returns "sent". Tool registered at version "1.5",
+> `allowed_recipients=KNOWN_CONTACTS_ONLY`, `recipient_parameter="to"`. Session for
+> alice with `known_contacts=["bob@company.com"]`. `guarded(to="bob@company.com",
+> body="hi", _agentlock_user_id="alice", _agentlock_role="user")` returns "sent" and
+> the counter is 1. `guarded(to="attacker@evil.com", ...)` raises `DeniedError` whose
+> reason is `"recipient_not_allowed"` and the counter is still 1.
+> `guarded(to=["bob@company.com", "attacker@evil.com"], ...)` raises the same and the
+> counter is still 1. A second tool registered with `allowed_recipients=ANY` and the
+> same `recipient_parameter` executes for the attacker address (counter increments),
+> proving the gate and not the wrapper decided.~~
+
+Superseded only as to the guard. Every case above is unchanged.
+
+#### R1 (restated, 2026-09-09). autogen, guarded by `importorskip`
+
+The autogen tests are guarded by `pytest.importorskip("autogen")` at the head of
+their test class, the same idiom as the `mcp` guard at
+`tests/test_v15_integration_confirmation.py:113`, because
+`agentlock/integrations/autogen.py:79` raises `ImportError` without `pyautogen`
+installed. No stub module is installed for `autogen`, and `sys.modules` is not
+written to: a stub would make the tests report as passed while measuring a wrapper
+whose own import guard had been defeated, and this document does not manufacture a
+green line for a path the environment cannot run.
+
+The cases, unchanged from the first draft:
+
+`protect_functions` over a `send_email` callable that increments a counter and
+returns `"sent"`. Tool registered at version `"1.5"`,
+`allowed_recipients=KNOWN_CONTACTS_ONLY`, `recipient_parameter="to"`. Session for
+alice with `known_contacts=["bob@company.com"]`.
+
+| Case | Expected |
+|---|---|
+| `guarded(to="bob@company.com", body="hi", _agentlock_user_id="alice", _agentlock_role="user")` | returns `"sent"`, counter is 1 |
+| `guarded(to="attacker@evil.com", ...)` | raises `DeniedError`, `.reason == "recipient_not_allowed"`, counter still 1 |
+| `guarded(to=["bob@company.com", "attacker@evil.com"], ...)` | raises `DeniedError`, `.reason == "recipient_not_allowed"`, counter still 1 |
+| a second tool at `allowed_recipients=ANY`, same `recipient_parameter`, called with the attacker address | executes, its counter increments |
+
+The last row is the control. It proves the gate and not the wrapper decided: the same
+wrapper, the same declared key, the same hostile address, differing only in the
+permission block, and the outcome differs.
+
+In this environment every R1 test SKIPS. The prediction is written so that it is
+checkable wherever `pyautogen` is installed, and so that the local result is a
+recorded skip rather than a fabricated pass.
+
+#### R2. mcp
+
+Guarded by `pytest.importorskip("mcp")` exactly as the v15 test at 0c. Same
+`FakeServer` fixture. `AgentLockMCPServer` with a `perm_map` registering `send_email`
+at version `"1.5"`, `allowed_recipients=KNOWN_CONTACTS_ONLY`,
+`recipient_parameter="to"`. Session for alice with
+`known_contacts=["bob@company.com"]`.
+
+| Case | Expected |
+|---|---|
+| handler call with `{"to": "attacker@evil.com", "body": "x", "_agentlock_user_id": "alice", "_agentlock_role": "user"}` | raises `DeniedError`, `.reason == "recipient_not_allowed"`, the underlying tool never runs |
+| the same call with `"to": "bob@company.com"` | runs the tool |
+| the `arguments` dict the tool receives | does NOT contain `_agentlock_user_id` or `_agentlock_role`, and DOES contain `"to"` |
+
+The third row is the point of the test, not a detail of it: it establishes that the
+`parameters` the gate read at `mcp.py:171` were the tool's own arguments, the same
+object the tool goes on to receive, and not some separate auth-carrying envelope.
+
+In this environment every R2 test SKIPS, for the reason measured at 0d.
+
+#### R3. fastapi and flask: no test, a stated limitation
+
+No test is written for either. The four call sites measured at 0b
+(`fastapi.py:197`, `fastapi.py:290`, `flask.py:163`, `flask.py:271`) pass only
+`tool_name`, `user_id` and `role` to `authorize()`. They pass no `parameters` at all.
+Therefore `recipient_parameter`, and with it every parameter-level check in the gate,
+is unreachable through those two integrations: the gate's D18 extraction reads a key
+out of a `parameters` dict that is `None` on every one of those four paths.
+
+This is pre-existing. It is not introduced by v1.8.0 and it is not fixed here. It is
+recorded as a limitation of the release.
+
+The scope of the limitation is wider than recipients, and the CHANGELOG line says so:
+the same four call sites also carry no parameters for the injection filter at Step 6,
+for parameter lineage, or for novel lineage. Those two integrations authorize on the
+tool name and the caller identity taken from request headers, and on nothing else.
+
+#### R4 (as first drafted, SUPERSEDED at 0f, 2026-09-09)
+
+> ~~Suite: 1493 plus the number of new autogen tests passed, 0 failed, 9 skipped. The
+> ninth skip is the new file's `importorskip("mcp")` line, and the other eight are
+> the A8 list unchanged. No existing test edited.~~
+
+#### R4 (restated, 2026-09-09). Suite arithmetic
+
+The full suite reports **1493 passed, 0 failed, 10 skipped**. The ninth and tenth
+skips are the new file's two `importorskip` lines, one for `autogen` and one for
+`mcp`. The eight in the A8 list are unchanged, line for line. No existing test is
+edited: `git diff --stat -- tests/` is empty and the only new path under `tests/` is
+the one new file.
+
+The passed count does not move, because every test in the new file skips in this
+environment. That is the honest arithmetic and it is stated as a prediction, not
+discovered afterwards.
+
+#### R5. Files touched
+
+`tests/test_v18_recipient_integrations.py` (new) and `CHANGELOG.md`, which gains a
+"Limitations" line under the 1.8.0 section stating R3 in one or two sentences, naming
+both `fastapi` and `flask` and saying that they authorize on tool name and identity
+from request headers only. Nothing under `agentlock/`. Nothing under `schema/`.
+`git diff --stat` and `git status --short` name no other path.
+
+#### R6. Lint and hygiene
+
+`ruff check agentlock/ tests/`, the exact command CI runs
+(`.github/workflows/ci.yml:32-33`), returns `All checks passed!` with exit 0.
+`grep -ri agentshield agentlock tests schema` returns 0 hits.
