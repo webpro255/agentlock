@@ -715,3 +715,52 @@ reopened here. It is not a description of code: at the time of writing, Step 8 i
 four lines of comment and `RECIPIENT_NOT_ALLOWED` has one occurrence in the
 entire repository. Its only purpose is to make increment 1 checkable against
 something written down before it existed.
+
+---
+
+## AMENDMENT 1 (2026-09-09): P5 wording defect found at measurement time, before the build was committed
+
+Found by the build session while measuring increment 1, and recorded here before
+any build change was committed. The defect is in the prediction, not in the
+build.
+
+### The defect
+
+P5 states that a grep for the raw literal `"rate_limited"` returns hits "only at
+the enum value definition (`agentlock/types.py:182`) and at
+`tests/test_gate.py:118`."
+
+That residue list was carried over from A6, whose grep was a case-insensitive
+bare-word search for `rate_limited` and therefore matched
+`DenialReason.RATE_LIMITED.value`. `tests/test_gate.py:118` reads:
+
+```python
+        assert result.denial["reason"] == DenialReason.RATE_LIMITED.value
+```
+
+It contains no quoted literal and never did. A case-sensitive grep for the
+quoted literal cannot return it. P5's residue list is therefore unsatisfiable as
+written, by any build.
+
+### What is unchanged
+
+The operative claim of P5 is unchanged and was met: the two raw-literal uses at
+`agentlock/exceptions.py:99` and `agentlock/gate.py:940` are removed.
+
+### P5, restated
+
+> Grep for the raw literal `"rate_limited"` across `agentlock` and `tests`
+> returns exactly two hits: the enum value definition at
+> `agentlock/types.py:182`, and one intentional pin in
+> `tests/test_v18_recipient.py` asserting that the wire value is unchanged. The
+> two raw-literal uses at `agentlock/exceptions.py:99` and `agentlock/gate.py:940`
+> are gone.
+
+### Why the build was not altered to fit the original wording
+
+The build was not changed to satisfy the frozen text. The pin test was kept
+because it is the measured basis for the CHANGELOG's claim that the RATE_LIMITED
+wire value is unchanged, and any honest assertion of that claim must contain the
+literal. Removing it to make a grep come out clean would have deleted the only
+evidence behind a claim the release makes.
+
