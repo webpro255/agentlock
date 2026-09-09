@@ -2287,3 +2287,125 @@ skip in CI on every push exactly as they skip locally. Closing the item means
 either adding the extras to the CI install line or running the suite once under
 `pip install -e ".[all]"` before the release and recording that figure alongside the
 default one. Increment 3a touches no CI file and does not close it.
+
+---
+
+## INCREMENT 3b FREEZE (2026-09-09): full-extras verification run
+
+Written on `v1.8-recipient-enforcement` at `63f3e9d docs: AMENDMENT 5, increment 3a
+built and matched`, working tree clean, before anything in this increment is run.
+This section appends to this document and edits nothing above it.
+
+Increment 3b adds no code of any kind. Nothing under `agentlock/`, nothing under
+`schema/`, nothing under `tests/`, and no CI file is touched. The only repository
+change in the whole increment is this section and the amendment that scores it.
+
+The purpose is to close, or to measure the exact shape of, the open item carried
+forward twice: at STEP 0f of the increment 3a freeze and again at the end of
+AMENDMENT 5. The R1 and R2 tests written in increment 3a have never executed a
+single assertion. They skip locally and they skip in CI. AMENDMENT 5 recorded that
+their bodies are correct on the strength of a scratchpad diagnostic run under
+stubbed `sys.modules` entries, and stated plainly that such a run "proves nothing
+about compatibility with the real `pyautogen` or `mcp` packages". This increment
+installs the real packages in a throwaway virtual environment and runs the suite
+there.
+
+The environment constraint is absolute and is recorded as part of the prediction:
+the virtual environment lives at `/tmp/al18-extras`, this checkout's own
+environment is not modified, and no global site-packages directory is written to.
+
+---
+
+### Predictions for increment 3b
+
+#### S1. The venv and the install
+
+A virtual environment created at `/tmp/al18-extras` with `python -m venv`, followed
+by `pip install -e "$REPO[dev,all]"` from this checkout, succeeds.
+
+If `pyautogen` fails to install, the error is recorded verbatim and the install is
+retried with `[dev,mcp,fastapi,flask,crypto]`. In that case the autogen test remains
+unexecuted, and that is recorded as the finding rather than worked around. No stub
+module is installed under any circumstance, in keeping with the discipline stated at
+restated R1.
+
+#### S2. The resolved `mcp` version
+
+In that venv, `pip show mcp` reports the resolved version.
+
+Prediction: **2.x**, because the `mcp` extra is unpinned at `pyproject.toml:51`
+(`mcp = ["mcp>=1.0"]`) and `mcp` 2.0.0 exists. The version is recorded whatever it
+turns out to be.
+
+#### S3. The MCP integration imports under the resolved version
+
+`python -c "from agentlock.integrations.mcp import AgentLockMCPServer"` in that venv
+succeeds.
+
+Reasoning, stated so it can be scored rather than assumed:
+`agentlock/integrations/mcp.py` imports only `mcp.server` (at `_import_mcp`,
+`mcp.py:39`) and `mcp.types` (at `_import_mcp_types`, `mcp.py:51`, which has zero
+call sites in the file). It does not import `mcp.server.lowlevel.server.request_ctx`
+or any other symbol implicated in the mcp-agentlock 2.0 breakage, so that breakage is
+predicted not to apply here. This is a measurement, not an assumption: if the import
+fails, the traceback is recorded verbatim and S3 is a MISMATCH.
+
+#### S4. The full suite in that venv
+
+`pytest -rs` in the venv reports **1493 passed plus every previously skipped
+extras-guarded test that now runs, 0 failed**.
+
+The extras-guarded tests are exactly three:
+
+| Test | Guard | Extra that unblocks it |
+|---|---|---|
+| `tests/test_v15_integration_confirmation.py::TestMcpServerWrapper::test_the_mcp_handler_reports_its_execution` | `importorskip("mcp")` at line 113 | `mcp` |
+| `tests/test_v18_recipient_integrations.py::TestAutogenFunctionMap::test_recipient_enforcement_through_the_function_map` | `importorskip("autogen")` at line 70 | `autogen` |
+| `tests/test_v18_recipient_integrations.py::TestMcpServerWrapper::test_recipient_enforcement_through_the_call_tool_handler` | `importorskip("mcp")` at line 121 | `mcp` |
+
+So the arithmetic is: **1496 passed, 7 skipped** if `pyautogen` installs, and **1495
+passed, 8 skipped** if it does not. Nothing else in the suite is guarded on an
+optional package.
+
+The remaining skips are **only** the seven `tests/test_v16_crosshop_decision_time.py`
+pre-increment-3 baselines (5 at line 479, 1 at line 491, 1 at line 502). Those are
+engine-state skips, not environment skips: they turn on
+`_reachable_untrusted_entries` being present in `context.py`, and no virtual
+environment can change that. The `mcp` skip at
+`test_v15_integration_confirmation.py:113`, present in every prior measurement in
+this document from A8 onward, is predicted to be **absent** for the first time.
+
+The summary line and the full `pytest -rs` short summary are recorded verbatim.
+
+**Any failure is a STOP and a finding.** If S4 shows a failure, the full traceback is
+reported and nothing further is committed.
+
+#### S5. R1 and R2 pass for real
+
+In that venv the R1 and R2 case tables from the increment 3a freeze pass against the
+real packages, not against stubs. Specifically: the autogen denial and the mcp denial
+both come from pipeline Step 8 with reason `recipient_not_allowed`, and each
+underlying tool runs only for the contact address, never for the attacker address.
+
+If `pyautogen` does not install, the R2 half of this stands alone and the R1 half is
+recorded as still unexecuted.
+
+This is the prediction that carries the substance of the increment. S4 measures
+arithmetic; S5 is what AMENDMENT 5 said the suite had not established.
+
+#### S6. Lint and hygiene, unchanged
+
+`ruff check agentlock/ tests/` returns `All checks passed!` with exit 0, and
+`grep -ri agentshield agentlock tests schema` returns 0 hits. Both are run from the
+checkout, and both are unchanged from R6, because no repository file outside this
+document changes in this increment.
+
+---
+
+### What increment 3b can and cannot close
+
+It can close the question of whether the two integration tests pass against the real
+packages, which is the open item. It cannot by itself close the CI half of that item,
+because it touches no CI file: a green run in a throwaway venv is evidence for a
+release note, not a change to what runs on push. AMENDMENT 6 records the measured
+decision input for that choice, and the choice itself is David's.
