@@ -3311,3 +3311,187 @@ The stop condition is unchanged and now applies to the restated wording: any MIS
 in T1 through T10 as restated, any test failure, any `twine check` failure, or any path
 in the release commit outside the eight above means no commit and a report of the raw
 output.
+
+---
+
+## AMENDMENT 9 (2026-09-09): v1.8.0 release commit verified
+
+Measured on `v1.8-recipient-enforcement` at `9bf7278 docs: AMENDMENT 8, release
+predictions restated before commit B`, working tree clean before the release edits and
+clean after the release commit. Scored against the restated wording in AMENDMENT 8 for
+T1, T5, T9 and T10, and against the frozen wording in the RELEASE FREEZE section for
+T2, T3, T4, T6, T7 and T8.
+
+Release commit: **`4a6a7e4983541b96e2f6d1c4322ab97b81f9751a`**, message `release: v1.8.0`,
+eight files, no trailer.
+
+### T1 to T10
+
+| T | Verdict | One line |
+|---|---|---|
+| T1 restated | MATCH | Both extras carry the marker. The wheel METADATA records it on both, and the CHANGELOG states the marker, the below-3.14 resolution, and the skip on 3.14. |
+| T2 | MATCH | `1.8.0` in `pyproject.toml` and `agentlock/__init__.py`. The `1.7.0` grep returns two README lines, a history table row and history prose. |
+| T3 | MATCH | Heading dated 2026-09-09. Both suite figures with their interpreters, the bare-`[dev]` figure, the CI install change, and the PyNaCl finding. |
+| T4 | MATCH | One changed line in `ci.yml`, nothing else in the file. |
+| T5 restated | MATCH | v1.4 two lines, v1.3 one line, both files parse, all three description values equal the current docstrings, scoped grep returns 0 in both forms. |
+| T6 | MATCH | Two DOI badges, a `Papers` section before `Install`, a 1.8.0 versions row. |
+| T7 | MATCH | `CITATION.cff` loads and reports version 1.8.0, release date 2026-09-09, two references. |
+| T8 | MATCH | `twine check` passed on both artifacts; `Metadata-Version: 2.4` after the hatchling pin; the wheel venv prints 1.8.0 and imports the MCP integration. |
+| T9 restated | MATCH | 1495 passed 8 skipped on 3.14.6 and 1496 passed 7 skipped on 3.13.14, both with `[dev,all]`. Lint clean. |
+| T10 restated | MATCH | Exactly the eight paths, `CITATION.cff` added and seven modified. |
+
+Ten of ten. No failure, no `twine check` failure, and no path outside the restated
+list, so the stop condition did not fire.
+
+---
+
+### The two suite lines, verbatim, with interpreter versions
+
+CPython **3.14.6**, `/tmp/al18-extras`, `pip install -e "${REPO}[dev,all]"`. The
+`autogen` requirement drops out under the marker, so `import autogen` fails and the
+AutoGen integration test skips:
+
+```
+$ /tmp/al18-extras/bin/python -c "import autogen"
+import autogen -> No module named 'autogen'
+$ /tmp/al18-extras/bin/python -m pytest -rs
+SKIPPED [5] tests/test_v16_crosshop_decision_time.py:479: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:491: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:502: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v18_recipient_integrations.py:70: could not import 'autogen': No module named 'autogen'
+================= 1495 passed, 8 skipped, 14 warnings in 3.33s =================
+```
+
+CPython **3.13.14**, `/tmp/al18-probe313`, `pip install -e "${REPO}[dev,all]"`. The
+marker holds, `pyautogen` resolves to 0.9.0, and the AutoGen integration test runs:
+
+```
+$ /tmp/al18-probe313/bin/pip show pyautogen | head -2
+Name: pyautogen
+Version: 0.9.0
+$ /tmp/al18-probe313/bin/python -c "import autogen; print(autogen.__version__)"
+0.9.0
+$ /tmp/al18-probe313/bin/python -m pytest -rs
+SKIPPED [5] tests/test_v16_crosshop_decision_time.py:479: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:491: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:502: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+======================= 1496 passed, 7 skipped in 3.25s ========================
+```
+
+The difference between the two lines is exactly one test, and the seven skips common to
+both are the pre-increment-3 crosshop engine-state baselines, unchanged line for line
+from AMENDMENT 6.
+
+Lint, run from the checkout under both installed ruff versions:
+
+```
+$ ruff check agentlock/ tests/                        # checkout ruff 0.15.6
+All checks passed!
+$ /tmp/al18-extras/bin/ruff check agentlock/ tests/   # venv ruff 0.16.6
+All checks passed!
+```
+
+---
+
+### Artifacts
+
+Built with `/tmp/al18-extras/bin/python -m build` from a clean `dist` and `build`, on
+CPython 3.14.6.
+
+| Artifact | sha256 |
+|---|---|
+| `agentlock-1.8.0-py3-none-any.whl` | `b22560ad30594d6c78b8a8552e36bb599408679c251b4077901f1f3f9330ec84` |
+| `agentlock-1.8.0.tar.gz` | `6a1f20bfbffc9e7af9262e9cddba48cfd3e2c10bbc9803a3e025fc0f5c650693` |
+
+```
+$ /tmp/al18-extras/bin/twine check dist/*
+Checking dist/agentlock-1.8.0-py3-none-any.whl: PASSED
+Checking dist/agentlock-1.8.0.tar.gz: PASSED
+```
+
+The wheel's `METADATA`, the two lines T8 names, plus the two requirement lines the T1
+marker produces:
+
+```
+Metadata-Version: 2.4
+Version: 1.8.0
+Requires-Python: >=3.10
+Requires-Dist: pyautogen<0.10,>=0.2; (python_version < '3.14') and extra == 'all'
+Requires-Dist: pyautogen<0.10,>=0.2; (python_version < '3.14') and extra == 'autogen'
+```
+
+Fresh venv at `/tmp/al18-wheel`, CPython 3.14.6, installing the built wheel with
+`[crypto,mcp]`:
+
+```
+$ /tmp/al18-wheel/bin/python -c "import agentlock; print(agentlock.__version__)"
+1.8.0
+$ /tmp/al18-wheel/bin/python -c "import agentlock.integrations.mcp as m; print(m.AgentLockMCPServer)"
+<class 'agentlock.integrations.mcp.AgentLockMCPServer'>
+```
+
+Note that `[crypto,mcp]` installs on 3.14 as it always did. Only the `autogen` and
+`all` extras are touched by the marker, and `all` still installs on 3.14, with the
+autogen requirement omitted.
+
+---
+
+### The hatchling pin, and the measurement that set the boundary
+
+T8 predicted `Metadata-Version: 2.4`, the level 1.7.0 shipped, and provided that if the
+toolchain emitted 2.5 then hatchling would be pinned and the pin recorded. The toolchain
+emitted 2.5. `build-system.requires` was `["hatchling"]`, unpinned, so the first build
+resolved hatchling 1.32.0:
+
+```
+* Installed build dependency versions:
+  - hatchling==1.32.0
+...
+Metadata-Version: 2.5
+Version: 1.8.0
+```
+
+No hatchling pin exists anywhere in this repository's history: `git log --all -S hatchling
+-- pyproject.toml` returns only the v1.0.0 commit that introduced the unpinned line, and
+no document records one. So the boundary was measured rather than recalled. Each
+published hatchling wheel from 1.27.0 through 1.32.0 was downloaded and its Python
+sources searched for the metadata levels it can emit:
+
+| hatchling | Metadata levels present in the wheel |
+|---|---|
+| 1.27.0 | 2.1, 2.2, 2.3, 2.4 |
+| 1.28.0 | 2.1, 2.2, 2.3, 2.4 |
+| 1.29.0 | 2.1, 2.2, 2.3, 2.4 |
+| 1.30.1 | 2.1, 2.2, 2.3, 2.4, **2.5** |
+| 1.31.0 | 2.1, 2.2, 2.3, 2.4, **2.5** |
+| 1.32.0 | 2.1, 2.2, 2.3, 2.4, **2.5** |
+
+2.5 appears first at 1.30.1, and the index publishes no 1.30.0, so the last version that
+cannot emit 2.5 is 1.29.0 and the correct constraint is `hatchling<1.30`.
+`build-system.requires` is now `["hatchling<1.30"]`, the build resolved
+`hatchling==1.29.0`, and the wheel reports `Metadata-Version: 2.4`. This is the one
+change in the release commit that no prediction called for by name; T8's fallback clause
+called for it by condition, and the condition held.
+
+---
+
+### What the release commit contains
+
+```
+ 1  1  .github/workflows/ci.yml
+ 9  1  CHANGELOG.md
+35  0  CITATION.cff
+20  2  README.md
+ 1  1  agentlock/__init__.py
+ 4  4  pyproject.toml
+ 1  1  schema/agentlock-v1.3.json
+ 2  2  schema/agentlock-v1.4.json
+```
+
+Eight paths, matching T10 as restated. The two schema files change by three lines
+between them, which is the whole of the description fix. No file under `agentlock/`
+changes except the one-line version, no file under `tests/` changes at all, and no
+mechanism code is touched by this release commit: every mechanism in v1.8.0 landed in
+increments 1 through 3a and was scored in AMENDMENTS 2, 4 and 5.
+
+The session stops here. Nothing is merged, tagged, pushed, or uploaded.
