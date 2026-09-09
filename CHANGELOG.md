@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - unreleased
+
+The recipient release. Pipeline Step 8 was a comment block from v1.0 through v1.7.0: the `recipient` argument was threaded end to end and then discarded, and `RECIPIENT_NOT_ALLOWED` existed only as an enum member that nothing raised. It is now enforced.
+
+**The claim, at the strength the measurements support:**
+
+> For a tool registered at permissions version 1.5 or later, a nonempty recipient is checked against the tool's `scope.allowed_recipients` at Step 8, and a recipient the policy does not admit denies with reason `recipient_not_allowed`. Blocks at version 1.4 and below take the same path they took in v1.7.0.
+
+### Added
+
+- **Recipient policy enforcement at Step 8.** Enforcement fires only when the permission block is at version 1.5 or later and a nonempty recipient is supplied. The version floor uses `version_at_least`, the same gating idiom the lineage checks use, and the check is independent of the lineage engine.
+- **`known_contacts_only`.** Allows the recipient when it appears in the session's known contacts, and denies otherwise. An empty contact set denies every recipient.
+- **`allowlist`.** Allows the recipient on an exact address match against `scope.recipient_allowlist`, or when an entry beginning with `@` names exactly the recipient's domain. Exact domain only: a subdomain of an allowlisted domain does not match.
+- **`same_domain`.** Allows the recipient when its domain equals the domain of the session's `user_id`. A `user_id` carrying no domain denies.
+- **`any`.** Skips the check entirely, admitting any recipient.
+- **`known_contacts` on `create_session`.** An optional iterable of addresses, normalized and frozen onto the session at creation. It is populated only from deployer configuration at session creation, never from tool output, context writes, or model output. It defaults to `None`, meaning an empty set, so every existing call site is unaffected.
+- **`recipient_allowlist` on `ScopeConfig`.** A list of strings, empty by default. Entries are full addresses or domain entries beginning with `@`, and the field is consulted only under the `allowlist` policy.
+
+### Changed
+
+- **`SCHEMA_VERSION` is now `1.5`**, and `schema/agentlock-v1.5.json` is generated the same way its predecessors were. `schema/agentlock-v1.4.json` is untouched.
+- **The change is additive.** The default of `allowed_recipients` stays `known_contacts_only` rather than being weakened; additivity comes from the version floor instead. A permission block at version 1.4 or below receives a decision identical to the one v1.7.0 gave it, malformed and cross-domain recipients included.
+- **Malformed recipients deny under every restrictive policy.** After stripping and casefolding, a recipient containing internal whitespace, a control character, a newline, a comma, or a semicolon is denied rather than parsed. Splitting a multi-recipient string into separate authorize calls is an adapter concern and is not done here.
+- **`RATE_LIMITED` is raised as the enum member** at `exceptions.py` rather than the raw string `"rate_limited"`, and the audit call site in `gate.py` passes `DenialReason.RATE_LIMITED.value` so the stored reason stays a plain `str`. The wire value is unchanged in both paths.
+
+### Limitations
+
+- **Matching is exact.** Known contacts match by exact normalized address, and domain entries match one exact domain. There is no subdomain wildcard, no display-name parsing, and no address canonicalization beyond stripping and casefolding.
+- **The contact set is whatever the deployer supplies.** The gate does not consult a contacts backend, and an empty set under `known_contacts_only` denies every recipient by design.
+- **Rate-limit denials still carry no signed receipt.** A recipient denial is signed, because it exits through the same path every other policy denial exits through. The rate-limit denial returns its result before reaching that path. This predates the release and is unchanged by it.
+
 ## [1.7.0] - 2026-08-12
 
 The cross-hop release. A value that reaches a sink through an intermediate tool is now attributed to the untrusted entry it came from, and the link is recorded at ingestion rather than reconstructed at decision time.

@@ -26,13 +26,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agentlock.context import ContextState
-from agentlock.schema import AgentLockPermissions, version_at_least
+from agentlock.schema import AgentLockPermissions, ScopeConfig, version_at_least
 from agentlock.types import (
     ApprovalThreshold,
     DataBoundary,
     DataClassification,
     DegradationEffect,
     DenialReason,
+    RecipientPolicy,
     RiskLevel,
 )
 
@@ -48,6 +49,8 @@ class RequestContext:
         data_boundary: Requested data scope.
         record_count: Number of records requested.
         recipient: For outbound tools, the target recipient.
+        known_contacts: Normalized recipient addresses carried by the
+            session, supplied by the deployer at session creation.
         is_bulk: Whether this is a bulk operation.
         is_external: Whether this sends data externally.
         is_financial: Whether this involves financial operations.
@@ -70,6 +73,7 @@ class RequestContext:
     data_boundary: DataBoundary = DataBoundary.AUTHENTICATED_USER_ONLY
     record_count: int = 1
     recipient: str = ""
+    known_contacts: frozenset[str] = field(default_factory=frozenset)
     is_bulk: bool = False
     is_external: bool = False
     is_financial: bool = False
@@ -153,6 +157,28 @@ class ActionFlags:
     is_consequential: bool = False
     is_deletion: bool = False
     is_membership_change: bool = False
+
+
+def _normalize_recipient(value: str) -> str:
+    """Normalize a recipient or allowlist entry: strip, then casefold."""
+    return value.strip().casefold()
+
+
+def _recipient_domain(value: str) -> str:
+    """The substring after the last "@", or "" when there is no "@"."""
+    _, sep, domain = value.rpartition("@")
+    return domain if sep else ""
+
+
+def _recipient_is_malformed(value: str) -> bool:
+    """Is this normalized recipient unusable as a single address?
+
+    Control characters, any whitespace, commas, and semicolons all mark a
+    value that is either not one address or not an address at all.
+    """
+    if "," in value or ";" in value:
+        return True
+    return any(ord(c) < 32 or ord(c) == 127 or c.isspace() for c in value)
 
 
 def active_lineage_policy(permissions: AgentLockPermissions):
@@ -565,9 +591,10 @@ class PolicyEngine:
         # ── End filter chains ─────────────────────────────────────────
 
         # 8. Recipient policy (only if recipient is provided)
-        # Detailed validation delegated to the tool or deployer;
-        # here we enforce "known_contacts_only" as a marker.
-        # Real-world enforcement uses a contacts backend.
+        if context.recipient and version_at_least(permissions.version, (1, 5)):
+            recipient_decision = self._evaluate_recipient(scope, context)
+            if recipient_decision is not None:
+                return recipient_decision
 
         # 9. Human approval
         if permissions.human_approval.required:
@@ -909,4 +936,107 @@ class PolicyEngine:
 
         return PolicyDecision(
             allowed=True, session_lineage_basis=session_lineage_basis
+        )
+
+    def _evaluate_recipient(
+        self, scope: ScopeConfig, context: RequestContext
+    ) -> PolicyDecision | None:
+        """Enforce ``scope.allowed_recipients`` against the target recipient.
+
+        Returns ``None`` when the recipient is permitted, so the caller falls
+        through to the next pipeline step.  Every other outcome is a DENY.
+
+        Fails safe: an unrecognized policy value denies.
+        """
+        policy = scope.allowed_recipients
+        if policy is RecipientPolicy.ANY:
+            return None
+
+        recipient = _normalize_recipient(context.recipient)
+
+        if _recipient_is_malformed(recipient):
+            return self._recipient_denial(
+                detail=(
+                    f"Recipient is not a single well-formed address; "
+                    f"rejected under recipient policy '{policy.value}'."
+                ),
+                suggestion=(
+                    "Supply one recipient address with no whitespace, "
+                    "control characters, commas, or semicolons."
+                ),
+            )
+
+        if policy is RecipientPolicy.KNOWN_CONTACTS_ONLY:
+            if recipient in context.known_contacts:
+                return None
+            return self._recipient_denial(
+                detail=(
+                    "Recipient is not in the session's known contacts; "
+                    "rejected under recipient policy 'known_contacts_only'."
+                ),
+                suggestion=(
+                    "Send only to an address configured as a known contact "
+                    "for this session."
+                ),
+            )
+
+        if policy is RecipientPolicy.ALLOWLIST:
+            domain = _recipient_domain(recipient)
+            for raw_entry in scope.recipient_allowlist:
+                entry = _normalize_recipient(raw_entry)
+                if entry == recipient:
+                    return None
+                if entry.startswith("@") and domain and domain == entry[1:]:
+                    return None
+            return self._recipient_denial(
+                detail=(
+                    f"No entry in the recipient allowlist matches this "
+                    f"address or its domain '{domain}'."
+                ),
+                suggestion=(
+                    "Add the full address, or an '@domain' entry, to "
+                    "scope.recipient_allowlist."
+                ),
+            )
+
+        if policy is RecipientPolicy.SAME_DOMAIN:
+            user_domain = _recipient_domain(_normalize_recipient(context.user_id))
+            if not user_domain:
+                return self._recipient_denial(
+                    detail=(
+                        "Recipient policy 'same_domain' requires a user "
+                        "identity carrying a domain; this one has none."
+                    ),
+                    suggestion=(
+                        "Authenticate with a domain-qualified identity, or "
+                        "choose a different recipient policy."
+                    ),
+                )
+            if _recipient_domain(recipient) == user_domain:
+                return None
+            return self._recipient_denial(
+                detail=(
+                    f"Recipient domain '{_recipient_domain(recipient)}' does "
+                    f"not match the user domain '{user_domain}'."
+                ),
+                suggestion=f"Send only to recipients in '{user_domain}'.",
+            )
+
+        return self._recipient_denial(
+            detail=(
+                f"Unrecognized recipient policy '{policy}'; denied by default."
+            ),
+            suggestion=(
+                "Set scope.allowed_recipients to a supported RecipientPolicy."
+            ),
+        )
+
+    @staticmethod
+    def _recipient_denial(detail: str, suggestion: str) -> PolicyDecision:
+        """A RECIPIENT_NOT_ALLOWED denial in the shape of every other step."""
+        return PolicyDecision(
+            allowed=False,
+            reason=DenialReason.RECIPIENT_NOT_ALLOWED,
+            detail=detail,
+            suggestion=suggestion,
         )

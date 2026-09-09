@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import time
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -601,6 +601,7 @@ class AuthorizationGate:
         role: str,
         data_boundary: DataBoundary = DataBoundary.AUTHENTICATED_USER_ONLY,
         metadata: dict[str, Any] | None = None,
+        known_contacts: Iterable[str] | None = None,
     ) -> Session:
         """Create an authenticated session after out-of-band auth completes.
 
@@ -612,6 +613,9 @@ class AuthorizationGate:
             role: Role assigned after authentication.
             data_boundary: Scope of data access for this session.
             metadata: Device info, IP, etc.
+            known_contacts: Recipient addresses for the known-contacts
+                recipient policy.  Populated only from deployer config at
+                session creation, never from tool or model output.
 
         Returns:
             The created session.
@@ -622,6 +626,7 @@ class AuthorizationGate:
             data_boundary=data_boundary,
             max_duration=self._session_duration,
             metadata=metadata,
+            known_contacts=known_contacts,
         )
 
     def get_session(self, user_id: str) -> Session | None:
@@ -756,6 +761,7 @@ class AuthorizationGate:
 
         # Resolve context state for v1.1
         resolved_session_id = session.session_id if session else ""
+        resolved_known_contacts = session.known_contacts if session else frozenset()
         context_state = None
         if version_at_least(permissions.version, (1, 1)) and resolved_session_id:
             context_state = self._context_tracker.get(resolved_session_id)
@@ -846,6 +852,7 @@ class AuthorizationGate:
             data_boundary=data_boundary or DataBoundary.AUTHENTICATED_USER_ONLY,
             record_count=record_count,
             recipient=recipient,
+            known_contacts=resolved_known_contacts,
             is_bulk=is_bulk,
             is_external=is_external,
             is_financial=is_financial,
@@ -937,7 +944,7 @@ class AuthorizationGate:
                     user_id=user_id,
                     role=role,
                     action="denied",
-                    reason="rate_limited",
+                    reason=DenialReason.RATE_LIMITED.value,
                     risk_level=permissions.risk_level.value,
                     log_level=effective_log_level,
                     include_parameters=permissions.audit.include_parameters,
