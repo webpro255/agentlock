@@ -2149,3 +2149,141 @@ from request headers only. Nothing under `agentlock/`. Nothing under `schema/`.
 `ruff check agentlock/ tests/`, the exact command CI runs
 (`.github/workflows/ci.yml:32-33`), returns `All checks passed!` with exit 0.
 `grep -ri agentshield agentlock tests schema` returns 0 hits.
+
+---
+
+## AMENDMENT 5 (2026-09-09): increment 3a built and matched
+
+Build commit: `1755d02 test: end-to-end recipient enforcement through the autogen and mcp integrations`.
+
+Measured on `v1.8-recipient-enforcement`. R1 and R4 are scored against their
+restated wording, recorded at STEP 0f in the freeze at
+`68e45c0 docs: freeze increment 3a, integration end-to-end predictions`, before any
+increment 3a test code was written. No engine code was added, and nothing under
+`agentlock/` or `schema/` was touched.
+
+### R1 to R6
+
+| R | Verdict | Evidence |
+|---|---|---|
+| R1 | MATCH | `TestAutogenFunctionMap` is guarded by `pytest.importorskip("autogen")` at `tests/test_v18_recipient_integrations.py:70`, and reports `SKIPPED [1] ... could not import 'autogen'`, which is what restated R1 predicts for this environment. All four cases are present, including the `RecipientPolicy.ANY` control. No stub module is installed and `sys.modules` is not written to by the test. |
+| R2 | MATCH | `TestMcpServerWrapper` is guarded by `pytest.importorskip("mcp")` at `tests/test_v18_recipient_integrations.py:121`, uses the 0c `FakeServer` fixture unchanged, and reports `SKIPPED [1] ... could not import 'mcp'`. All three rows are present, including the assertion that the arguments dict the tool receives carries `"to"` and neither `_agentlock_` key. |
+| R3 | MATCH | No test exists for either integration. `grep -n "fastapi\|flask" tests/test_v18_recipient_integrations.py` returns only the module docstring lines naming the four unreachable call sites. The limitation is recorded in `CHANGELOG.md` under the 1.8.0 `### Limitations` heading. |
+| R4 | MATCH | `1493 passed, 10 skipped, 14 warnings in 3.13s`, 0 failed. The passed count is unchanged from `a9c38ca`, as restated R4 predicts. The ninth and tenth skips are the new file's two `importorskip` lines; the A8 eight are unchanged line for line. `git diff --stat -- tests/` is empty: no existing test was edited. |
+| R5 | MATCH | `git status --short` names exactly `M CHANGELOG.md` and `?? tests/test_v18_recipient_integrations.py`. `git diff --stat` is one file, one insertion. Zero paths under `agentlock/` and zero under `schema/`. |
+| R6 | MATCH | `ruff check agentlock/ tests/` returns `All checks passed!` with exit 0. `grep -ri agentshield agentlock tests schema` returns 0 hits. |
+
+### Exact suite summary line
+
+```
+================ 1493 passed, 10 skipped, 14 warnings in 3.13s =================
+```
+
+Full skip list, verbatim. The first four lines are the A8 eight, unchanged:
+
+```
+SKIPPED [1] tests/test_v15_integration_confirmation.py:113: could not import 'mcp': No module named 'mcp'
+SKIPPED [5] tests/test_v16_crosshop_decision_time.py:479: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:491: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:502: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v18_recipient_integrations.py:70: could not import 'autogen': No module named 'autogen'
+SKIPPED [1] tests/test_v18_recipient_integrations.py:121: could not import 'mcp': No module named 'mcp'
+```
+
+### The new file, run alone, verbatim
+
+```
+$ python -m pytest tests/test_v18_recipient_integrations.py -rs
+collected 2 items
+
+tests/test_v18_recipient_integrations.py::TestAutogenFunctionMap::test_recipient_enforcement_through_the_function_map SKIPPED [ 50%]
+tests/test_v18_recipient_integrations.py::TestMcpServerWrapper::test_recipient_enforcement_through_the_call_tool_handler SKIPPED [100%]
+
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_v18_recipient_integrations.py:70: could not import 'autogen': No module named 'autogen'
+SKIPPED [1] tests/test_v18_recipient_integrations.py:121: could not import 'mcp': No module named 'mcp'
+============================== 2 skipped in 0.01s ==============================
+```
+
+### R5, verbatim
+
+```
+$ git diff --stat
+ CHANGELOG.md | 1 +
+ 1 file changed, 1 insertion(+)
+$ git status --short
+ M CHANGELOG.md
+?? tests/test_v18_recipient_integrations.py
+```
+
+### R6, verbatim
+
+```
+$ ruff check agentlock/ tests/
+All checks passed!
+$ echo $?
+0
+$ grep -ri agentshield agentlock tests schema | wc -l
+0
+```
+
+### What the suite proves here, and what it does not
+
+Every R is a MATCH, and the reader should not take more from that than it holds.
+What the suite measured is the guards and the arithmetic. Both test bodies skipped,
+so the suite did not execute a single assertion in the R1 or R2 tables. A green
+suite line is compatible with those two tests being syntactically valid and
+semantically wrong, and that is the honest reading of the ten-skip result.
+
+They are not wrong, and the check that establishes it is recorded here as a
+diagnostic rather than as R1 or R2 evidence, because it was run outside the suite
+and outside the repository. Both test bodies were copied to the session scratchpad
+and run once against a `conftest.py` that placed empty `autogen`, `mcp`,
+`mcp.server` and `mcp.types` modules into `sys.modules`. Result, verbatim:
+
+```
+diag_test_integrations.py::TestAutogenFunctionMap::test_recipient_enforcement_through_the_function_map PASSED [ 50%]
+diag_test_integrations.py::TestMcpServerWrapper::test_recipient_enforcement_through_the_call_tool_handler PASSED [100%]
+
+============================== 2 passed in 0.10s ===============================
+```
+
+The stub defeats exactly one thing in each integration: the import guard at
+`agentlock/integrations/autogen.py:42` and the one at
+`agentlock/integrations/mcp.py:42`. Neither integration uses the imported package
+for anything else on the authorization path, and `_import_mcp_types`
+(`agentlock/integrations/mcp.py:51`) has zero call sites in the file. Everything
+after the guard is real AgentLock code, so the two `recipient_not_allowed` denials
+observed in that run came from pipeline Step 8 through the real gate, reached
+through the real `autogen.py:119` and `mcp.py:167` call sites, with the recipient
+read out of the parameters those call sites forward.
+
+That is the substantive result of increment 3a: the reach claim AMENDMENT 4 left as
+an inference is now an observation for both integrations that can carry it. It is
+recorded at the strength of the evidence, which is a diagnostic run under stubbed
+imports, not a suite pass. Neither this nor the suite proves anything about
+compatibility with the real `pyautogen` or `mcp` packages.
+
+The stub lives only in the scratchpad. Nothing in the committed test file writes to
+`sys.modules`, and `git status --short` at R5 shows no scratchpad path in the tree.
+
+### The 0b correction, restated for the record
+
+STEP 0b measured that two of the six in-repo `authorize()` call sites forward the
+caller's parameter dict and four do not. AMENDMENT 4 had written that "each of the
+six already forwards the caller's parameter dict to `authorize()`". Four do not:
+`fastapi.py:197`, `fastapi.py:290`, `flask.py:163` and `flask.py:271` pass only the
+tool name, `user_id` and `role`. AMENDMENT 4 is append-only and is not edited; the
+correction stands here and in the freeze at STEP 0b, and R3 is the corrected reach
+claim. No increment 2 verdict depends on it: no Q prediction concerned the
+adapters, and all four files were and remain untouched.
+
+### Open item carried forward from STEP 0f
+
+Neither the R1 nor the R2 test is exercised anywhere in the automated path.
+`.github/workflows/ci.yml:30` installs `pip install -e ".[dev]"`, and `dev`
+(`pyproject.toml:63-69`) contains neither `pyautogen` nor `mcp`, so these two tests
+skip in CI on every push exactly as they skip locally. Closing the item means
+either adding the extras to the CI install line or running the suite once under
+`pip install -e ".[all]"` before the release and recording that figure alongside the
+default one. Increment 3a touches no CI file and does not close it.
