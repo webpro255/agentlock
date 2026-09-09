@@ -924,3 +924,587 @@ Both predate this branch and are already public on `origin`. Scoped to the code
 the build touches, `grep -ri agentshield agentlock tests schema` returns zero
 hits, before and after. No test and no source file added by increment 1 contains
 the string.
+
+---
+
+## INCREMENT 2 FREEZE (2026-09-09): declared recipient parameter
+
+Measured on `v1.8-recipient-enforcement` at `e6631f4 docs: AMENDMENT 2, increment 1
+built and matched`. Working tree clean at measurement time. This section is written
+before any increment 2 mechanism code exists. It appends to this document and edits
+nothing above.
+
+### Why increment 2 exists
+
+Increment 1 made Step 8 enforce. It did not make Step 8 reachable. Neither shipped
+adapter passes `recipient` to `authorize()`: `mcp-agentlock` `wrapper.py:396` and
+`crewai-agentlock` `wrapper.py:184` both pass `tool_name`, `user_id`, `role`,
+`parameters`, `metadata`. The in-repo integrations do the same, measured below at
+M2. So `recipient` is always `""`, D12 skips the step, and every adapter call takes
+the pre-v1.8 path. Increment 2 lets the trusted permission block declare which
+parameter carries the recipient, and has the gate read it itself.
+
+---
+
+## PART M: measurements
+
+### M1. The insertion point for D18, `agentlock/gate.py:781-867`, verbatim
+
+```python
+        # Build request metadata -- include parameters for injection filter
+        request_metadata = dict(metadata or {})
+        if parameters:
+            request_metadata["parameters"] = parameters
+
+        # v1.3 lineage: the gate owns this read; callers cannot supply it.
+        # A worst-case taint summary of the session's provenance log is
+        # attached so the policy engine can gate purely on provenance.
+        _lp = permissions.lineage_policy
+        _v13 = version_at_least(permissions.version, (1, 3))
+
+        # E10 -- what each parameter-level lineage check concluded, or why it
+        # never ran.  LOCALS, deliberately: these must NOT be written into
+        # ``request_metadata``.  ``InjectionFilter`` scans that dict's values as
+        # attacker-controlled text, so evidence placed there is evidence that
+        # can change a decision.  These are read on the far side of the
+        # decision, by the audit path, and by nothing else.
+        _param_outcome: dict[str, Any] = {}
+        _novel_outcome: dict[str, Any] = {}
+
+        if _v13 and resolved_session_id:
+            request_metadata["lineage"] = self._context_tracker.lineage_summary(
+                resolved_session_id
+            )
+            if _lp is None:
+                _no_policy = {"ran": False, "reason": "no_lineage_policy"}
+                _param_outcome.update(_no_policy)
+                _novel_outcome.update(_no_policy)
+
+            # v1.3 Feature 2 -- parameter lineage. Gate-owned read: does any
+            # parameter value trace to untrusted context but not the user's
+            # authoritative request?  Attached for the policy engine.
+            if _lp is not None and _lp.param_lineage_enabled:
+                _match = self._context_tracker.parameter_lineage_check(
+                    resolved_session_id,
+                    parameters,
+                    min_len=_lp.param_lineage_min_len,
+                    outcome=_param_outcome,
+                )
+                if _match is not None:
+                    request_metadata["param_lineage"] = _match
+            elif _lp is not None:
+                _param_outcome.update({"ran": False, "reason": "check_disabled"})
+
+            # v1.4 -- novel lineage. Gate-owned read: does any parameter token
+            # trace to NEITHER the authoritative nor the untrusted context?
+            # Independent of param_lineage_enabled; exact-token membership.
+            if _lp is not None and _lp.novel_lineage_enabled:
+                _novel = self._context_tracker.novel_lineage_check(
+                    resolved_session_id,
+                    parameters,
+                    outcome=_novel_outcome,
+                )
+                if _novel is not None:
+                    request_metadata["novel_lineage"] = _novel
+            elif _lp is not None:
+                _novel_outcome.update({"ran": False, "reason": "check_disabled"})
+        else:
+            # Neither check ran, and the two reasons are not the same fact.  A
+            # grant issued with no session was never examined for parameter
+            # lineage at all, and its record has to say so rather than present
+            # an unexamined call as a clean one.
+            _reason = "no_session" if _v13 else "tool_below_v1_3"
+            _param_outcome.update({"ran": False, "reason": _reason})
+            _novel_outcome.update({"ran": False, "reason": _reason})
+
+        # Build request context
+        ctx = RequestContext(
+            user_id=user_id,
+            role=role,
+            session_id=resolved_session_id,
+            data_boundary=data_boundary or DataBoundary.AUTHENTICATED_USER_ONLY,
+            record_count=record_count,
+            recipient=recipient,
+            known_contacts=resolved_known_contacts,
+            is_bulk=is_bulk,
+            is_external=is_external,
+            is_financial=is_financial,
+            is_account_modification=is_account_modification,
+            is_consequential=is_consequential,
+            is_deletion=is_deletion,
+            is_membership_change=is_membership_change,
+            amount=amount,
+            max_output_classification=resolved_classification,
+            metadata=request_metadata,
+            context_state=context_state,
+        )
+```
+
+**Where D18 extraction goes: immediately after `agentlock/gate.py:845`, the closing
+line of the `else` branch of the v1.3 lineage block, and before the
+`# Build request context` comment at `agentlock/gate.py:847`.** That is the last
+line of the block preceding the `RequestContext` construction and the only position
+that satisfies D18's two constraints at once: after `parameters` is available and
+after `permissions` is resolved, and before `ctx` exists.
+
+**`scope` is not a local in `authorize()`.** A grep for `scope` across
+`agentlock/gate.py:630-870` returns exactly two hits, `agentlock/gate.py:670`
+(a docstring line reading "data_boundary: Requested data scope.") and
+`agentlock/gate.py:768` (the comment "# Apply restrict_scope effect"). Neither is a
+binding. `permissions.scope` is nonetheless resolved and reachable at line 845:
+`permissions` is bound at `agentlock/gate.py:692`
+(`permissions = self._tools.get(tool_name)`) and is already dereferenced for other
+fields at `agentlock/gate.py:766` (`permissions.version`), `:789`
+(`permissions.lineage_policy`) and `:790` (`permissions.version`). D18 reads
+`permissions.scope.recipient_parameter` directly, in the idiom of line 789.
+
+`ScopeConfig` itself, `agentlock/schema.py:98-108`, verbatim, showing where D17's
+field lands:
+
+```python
+class ScopeConfig(BaseModel):
+    """Constrains what data a tool invocation can access."""
+
+    data_boundary: DataBoundary = DataBoundary.AUTHENTICATED_USER_ONLY
+    max_records: int | None = Field(default=None, ge=1)
+    allowed_recipients: RecipientPolicy = RecipientPolicy.KNOWN_CONTACTS_ONLY
+    # Entries are full addresses or domain entries beginning with "@",
+    # consulted only under RecipientPolicy.ALLOWLIST.
+    recipient_allowlist: list[str] = Field(default_factory=list)
+
+    model_config = {"extra": "forbid"}
+```
+
+### M2. Every read of `context.metadata` in `policy.py`
+
+`grep -n "context\.metadata" agentlock/policy.py`, verbatim:
+
+```
+113:    # Carried on the RETURN VALUE and never through ``context.metadata``.  That
+577:            context.metadata.get("parameters"),
+578:            context.metadata,
+622:                and context.metadata.get("first_invocation", False)
+652:            pmatch = context.metadata.get("param_lineage")
+700:            nmatch = context.metadata.get("novel_lineage")
+772:            summary = context.metadata.get("lineage")
+831:                        context.metadata["session_gate_shadow"] = "DENY"
+832:                        context.metadata["session_gate_shadow_detail"] = detail
+```
+
+Line 113 is a comment. Lines 577, 578, 622, 652, 700 and 772 are the six reads.
+Lines 831 and 832 are writes, not reads.
+
+**None of the six reads reads `context.recipient` or `context.recipients`.** The
+only two references to the recipient field anywhere in `policy.py` are
+`agentlock/policy.py:594` (the Step 8 guard) and `agentlock/policy.py:955` (the
+normalization inside `_evaluate_recipient`), and neither goes through
+`context.metadata`. `context.recipients` does not exist yet. Expectation met.
+
+The `InjectionFilter` input, `agentlock/policy.py:571-597`, verbatim:
+
+```python
+        # ── Independent filter chains ─────────────────────────────────
+        # These two filters are fully decoupled.  A request blocked by
+        # the injection filter never reaches the PII filter.
+
+        # 6. Injection filter -- parameter content analysis
+        injection_decision = self._injection_filter.evaluate(
+            context.metadata.get("parameters"),
+            context.metadata,
+        )
+        if injection_decision is not None:
+            return injection_decision
+
+        # 7. PII filter -- data classification clearance
+        pii_decision = self._pii_filter.evaluate(
+            context.max_output_classification,
+            permissions.data_policy.output_classification,
+        )
+        if pii_decision is not None:
+            return pii_decision
+
+        # ── End filter chains ─────────────────────────────────────────
+
+        # 8. Recipient policy (only if recipient is provided)
+        if context.recipient and version_at_least(permissions.version, (1, 5)):
+            recipient_decision = self._evaluate_recipient(scope, context)
+            if recipient_decision is not None:
+                return recipient_decision
+```
+
+The filter is handed exactly two things: `context.metadata.get("parameters")` and
+`context.metadata`. Both are read off the dict the gate builds at
+`agentlock/gate.py:782-784`.
+
+Adapter reach, measured in this repo: `grep -rn "recipient" agentlock/integrations/`
+returns zero hits, across all four in-repo integrations (`mcp.py`, `autogen.py`,
+`flask.py`, `fastapi.py`) and six `authorize()` call sites
+(`mcp.py:167`, `autogen.py:119`, `flask.py:163`, `flask.py:271`,
+`fastapi.py:197`, `fastapi.py:290`). The representative call,
+`agentlock/integrations/mcp.py:167-172`, verbatim:
+
+```python
+                    auth = gate.authorize(
+                        name,
+                        user_id=user_id,
+                        role=role,
+                        parameters=arguments or None,
+                    )
+```
+
+Same shape as the two out-of-repo adapters named above. Step 8 is unreachable from
+every one of them.
+
+### M3. Step 8 as built in increment 1
+
+The call site, `agentlock/policy.py:593-597`, verbatim:
+
+```python
+        # 8. Recipient policy (only if recipient is provided)
+        if context.recipient and version_at_least(permissions.version, (1, 5)):
+            recipient_decision = self._evaluate_recipient(scope, context)
+            if recipient_decision is not None:
+                return recipient_decision
+```
+
+`_evaluate_recipient`, signature and docstring, `agentlock/policy.py:941-950`,
+verbatim:
+
+```python
+    def _evaluate_recipient(
+        self, scope: ScopeConfig, context: RequestContext
+    ) -> PolicyDecision | None:
+        """Enforce ``scope.allowed_recipients`` against the target recipient.
+
+        Returns ``None`` when the recipient is permitted, so the caller falls
+        through to the next pipeline step.  Every other outcome is a DENY.
+
+        Fails safe: an unrecognized policy value denies.
+        """
+```
+
+The body runs from `agentlock/policy.py:951` to `agentlock/policy.py:1032`, and the
+denial constructor is the static method `_recipient_denial` at
+`agentlock/policy.py:1034-1042`. The three helpers it uses,
+`agentlock/policy.py:162-181`, verbatim:
+
+```python
+def _normalize_recipient(value: str) -> str:
+    """Normalize a recipient or allowlist entry: strip, then casefold."""
+    return value.strip().casefold()
+
+
+def _recipient_domain(value: str) -> str:
+    """The substring after the last "@", or "" when there is no "@"."""
+    _, sep, domain = value.rpartition("@")
+    return domain if sep else ""
+
+
+def _recipient_is_malformed(value: str) -> bool:
+    """Is this normalized recipient unusable as a single address?
+
+    Control characters, any whitespace, commas, and semicolons all mark a
+    value that is either not one address or not an address at all.
+    """
+    if "," in value or ";" in value:
+        return True
+    return any(ord(c) < 32 or ord(c) == 127 or c.isspace() for c in value)
+```
+
+Signature as built: `_evaluate_recipient(self, scope: ScopeConfig, context: RequestContext) -> PolicyDecision | None`.
+It takes the scope and the context, and returns `None` on permit.
+
+### M4. The audit log call in the policy-denial path
+
+`agentlock/gate.py:1537-1565`, verbatim:
+
+```python
+        else:
+            denial_reason = (
+                decision.reason.value if decision.reason else "unknown"
+            )
+            # E5: a lineage denial cites the data that gated it.  Built from
+            # what the gate already computed, after the decision, and never
+            # read back -- ``evidence`` cannot alter ``decision``.
+            denial_meta = _class_meta()
+            provenance_ids = None
+            evidence = self._lineage_evidence(denial_reason, ctx, permissions)
+            if evidence is not None:
+                denial_meta = {**(denial_meta or {}), "lineage_evidence": evidence}
+                provenance_ids = self._evidence_provenance_ids(evidence)
+
+            record = self._audit.log(
+                tool_name=tool_name,
+                user_id=user_id,
+                role=role,
+                action="denied",
+                reason=denial_reason,
+                risk_level=permissions.risk_level.value,
+                log_level=permissions.audit.log_level,
+                include_parameters=permissions.audit.include_parameters,
+                parameters=parameters,
+                session_id=ctx.session_id,
+                duration_ms=duration_ms,
+                metadata=denial_meta,
+                context_provenance_ids=provenance_ids,
+            )
+```
+
+**Is the recipient written to the audit record? No.** `grep -rn "recipient"
+agentlock/audit.py` returns zero hits. `AuditLogger.log`
+(`agentlock/audit.py:380-404`) has no recipient parameter and `AuditRecord` has no
+recipient field. The only route by which a recipient value could reach an audit
+record is inside `parameters`, at `agentlock/gate.py:1560`.
+
+**Are parameter values written? Conditionally, under two gates.** In
+`AuditLogger.log`, `agentlock/audit.py:459-474`:
+
+```python
+            record.response_summary = ""
+            record.user_id = ""
+            record.role = ""
+            record.metadata = _drop_payload(record.metadata)
+        elif log_level == AuditLogLevel.STANDARD:
+            # + identity + scope
+            record.parameters = None
+            record.response_summary = ""
+            record.metadata = _drop_payload(record.metadata)
+        else:
+            # FULL -- include everything
+            if include_parameters:
+                record.parameters = parameters
+            else:
+                record.metadata = _drop_payload(record.metadata)
+            record.response_summary = response_summary
+```
+
+Parameter values are stored only when `log_level` is `AuditLogLevel.FULL` **and**
+`include_parameters` is true. Both come from the trusted permission block:
+`permissions.audit.log_level` at `agentlock/gate.py:1558` and
+`permissions.audit.include_parameters` at `agentlock/gate.py:1559`. At MINIMAL and
+STANDARD, `record.parameters` is cleared unconditionally. So the flag is
+`audit.include_parameters`, effective only at `audit.log_level == FULL`.
+
+Consequence for increment 2: a recipient read out of `parameters` under D18 changes
+nothing about what the audit record holds, because the record already holds the whole
+`parameters` dict or none of it, under those two flags, and the extraction adds no
+new field to the record.
+
+### M5. Behavioral baseline: the unreachable seam, measured
+
+Script in the session scratchpad, outside the repository. Tool registered at
+`version="1.5"`, `risk_level=MEDIUM`, `requires_auth=True`, `allowed_roles=["user"]`,
+`scope=ScopeConfig(allowed_recipients=RecipientPolicy.KNOWN_CONTACTS_ONLY)`; session
+`create_session(user_id="alice", role="user")` with no contacts. Output, verbatim:
+
+```
+call 1: no recipient argument, parameters={'to': 'attacker@evil.com'}
+  decision=allow  allowed=True  denial=None
+call 2: recipient='attacker@evil.com' passed explicitly
+  decision=deny  allowed=False  denial={'status': 'denied', 'reason': 'recipient_not_allowed', 'detail': "Recipient is not in the session's known contacts; rejected under recipient policy 'known_contacts_only'.", 'required_role': '', 'current_role': 'user', 'suggestion': 'Send only to an address configured as a known contact for this session.'}
+```
+
+Both as expected. Call 1 is the seam: an identical hostile address, carried in the
+parameter an adapter actually sends, is ALLOWED at version 1.5 with a restrictive
+policy in force, because nothing reads it. Call 2 is the same tool, same session,
+same address, denied, reachable only by a caller that already knows to pass
+`recipient=`. Increment 2 makes call 1 behave like call 2.
+
+The stop condition on M5 did not fire: the first call allows.
+
+### M6. `ScopeConfig(recipient_parameter="to")` today
+
+Verbatim:
+
+```
+ValidationError: 1 validation error for ScopeConfig
+recipient_parameter
+  Extra inputs are not permitted [type=extra_forbidden, input_value='to', input_type=str]
+    For further information visit https://errors.pydantic.dev/2.13/v/extra_forbidden
+```
+
+`extra_forbidden`, as expected, from `model_config = {"extra": "forbid"}` at
+`agentlock/schema.py:108`. The field must be declared before it can be set, the same
+result A9 measured for `recipient_allowlist` before increment 1.
+
+### M7. Full suite
+
+`pytest -rs`, summary line verbatim:
+
+```
+================= 1461 passed, 8 skipped, 14 warnings in 3.11s =================
+```
+
+1461 passed, 0 failed, 8 skipped. Skip list, verbatim:
+
+```
+SKIPPED [1] tests/test_v15_integration_confirmation.py:113: could not import 'mcp': No module named 'mcp'
+SKIPPED [5] tests/test_v16_crosshop_decision_time.py:479: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:491: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:502: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+```
+
+Identical to A8's skip list, line for line. The stop condition on M7 did not fire.
+
+### M8. The AMENDMENT 2 envelope generator reproduces the committed v1.5 schema
+
+The transform described in AMENDMENT 2's STEP 0b was re-applied on this tree:
+`AgentLockPermissions.model_json_schema()`, its `$defs` popped, the model's remaining
+top-level body promoted into that map under the key `AgentLockPermissions`, the map
+key-sorted, wrapped in the hand-built envelope (`$schema`, `$id`, `title`,
+`description`, `type`, `properties`, `required`, `$defs`), serialized with
+`json.dumps(..., indent=2)` at the default `ensure_ascii=True`, plus a trailing
+newline.
+
+```
+$ diff regen-v1.5.json schema/agentlock-v1.5.json && echo IDENTICAL
+IDENTICAL
+$ sha256sum schema/agentlock-v1.5.json regen-v1.5.json
+59d13c463539d4c93965bf909bb6da45bd466a9a316b3649e97752acd75235d8  schema/agentlock-v1.5.json
+59d13c463539d4c93965bf909bb6da45bd466a9a316b3649e97752acd75235d8  regen-v1.5.json
+$ cmp schema/agentlock-v1.5.json regen-v1.5.json && echo "byte-for-byte identical"
+byte-for-byte identical
+```
+
+Byte identical, by three independent checks. The stop condition on M8 did not fire.
+This is the fact Q1 depends on: regenerating `agentlock-v1.5.json` after adding
+`recipient_parameter` is a mechanical re-run, not a hand edit, and the diff it
+produces will be confined to the new field.
+
+Note, carried forward from AMENDMENT 2 and unchanged: `schema/agentlock-v1.4.json`
+still does NOT reproduce from current source, because two docstrings drifted from em
+dash to double hyphen after it was generated. That file stays untouched under D22.
+The v1.5 file reproduces exactly, as just measured.
+
+No stop condition fired. All eight measurements are as expected.
+
+---
+
+## PART N: conflict check, D17 to D23
+
+| D | Verdict | Evidence |
+|---|---|---|
+| D17 | CONSISTENT | `ScopeConfig` (`agentlock/schema.py:98-108`) is a plain `BaseModel` whose two nearest neighbours are `allowed_recipients` (`:103`) and `recipient_allowlist` (`:106`); M6 shows the field is currently rejected as `extra_forbidden`, so declaring `recipient_parameter: str \| None = None` is the additive act that admits it, and a `None` default changes no existing block. |
+| D18 | CONSISTENT | The named insertion point (`agentlock/gate.py:845`, before the `# Build request context` comment at `:847`) has `permissions` bound since `:692` and `parameters` in scope since the signature, and `version_at_least` is the established gate-side idiom at `:766`, `:790`, `:760`, `:784`. Nothing at that point writes to `request_metadata` after `:835`. |
+| D19 | CONSISTENT | `RECIPIENT_NOT_ALLOWED` is already reachable through `PolicyEngine._recipient_denial` (`agentlock/policy.py:1034-1042`), so no new denial machinery is needed for a malformed declared value; `_recipient_is_malformed` (`agentlock/policy.py:173-181`) already denies whitespace, control characters, commas and semicolons, and the empty-value skip D19 specifies is exactly D12's existing skip, measured ALLOW at A9 and preserved. |
+| D20 | CONSISTENT | `PolicyDecision.detail` is a free `str` field (`agentlock/policy.py:89-99`) and every existing denial detail is built from policy names and counts, never from caller-supplied content: the closest precedent, `agentlock/policy.py:974-976`, says "Recipient is not in the session's known contacts" without quoting the address. A detail naming the disagreement without the values is the house style, not an exception to it. |
+| D21 | CONSISTENT | `RequestContext` is `@dataclass(slots=True)` (`agentlock/policy.py:41`) and a tuple default is legal there because tuples are immutable and need no `default_factory`; verified directly, a `@dataclass(slots=True)` with `recipients: tuple[str, ...] = ()` builds, reports `__slots__ == ('a', 'recipients')`, defaults to `()`, and accepts `('a@b.com', 'c@d.com')`. `recipient: str = ""` (`:75`) is untouched, and Step 8's guard at `agentlock/policy.py:594` is the single place the "recipients else (recipient,) else skip" precedence lands. |
+| D22 | CONSISTENT | M8 proves the envelope generator reproduces `schema/agentlock-v1.5.json` byte for byte on this tree, so regeneration is mechanical. Schema 1.5 is unreleased: `git cat-file -e main:schema/agentlock-v1.5.json` reports the path absent on `main`, `git ls-tree v1.7.0 schema/` lists only v1.0, v1.2, v1.3 and v1.4, and the file's entire history is one commit, `c1a9e01`, on this branch. A 1.4 block carrying `recipient_parameter` validates in pydantic because the field lives on `ScopeConfig` with no version predicate, and is inert at runtime because D18's extraction sits behind `version_at_least(permissions.version, (1, 5))`. |
+| D23 | CONSISTENT | The two adapters named are separate repositories and are not in this tree; the four in-repo integrations contain zero occurrences of `recipient` (M2) and none is in the Q5 file list. |
+
+### D18, specifically: a local read of `parameters[key]` cannot change what `InjectionFilter` sees
+
+The filter's two inputs are fixed at `agentlock/policy.py:576-579`:
+`context.metadata.get("parameters")` and `context.metadata`. Both resolve to objects
+the gate built at `agentlock/gate.py:782-784`, where `request_metadata["parameters"]`
+is bound to the caller's `parameters` object itself, not a copy. D18 performs one
+`dict` lookup on that object and binds the result to a local. A `dict` lookup is
+non-mutating: it adds no key, removes none, and rebinds nothing. D18 further forbids
+any write into `request_metadata`, so the dict the filter receives has the identical
+key set and the identical values whether the extraction ran or not. The extraction is
+therefore invisible to Step 6 by construction.
+
+This is the same discipline the gate already documents for the lineage outcome
+dictionaries at `agentlock/gate.py:792-798`: "LOCALS, deliberately: these must NOT be
+written into `request_metadata`. `InjectionFilter` scans that dict's values as
+attacker-controlled text, so evidence placed there is evidence that can change a
+decision." D18 is that rule applied to the recipient read. Q6 is the check that the
+build kept it.
+
+One direction is worth naming because it is not symmetric. The extraction is invisible
+to the injection filter, but the injection filter is not invisible to the extraction:
+Step 6 runs at pipeline position 6 and Step 8 at position 8, so a parameter value that
+trips the injection filter is denied before Step 8 ever evaluates it. Reading a
+recipient out of `parameters` cannot weaken injection filtering, and cannot bypass it.
+
+### D21, specifically: `slots=True` and a tuple default
+
+`agentlock/policy.py:41` is `@dataclass(slots=True)`. `agentlock/policy.py:76`
+already carries `known_contacts: frozenset[str] = field(default_factory=frozenset)`,
+which uses `default_factory` because `frozenset()` is constructed. A tuple literal
+`()` is a singleton immutable and needs no factory, so `recipients: tuple[str, ...] = ()`
+is a legal bare default under `slots=True`. Verified directly, output verbatim:
+
+```
+slots= ('a', 'recipients')
+default recipients= ()
+with value= ('a@b.com', 'c@d.com')
+```
+
+---
+
+## PART Q: predictions for increment 2
+
+Each is falsifiable by a command. If any fails, the increment did not match its
+prediction, and that is the finding.
+
+### Q1. Schema
+`agentlock/schema.py`: `ScopeConfig` gains `recipient_parameter`, declared beside
+`allowed_recipients` and `recipient_allowlist`. `schema/agentlock-v1.5.json` is
+regenerated by the AMENDMENT 2 envelope method recorded at M8, and is byte identical
+to that generator's output on the built tree. `schema/agentlock-v1.4.json` is
+untouched, unchanged by `git diff`.
+
+### Q2. New tests, all passing
+All new tests live in one new file, `tests/test_v18_recipient_parameter.py`. Cases
+are gate level, through `AuthorizationGate` at permission version 1.5, unless the row
+says otherwise.
+
+| Case | Expected |
+|---|---|
+| declared key present, hostile `str` value, no caller `recipient` | DENY `RECIPIENT_NOT_ALLOWED` |
+| declared key present, `str` value that is in `known_contacts` | ALLOW |
+| declared key absent, no caller `recipient` | ALLOW, the baseline decision |
+| declared key present with value `None` | ALLOW, step skipped |
+| declared key present with value `""` | ALLOW, step skipped |
+| declared key present with value `[]` | ALLOW, step skipped |
+| declared key present with an `int` value | DENY `RECIPIENT_NOT_ALLOWED` |
+| declared key present, list of two addresses both in `known_contacts` | ALLOW |
+| declared key present, list of two, one not in `known_contacts` | DENY `RECIPIENT_NOT_ALLOWED` |
+| declared key present, list containing a non-`str` | DENY `RECIPIENT_NOT_ALLOWED` |
+| caller `recipient` equals the declared value | ALLOW |
+| caller `recipient` differs from the declared value | DENY `RECIPIENT_NOT_ALLOWED` |
+| caller `recipient` supplied, declared key absent, value in contacts | ALLOW, caller value used |
+| caller `recipient` supplied, declared key absent, value not in contacts | DENY `RECIPIENT_NOT_ALLOWED`, caller value used |
+| the same block registered at version 1.4, hostile parameter value | ALLOW, inert |
+| policy level: `RequestContext(recipients=(...))` with one bad entry | DENY `RECIPIENT_NOT_ALLOWED` |
+| policy level: `RequestContext(recipients=(...))` with all entries good | ALLOW |
+| a recipient denial through the gate with a `ReceiptSigner` configured | `AuthResult.receipt` is not `None` and verifies |
+| the `detail` string of a D20 disagreement denial | contains neither recipient value |
+
+### Q3. Suite arithmetic
+The full suite reports 1461 plus the number of new tests passed, 0 failed, 8 skipped,
+with the identical skip list recorded at M7. No existing test is edited.
+`tests/test_v18_recipient.py` is unchanged, byte for byte, by `git diff`.
+
+### Q4. M5 rerun on the built branch
+Call 1, no `recipient` argument, `parameters={"to": "attacker@evil.com"}`: DENY
+`recipient_not_allowed`. Call 2, `recipient="attacker@evil.com"` passed explicitly:
+DENY `recipient_not_allowed`. The seam is closed and the pre-existing path is
+unchanged.
+
+### Q5. Files touched
+`agentlock/gate.py`, `agentlock/policy.py`, `agentlock/schema.py`,
+`schema/agentlock-v1.5.json`, `tests/test_v18_recipient_parameter.py` (new), and
+`CHANGELOG.md`, whose existing unreleased 1.8.0 section gains lines for
+`recipient_parameter` and for recipient sets. Nothing else. `git diff --stat` and
+`git status --short` name no other path.
+
+### Q6. No new metadata write
+`grep -rn "request_metadata\[" agentlock/gate.py` returns the same four lines it
+returns at `e6631f4`, and no fifth:
+
+```
+agentlock/gate.py:784:            request_metadata["parameters"] = parameters
+agentlock/gate.py:802:            request_metadata["lineage"] = self._context_tracker.lineage_summary(
+agentlock/gate.py:821:                    request_metadata["param_lineage"] = _match
+agentlock/gate.py:835:                    request_metadata["novel_lineage"] = _novel
+```
+
+Line numbers may shift. The set of writes may not grow.
+
+### Q7. Lint and hygiene
+`ruff check agentlock/ tests/`, the exact command CI runs
+(`.github/workflows/ci.yml:32-33`), returns `All checks passed!` with exit 0.
+`grep -ri agentshield agentlock tests schema` returns 0 hits, as it does at
+`e6631f4`.
