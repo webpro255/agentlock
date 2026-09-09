@@ -281,7 +281,7 @@ class TestSchemaVersion:
 
     def test_schema_version_is_current(self):
         from agentlock.schema import SCHEMA_VERSION
-        assert SCHEMA_VERSION == "1.4"
+        assert SCHEMA_VERSION == "1.5"
 
     def test_permissions_default_version_is_schema_version(self):
         from agentlock.schema import SCHEMA_VERSION

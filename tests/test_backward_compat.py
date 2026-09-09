@@ -65,7 +65,7 @@ class TestV10Parsing:
 class TestV11Defaults:
     def test_schema_version_default_is_current(self):
         """An omitted version defaults to the current SCHEMA_VERSION."""
-        assert SCHEMA_VERSION == "1.4"
+        assert SCHEMA_VERSION == "1.5"
         perms = AgentLockPermissions(allowed_roles=["user"])
         assert perms.version == SCHEMA_VERSION
 

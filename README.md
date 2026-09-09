@@ -14,6 +14,13 @@
   </p>
 </p>
 
+<div align="center">
+
+[![Paper 1 DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21270300.svg)](https://doi.org/10.5281/zenodo.21270300)
+[![Paper 2 DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21363120.svg)](https://doi.org/10.5281/zenodo.21363120)
+
+</div>
+
 ---
 
 Pre-action authorization for LLM agent tool calls. The gate decides from
@@ -107,6 +114,13 @@ scored as a success). We reported the underlying checker issue upstream
 (agentdojo #168) and disclose official ASR alongside it in the paper.
 Single-run rates on this benchmark carry sampling noise; we measured the
 spread across replicates and report it in the benchmark notes.
+
+## Papers
+
+1. Grice, D. (2026). Provenance-Based Pre-Action Authorization for LLM Agents: A Structural Defense Evaluated on AgentDojo with AgentLock. Zenodo. https://doi.org/10.5281/zenodo.21270300
+2. Grice, D. (2026). Selective Provenance Gating: Recovering Agent Utility Where Recovery Is Sound. Zenodo. https://doi.org/10.5281/zenodo.21363120
+
+Paper 2 builds on Paper 1. Each record pins the engine commit it measured.
 
 ## Install
 
@@ -294,6 +308,7 @@ changelog. That is how we intend to keep working.
 
 | version | highlights | tests |
 |---------|-----------|-------|
+| 1.8.0   | recipient policy enforcement at pipeline Step 8; declared recipient parameter read from the trusted permission block; recipient sets | 1495 with the `crypto` and `mcp` extras, 8 skipped |
 | 1.7.0   | cross-hop provenance linking; parent attribution at ingestion by whole-content carriage; taint-reachability walk at decision time | 1418 with optional extras, 7 skipped |
 | 1.6.0   | value-identity normalization; encoded-form attribution, bare and composite, base64/hex/natural-URL, zero decode | 1364 (1351 without optional extras) |
 | 1.5.0   | grant basis, execution confirmation, provenance on denials, deferred-resolution logging; LangChain and CrewAI adapters moved out of core | 1141 |
@@ -307,8 +322,11 @@ skipped; a bare install runs 1351 passed and skips the 13 optional-extra
 tests, 12 of which need PyNaCl and 1 of which needs `mcp`. For 1.7.0 it
 is 1418 passing and 7 skipped, the 7 being pre-increment-3 baselines that
 stand down once the broadened reachability predicate is present; a bare
-install additionally skips the same 13 optional-extra tests. Nothing
-fails in any of these environments.
+install additionally skips the same 13 optional-extra tests. For 1.8.0 it
+is 1495 passing and 8 skipped, the 8 being those 7 baselines plus the
+AutoGen integration test, which needs the `autogen` extra and so runs
+only on Python below 3.14; a bare install runs 1479 passed and 24
+skipped. Nothing fails in any of these environments.
 
 Full feature history:
 [v1.1](docs/history.md#v11-memory--context-permissions),
@@ -316,18 +334,28 @@ Full feature history:
 [v1.3](docs/history.md#v13-provenance-lineage-gating--deferred-commit).
 Changelog: [CHANGELOG.md](CHANGELOG.md).
 
-## Paper
+## Citing
 
 Provenance-Based Pre-Action Authorization for LLM Agents (Grice, 2026).
 DOI: 10.5281/zenodo.21270300. The v1.4 selective-gating evaluation was
 pre-registered before the benchmark runs; prediction files and the full
 benchmark report ship with the release.
 
-If you use AgentLock in your research, please cite:
+Selective Provenance Gating: Recovering Agent Utility Where Recovery Is
+Sound (Grice, 2026). DOI: 10.5281/zenodo.21363120. It builds on the
+first paper and evaluates the selective action-class gating introduced
+in v1.4.
+
+If you use AgentLock in your research, please cite the paper that
+matches the mechanism you rely on:
 
 > Grice, D. (2026). *Provenance-Based Pre-Action Authorization for LLM Agents:
 > A Structural Defense Evaluated on AgentDojo with AgentLock.* Zenodo.
 > https://doi.org/10.5281/zenodo.21270300
+
+> Grice, D. (2026). *Selective Provenance Gating: Recovering Agent Utility
+> Where Recovery Is Sound.* Zenodo.
+> https://doi.org/10.5281/zenodo.21363120
 
 ```bibtex
 @misc{grice2026agentlock,
@@ -340,6 +368,20 @@ If you use AgentLock in your research, please cite:
   url          = {https://doi.org/10.5281/zenodo.21270300}
 }
 ```
+
+```bibtex
+@misc{grice2026selective,
+  author       = {Grice, David},
+  title        = {Selective Provenance Gating: Recovering Agent Utility
+                  Where Recovery Is Sound},
+  year         = {2026},
+  publisher    = {Zenodo},
+  doi          = {10.5281/zenodo.21363120},
+  url          = {https://doi.org/10.5281/zenodo.21363120}
+}
+```
+
+`CITATION.cff` at the repository root carries the software citation.
 
 *Research commits authored as `schen-analytics` were made under an alternate
 GitHub identity of the author, configured on the research machine

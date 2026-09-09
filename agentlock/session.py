@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import secrets
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -31,6 +32,9 @@ class Session:
         created_at: Unix timestamp.
         expires_at: Unix timestamp.
         metadata: Arbitrary session metadata (device info, IP, etc.).
+        known_contacts: Normalized recipient addresses supplied by the
+            deployer at session creation.  Never populated from tool or
+            model output.
     """
 
     user_id: str
@@ -40,6 +44,7 @@ class Session:
     expires_at: float = 0.0
     session_id: SessionId = field(default_factory=_generate_session_id)
     metadata: dict[str, Any] = field(default_factory=dict)
+    known_contacts: frozenset[str] = field(default_factory=frozenset)
 
     _max_duration: int = 900
 
@@ -81,6 +86,7 @@ class SessionStore:
         data_boundary: DataBoundary = DataBoundary.AUTHENTICATED_USER_ONLY,
         max_duration: int = 900,
         metadata: dict[str, Any] | None = None,
+        known_contacts: Iterable[str] | None = None,
     ) -> Session:
         """Create a new authenticated session."""
         session = Session(
@@ -88,6 +94,9 @@ class SessionStore:
             role=role,
             data_boundary=data_boundary,
             metadata=metadata or {},
+            known_contacts=frozenset(
+                c.strip().casefold() for c in (known_contacts or ())
+            ),
             _max_duration=max_duration,
         )
         self._sessions[session.session_id] = session

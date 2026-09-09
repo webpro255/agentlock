@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import time
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -68,6 +68,7 @@ from agentlock.policy import (
     ActionFlags,
     PolicyEngine,
     RequestContext,
+    _normalize_recipient,
     active_lineage_policy,
     lineage_gated_action,
 )
@@ -601,6 +602,7 @@ class AuthorizationGate:
         role: str,
         data_boundary: DataBoundary = DataBoundary.AUTHENTICATED_USER_ONLY,
         metadata: dict[str, Any] | None = None,
+        known_contacts: Iterable[str] | None = None,
     ) -> Session:
         """Create an authenticated session after out-of-band auth completes.
 
@@ -612,6 +614,9 @@ class AuthorizationGate:
             role: Role assigned after authentication.
             data_boundary: Scope of data access for this session.
             metadata: Device info, IP, etc.
+            known_contacts: Recipient addresses for the known-contacts
+                recipient policy.  Populated only from deployer config at
+                session creation, never from tool or model output.
 
         Returns:
             The created session.
@@ -622,6 +627,7 @@ class AuthorizationGate:
             data_boundary=data_boundary,
             max_duration=self._session_duration,
             metadata=metadata,
+            known_contacts=known_contacts,
         )
 
     def get_session(self, user_id: str) -> Session | None:
@@ -756,6 +762,7 @@ class AuthorizationGate:
 
         # Resolve context state for v1.1
         resolved_session_id = session.session_id if session else ""
+        resolved_known_contacts = session.known_contacts if session else frozenset()
         context_state = None
         if version_at_least(permissions.version, (1, 1)) and resolved_session_id:
             context_state = self._context_tracker.get(resolved_session_id)
@@ -838,6 +845,45 @@ class AuthorizationGate:
             _param_outcome.update({"ran": False, "reason": _reason})
             _novel_outcome.update({"ran": False, "reason": _reason})
 
+        # v1.5 D18 -- the declared recipient parameter.  The trusted
+        # permission block names one top-level key in ``parameters``; the gate
+        # reads that key and nothing else.  No scan, no nesting, no guessing.
+        # LOCALS, deliberately, in the discipline documented above: this block
+        # writes nothing into ``request_metadata`` and nothing into
+        # ``parameters``, so what ``InjectionFilter`` sees at pipeline step 6
+        # is identical whether the extraction ran or not.
+        _v15 = version_at_least(permissions.version, (1, 5))
+        resolved_recipients: tuple[str, ...] = ()
+        recipient_fault = ""
+        _rp = permissions.scope.recipient_parameter
+        if _v15 and _rp and isinstance(parameters, dict) and _rp in parameters:
+            _raw = parameters[_rp]
+            if (
+                _raw is None
+                or _raw == ""
+                or (isinstance(_raw, list | tuple) and len(_raw) == 0)
+            ):
+                # Declared but carrying nothing: no recipient from the
+                # parameter, and not a fault.  D12's skip is preserved.
+                pass
+            elif isinstance(_raw, str):
+                resolved_recipients = (_raw,)
+            elif isinstance(_raw, list | tuple) and all(
+                isinstance(x, str) for x in _raw
+            ):
+                resolved_recipients = tuple(_raw)
+            else:
+                recipient_fault = "malformed_parameter"
+
+            # D20 -- the caller may assert a recipient, but it may not
+            # contradict the block's declared parameter.  Disagreement is a
+            # fault; it is not resolved in either direction.
+            if resolved_recipients and recipient:
+                _asserted = _normalize_recipient(recipient)
+                _declared = {_normalize_recipient(r) for r in resolved_recipients}
+                if _declared != {_asserted}:
+                    recipient_fault = "assertion_disagrees"
+
         # Build request context
         ctx = RequestContext(
             user_id=user_id,
@@ -846,6 +892,9 @@ class AuthorizationGate:
             data_boundary=data_boundary or DataBoundary.AUTHENTICATED_USER_ONLY,
             record_count=record_count,
             recipient=recipient,
+            known_contacts=resolved_known_contacts,
+            recipients=resolved_recipients,
+            recipient_fault=recipient_fault,
             is_bulk=is_bulk,
             is_external=is_external,
             is_financial=is_financial,
@@ -937,7 +986,7 @@ class AuthorizationGate:
                     user_id=user_id,
                     role=role,
                     action="denied",
-                    reason="rate_limited",
+                    reason=DenialReason.RATE_LIMITED.value,
                     risk_level=permissions.risk_level.value,
                     log_level=effective_log_level,
                     include_parameters=permissions.audit.include_parameters,

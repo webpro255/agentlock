@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from agentlock.types import DenialReason
+
 if TYPE_CHECKING:
-    from agentlock.types import AuditId, DenialReason, RoleName
+    from agentlock.types import AuditId, RoleName
 
 
 class AgentLockError(Exception):
@@ -96,7 +98,7 @@ class RateLimitedError(DeniedError):
         **kwargs: Any,
     ) -> None:
         self.retry_after_seconds = retry_after_seconds
-        super().__init__(reason="rate_limited", **kwargs)
+        super().__init__(reason=DenialReason.RATE_LIMITED, **kwargs)
 
 
 class SessionExpiredError(DeniedError):

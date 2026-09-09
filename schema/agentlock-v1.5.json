@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://agentlock.dev/schema/v1.3",
-  "title": "AgentLock Tool Definition Schema v1.3",
-  "description": "Authorization schema for AI agent tool calls. Defines the agentlock permissions block that extends standard tool definitions with access control, rate limiting, data policies, audit requirements, adaptive hardening, DEFER/STEP_UP/MODIFY decision types, signed receipts, hash-chained context, and provenance-lineage gating (session write-gate and parameter lineage).",
+  "$id": "https://agentlock.dev/schema/v1.5",
+  "title": "AgentLock Tool Definition Schema v1.5",
+  "description": "Authorization schema for AI agent tool calls. Defines the agentlock permissions block that extends standard tool definitions with access control, rate limiting, data policies, audit requirements, adaptive hardening, DEFER/STEP_UP/MODIFY decision types, signed receipts, hash-chained context, provenance-lineage gating (session write-gate, parameter lineage, and novel lineage), selective action-class gating (deletion, membership change, value-carrying), and recipient policy enforcement (known contacts, same domain, allowlist).",
   "type": "object",
   "properties": {
     "name": {
@@ -26,12 +26,35 @@
     "agentlock"
   ],
   "$defs": {
+    "ActionClassConfig": {
+      "additionalProperties": false,
+      "description": "Declares a tool's action class in the trusted permission block (v1.4).\n\nSelective action-class gating expands the *trusted-assertion surface*.\nUnder a uniform write-gate, the ``is_*`` flags a caller passes to\n``authorize()`` are safe to get wrong at the sub-class level: any\nconsequential write is gated regardless.  Once ``gate_consequential`` can\nbe turned off independently of ``gate_deletion`` /\n``gate_membership_change``, a caller that simply *omits* ``is_deletion``\nwould slip a deletion past the taint gate.  The action class therefore\nlives here -- registered with the tool, on the trusted side -- rather than\nonly in the per-call, caller-asserted kwarg.\n\nResolution is **monotone OR**: the effective class is\n``declared or caller_asserted``.  A declaration can only ever *add*\ngating.  A tool declared ``is_deletion=True`` cannot be escaped by\nomitting the kwarg, and an absent (or False) declaration can never cancel\na class the caller did assert.  There is deliberately no way to use this\nblock to switch a class *off*; ``gate_*`` on ``LineagePolicyConfig`` is\nthe knob for that, and it lives in trusted config too.\n\nTHE POLARITY RULE -- the invariant future contributors must not break:\n\n* **Gating-ADDING** signals (``is_deletion``, ``is_membership_change``)\n  may originate from the trusted block OR the caller's ``authorize()``\n  kwarg, and combine by OR.  A wrong or missing one can only under-gate\n  the tool relative to a correct one, and the caller can always add.\n* **Gating-REMOVING** signals (``is_value_carrying``) may originate\n  **ONLY** from the trusted block -- never a caller kwarg -- and may weaken\n  **ONLY** the residual ``is_consequential`` disjunct, never a named\n  class.  Admitting a removing signal from the caller, or letting one\n  reach the deletion / membership terms, reintroduces exactly the bypass\n  this design closes.\n\nClassify every future action class into one polarity before adding it.\n\n``is_value_carrying`` is a positive, trusted, auditable claim that this\ntool's consequential effect is fully determined by an attacker-choosable\nparameter value -- so parameter/novel lineage already covers it and\nsession taint need not.  It exists because ``is_consequential`` is not a\nclass but the *residual bucket* (\"consequential, but none of the named\nclasses\"), which makes ``gate_consequential=False`` un-gate an open-ended\nset: every consequential tool nobody got around to classifying.  Requiring\na positive declaration to un-gate means an unclassified consequential\naction fails CLOSED (stays gated, costing recoverable utility) rather\nthan OPEN (a silent hole on precisely the value-free classes for which\nsession taint is the only available signal).\n\nUn-gating therefore takes two affirmative acts: the deployment sets\n``gate_consequential=False``, and the tool declares\n``is_value_carrying=True``.  Omitting either leaves the action gated.",
+      "properties": {
+        "is_deletion": {
+          "default": false,
+          "title": "Is Deletion",
+          "type": "boolean"
+        },
+        "is_membership_change": {
+          "default": false,
+          "title": "Is Membership Change",
+          "type": "boolean"
+        },
+        "is_value_carrying": {
+          "default": false,
+          "title": "Is Value Carrying",
+          "type": "boolean"
+        }
+      },
+      "title": "ActionClassConfig",
+      "type": "object"
+    },
     "AgentLockPermissions": {
       "additionalProperties": false,
       "description": "The ``agentlock`` permissions block attached to a tool definition.\n\nThis is the core of the specification.  Every field has a secure default\nso that an empty permissions block denies by default.\n\nExample::\n\n    perms = AgentLockPermissions(\n        risk_level=\"high\",\n        requires_auth=True,\n        allowed_roles=[\"admin\"],\n    )",
       "properties": {
         "version": {
-          "default": "1.3",
+          "default": "1.5",
           "title": "Version",
           "type": "string"
         },
@@ -143,6 +166,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/LineagePolicyConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "action_class": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ActionClassConfig"
             },
             {
               "type": "null"
@@ -447,6 +481,16 @@
           "title": "Gate Consequential",
           "type": "boolean"
         },
+        "gate_deletion": {
+          "default": true,
+          "title": "Gate Deletion",
+          "type": "boolean"
+        },
+        "gate_membership_change": {
+          "default": true,
+          "title": "Gate Membership Change",
+          "type": "boolean"
+        },
         "decision": {
           "default": "step_up",
           "title": "Decision",
@@ -476,6 +520,16 @@
           "default": 6,
           "title": "Param Lineage Min Len",
           "type": "integer"
+        },
+        "novel_lineage_enabled": {
+          "default": false,
+          "title": "Novel Lineage Enabled",
+          "type": "boolean"
+        },
+        "novel_lineage_action": {
+          "default": "step_up",
+          "title": "Novel Lineage Action",
+          "type": "string"
         }
       },
       "title": "LineagePolicyConfig",
@@ -671,6 +725,25 @@
         "allowed_recipients": {
           "$ref": "#/$defs/RecipientPolicy",
           "default": "known_contacts_only"
+        },
+        "recipient_allowlist": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Recipient Allowlist",
+          "type": "array"
+        },
+        "recipient_parameter": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Recipient Parameter"
         }
       },
       "title": "ScopeConfig",

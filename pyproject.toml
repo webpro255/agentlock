@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling<1.30"]
 build-backend = "hatchling.build"
 
 [project]
 name = "agentlock"
-version = "1.7.0"
+version = "1.8.0"
 description = "Authorization framework for AI agent tool calls. Your AI agent needs a login screen. AgentLock is that login screen."
 readme = "README.md"
 license = "AGPL-3.0-or-later"
@@ -47,13 +47,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-autogen = ["pyautogen>=0.2"]
+autogen = ["pyautogen>=0.2,<0.10; python_version < '3.14'"]
 mcp = ["mcp>=1.0"]
 fastapi = ["fastapi>=0.100", "python-jose[cryptography]>=3.3"]
 flask = ["flask>=2.0"]
 crypto = ["PyNaCl>=1.5.0"]
 all = [
-    "pyautogen>=0.2",
+    "pyautogen>=0.2,<0.10; python_version < '3.14'",
     "mcp>=1.0",
     "fastapi>=0.100",
     "python-jose[cryptography]>=3.3",

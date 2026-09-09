@@ -1,0 +1,3497 @@
+# v1.8 Recipient Enforcement: Baseline of Record and Frozen Predictions
+
+Date: 2026-09-09
+Branch: `v1.8-recipient-enforcement`, cut from `6d5fa24 release: v1.7.0`
+Working tree at measurement time: clean.
+
+This document is written before any mechanism code exists. It records what the
+engine does today, the decisions that govern the v1.8.0 build, and predictions
+that increment 1 either meets or fails. Nothing here is a description of code
+that has been written.
+
+---
+
+## 1. Baseline of record
+
+All measurements taken on `v1.8-recipient-enforcement` at `6d5fa24`, 2026-09-09.
+
+### A1. Grep for `RECIPIENT_NOT_ALLOWED`
+
+```
+agentlock/types.py:190:    RECIPIENT_NOT_ALLOWED = "recipient_not_allowed"
+```
+
+Exactly one hit: the enum definition. Nothing raises it, nothing returns it,
+nothing asserts on it.
+
+### A2. Step 8 region of `policy.py`
+
+`agentlock/policy.py:558-572`, verbatim, with the lines immediately before and
+after:
+
+```python
+        # 7. PII filter -- data classification clearance
+        pii_decision = self._pii_filter.evaluate(
+            context.max_output_classification,
+            permissions.data_policy.output_classification,
+        )
+        if pii_decision is not None:
+            return pii_decision
+
+        # ── End filter chains ─────────────────────────────────────────
+
+        # 8. Recipient policy (only if recipient is provided)
+        # Detailed validation delegated to the tool or deployer;
+        # here we enforce "known_contacts_only" as a marker.
+        # Real-world enforcement uses a contacts backend.
+
+        # 9. Human approval
+        if permissions.human_approval.required:
+```
+
+Step 8 is a comment block. No code path reads the recipient argument. Every
+`recipient` reference in the package is either a declaration or a write:
+
+| Location | Kind |
+|---|---|
+| `agentlock/policy.py:50` | docstring line for the field |
+| `agentlock/policy.py:72` | `recipient: str = ""` field on `RequestContext` |
+| `agentlock/gate.py:641` | `recipient: str = ""` parameter of `authorize()` |
+| `agentlock/gate.py:664` | docstring line for that parameter |
+| `agentlock/gate.py:848` | `recipient=recipient` into the `RequestContext` |
+| `agentlock/schema.py:103` | `allowed_recipients` field on `ScopeConfig` |
+
+The value is threaded end to end and then discarded.
+
+### A3. `RecipientPolicy` members
+
+`agentlock/types.py:85-91`, verbatim:
+
+```python
+class RecipientPolicy(str, Enum):
+    """Allowed recipient scope for outbound communication tools."""
+
+    KNOWN_CONTACTS_ONLY = "known_contacts_only"
+    SAME_DOMAIN = "same_domain"
+    ALLOWLIST = "allowlist"
+    ANY = "any"
+```
+
+There are no per-member docstrings. The class docstring shown above is the only
+prose attached to the type.
+
+Role mapping:
+
+| Member | Wire value | Role |
+|---|---|---|
+| `KNOWN_CONTACTS_ONLY` | `known_contacts_only` | known-contacts |
+| `SAME_DOMAIN` | `same_domain` | NONE (unassigned by D1 through D13) |
+| `ALLOWLIST` | `allowlist` | explicit-allowlist |
+| `ANY` | `any` | unrestricted |
+
+All three roles named in the decisions have a member. One member, `SAME_DOMAIN`,
+mapped to NONE at the time of the first report. D14, added 2026-09-09, assigns it.
+
+### A4. Session construction
+
+`agentlock/gate.py:598-626`, verbatim:
+
+```python
+    def create_session(
+        self,
+        user_id: str,
+        role: str,
+        data_boundary: DataBoundary = DataBoundary.AUTHENTICATED_USER_ONLY,
+        metadata: dict[str, Any] | None = None,
+    ) -> Session:
+        """Create an authenticated session after out-of-band auth completes.
+
+        This should only be called by the authentication infrastructure,
+        never by the agent.
+        ...
+        """
+        return self._session_store.create(
+            user_id=user_id,
+            role=role,
+            data_boundary=data_boundary,
+            max_duration=self._session_duration,
+            metadata=metadata,
+        )
+```
+
+`agentlock/session.py:22-42`, verbatim. Note `@dataclass` with no `frozen=` and
+no `slots=`:
+
+```python
+@dataclass
+class Session:
+    """An authenticated session.
+    ...
+    """
+
+    user_id: str
+    role: str
+    data_boundary: DataBoundary = DataBoundary.AUTHENTICATED_USER_ONLY
+    created_at: float = field(default_factory=time.time)
+    expires_at: float = 0.0
+    session_id: SessionId = field(default_factory=_generate_session_id)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    _max_duration: int = 900
+```
+
+`SessionStore.create` (`agentlock/session.py:73-91`) accepts `user_id`, `role`,
+`data_boundary`, `max_duration`, `metadata`.
+
+Complete field list on the session object: `user_id`, `role`, `data_boundary`,
+`created_at`, `expires_at`, `session_id`, `metadata`, `_max_duration`. Plus the
+properties `is_expired` and `remaining_seconds` and the method `validate`.
+
+No contacts field. No allowlist field. No recipient-related field of any kind.
+Matches the stated expectation.
+
+### A5. How a policy step returns DENY, and whether Step 8 would be signed
+
+Return type is `PolicyDecision`, `agentlock/policy.py:89-99`:
+
+```python
+@dataclass(slots=True)
+class PolicyDecision:
+    """Result of policy evaluation."""
+
+    allowed: bool
+    reason: DenialReason | None = None
+    detail: str = ""
+    required_role: str = ""
+    suggestion: str = ""
+    needs_auth: bool = False
+    needs_approval: bool = False
+    approval_channel: str = ""
+```
+
+`DenialReason` is attached as an enum member on the `reason` field. Representative
+denial, Step 5, `agentlock/policy.py:530-543`:
+
+```python
+        # 5. Max records
+        if scope.max_records and context.record_count > scope.max_records:
+            return PolicyDecision(
+                allowed=False,
+                reason=DenialReason.MAX_RECORDS_EXCEEDED,
+                detail=(
+                    f"Requested {context.record_count} records; "
+                    f"limit is {scope.max_records}."
+                ),
+                suggestion=(
+                    f"Reduce your request to {scope.max_records} records "
+                    f"or fewer."
+                ),
+            )
+```
+
+Path from that return to receipt signing:
+
+1. `agentlock/gate.py:863`: `decision = self._policy.evaluate(permissions, ctx)`
+2. `agentlock/gate.py:1528`: the `else` branch taken when `decision.allowed` is falsey
+3. `agentlock/gate.py:1529-1531`: `denial_reason = decision.reason.value if decision.reason else "unknown"`
+4. `agentlock/gate.py:1543-1556`: audit record written with `action="denied"`, `reason=denial_reason`
+5. `agentlock/gate.py:1558-1578`: `AuthResult` built with `decision=DecisionType.DENY` and the `denial` dict
+6. `agentlock/gate.py:1581`: `return self._sign_result(auth_result, tool_name, user_id, role, parameters)`
+
+`_sign_result` is defined at `agentlock/gate.py:2539`. Its first statement,
+`agentlock/gate.py:2548-2549`:
+
+```python
+        if self._receipt_signer is None:
+            return result
+```
+
+**Verdict: a Step 8 return at the existing pipeline position would be
+CONDITIONAL.** Signed whenever a `ReceiptSigner` was supplied to the gate
+constructor (`agentlock/gate.py:207`, stored at `agentlock/gate.py:230`),
+unsigned when no signer is configured. This is exactly the behavior of every
+other policy-step denial, because all of them exit through
+`agentlock/gate.py:1581`. Step 8 inherits signing for free by returning a
+`PolicyDecision` like its neighbors.
+
+`_sign_result` has exactly three call sites: `agentlock/gate.py:1470` (parameter
+blocked), `agentlock/gate.py:1527` (allow and modify), `agentlock/gate.py:1581`
+(policy denial).
+
+Nothing was fixed. See the out-of-scope finding in section 3 regarding
+`agentlock/gate.py:944`.
+
+### A6. Grep for `rate_limited` and `DenialReason.RATE_LIMITED`
+
+```
+agentlock/types.py:182:    RATE_LIMITED = "rate_limited"
+agentlock/exceptions.py:99:        super().__init__(reason="rate_limited", **kwargs)
+agentlock/gate.py:940:                    reason="rate_limited",
+tests/test_gate.py:118:        assert result.denial["reason"] == DenialReason.RATE_LIMITED.value
+```
+
+Four hits. One enum definition, two raw-literal uses, one test that already
+reads the enum's value rather than the literal. D5 targets exactly the two
+raw-literal sites.
+
+### A7. Existing policy-step tests
+
+File: `tests/test_policy.py`. Module fixture, `tests/test_policy.py:21-23`:
+
+```python
+@pytest.fixture
+def engine():
+    return PolicyEngine()
+```
+
+Representative test, `tests/test_policy.py:163-174`, verbatim:
+
+```python
+class TestMaxRecords:
+    def test_max_records_exceeded(self, engine):
+        perms = AgentLockPermissions(
+            risk_level=RiskLevel.MEDIUM,
+            allowed_roles=["user"],
+            scope=ScopeConfig(max_records=10),
+        )
+        ctx = RequestContext(user_id="alice", role="user", record_count=50)
+        decision = engine.evaluate(perms, ctx)
+        assert decision.allowed is False
+        assert decision.reason == DenialReason.MAX_RECORDS_EXCEEDED
+```
+
+The pattern to mirror: construct `AgentLockPermissions` directly, construct
+`RequestContext` directly, call `engine.evaluate`, assert on `decision.allowed`
+and `decision.reason` as an enum member.
+
+### A8. Full suite
+
+Command, taken from `pyproject.toml:84-86`:
+
+```
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+```
+
+CI (`.github/workflows/ci.yml`) runs `pytest --cov=agentlock --cov-report=xml -v`,
+adding only coverage flags. Command run: `pytest`.
+
+Summary line, verbatim:
+
+```
+================= 1417 passed, 8 skipped, 14 warnings in 3.11s =================
+```
+
+The first pass of this measurement halted on the stated stop condition, which
+expected 1418 passed and 7 skipped. The discrepancy was resolved as an
+environment fact, not a regression: the eighth skip is an optional extra that is
+not installed in this virtualenv.
+
+```
+$ python -c "import mcp"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import mcp
+ModuleNotFoundError: No module named 'mcp'
+```
+
+Full skip list from `pytest -rs`, verbatim:
+
+```
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_v15_integration_confirmation.py:113: could not import 'mcp': No module named 'mcp'
+SKIPPED [5] tests/test_v16_crosshop_decision_time.py:479: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:491: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:502: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+================= 1417 passed, 8 skipped, 14 warnings in 3.11s =================
+```
+
+**Baseline of record: 1417 passed, 0 failed, 8 skipped, with the skip list above.**
+Total collected is 1425.
+
+### A9. Behavioral baseline
+
+Script written to the session scratchpad, outside the repository, at
+`/tmp/claude-1000/-home-n1trolab-agentlock-v1-4/b0956e14-022c-4ff0-962c-f922b6f537ce/scratchpad/a9_baseline.py`.
+
+Arguments passed to reach Step 8, the minimum: a tool registered under
+`risk_level=MEDIUM`, `requires_auth=True`, `allowed_roles=["user"]`,
+`scope=ScopeConfig(allowed_recipients=RecipientPolicy.KNOWN_CONTACTS_ONLY)`; a
+session created with `create_session(user_id="alice", role="user")`; then
+`gate.authorize("send_email", user_id="alice", role="user", recipient=r)`. No
+other arguments were needed. The same tool was registered once at
+`version="1.5"` and once at `version="1.4"`.
+
+Output, verbatim:
+
+```
+=== version 1.5 ===
+recipient='attacker@evil.com'  decision=allow  allowed=True  reason=None
+recipient='user@company.com'   decision=allow  allowed=True  reason=None
+recipient=''                   decision=allow  allowed=True  reason=None
+recipient='not an address'     decision=allow  allowed=True  reason=None
+recipient='a@b.com, c@d.com'   decision=allow  allowed=True  reason=None
+=== version 1.4 ===
+recipient='attacker@evil.com'  decision=allow  allowed=True  reason=None
+recipient='user@company.com'   decision=allow  allowed=True  reason=None
+recipient=''                   decision=allow  allowed=True  reason=None
+recipient='not an address'     decision=allow  allowed=True  reason=None
+recipient='a@b.com, c@d.com'   decision=allow  allowed=True  reason=None
+=== recipient_allowlist registration attempt ===
+ValidationError: 1 validation error for ScopeConfig
+recipient_allowlist
+  Extra inputs are not permitted [type=extra_forbidden, input_value=['@company.com'], input_type=list]
+    For further information visit https://errors.pydantic.dev/2.13/v/extra_forbidden
+```
+
+No run returns `RECIPIENT_NOT_ALLOWED`. Ten of ten calls ALLOW, at both schema
+versions, including the two malformed forms and the cross-domain address. This
+is the behavior v1.8.0 changes at version 1.5 and preserves at version 1.4.
+
+The schema rejects unknown fields. `ScopeConfig` carries
+`model_config = {"extra": "forbid"}` at `agentlock/schema.py:105`, so
+`recipient_allowlist` must be declared before it can be set. The exact error is
+`extra_forbidden`, as quoted above.
+
+### A10. `create_session` call sites
+
+Definition: `agentlock/gate.py:598`. Signature reproduced in A4.
+
+Call sites excluding the definition: **134**.
+
+Distribution:
+
+| Location | Count |
+|---|---|
+| `tests/` | 129 |
+| `docs/history.md` | 3 (lines 188, 239, 270) |
+| `README.md` | 1 (line 147) |
+| `examples/multi_role.py` | 1 (line 72) |
+
+Every call passes only `user_id` and `role`, positionally or by keyword, with
+two exceptions: `tests/test_gate.py:155` also passes
+`data_boundary=DataBoundary.TEAM`, and `tests/test_gate_v11.py:249` spans
+multiple lines. No call site passes anything that a new trailing keyword with a
+default would collide with.
+
+This bounds D8 and D15: a `known_contacts: Iterable[str] | None = None`
+keyword is additive against all 134.
+
+---
+
+## 2. Decisions of record, with Part B verdicts
+
+D1 through D13 were set before measurement, 2026-09-09. D7 was replaced and D14
+through D16 were added later the same day, after the baseline was reported. All
+amendments are marked and dated. Amendments are append-only; the superseded text
+of D7 is retained below rather than deleted.
+
+### D1. Contact origin
+> Known contacts live on the session, populated only at create_session from
+> deployer supplied config. Never from tool output, context writes, or model
+> output.
+
+**CONSISTENT.** `Session` is a plain mutable `@dataclass` (`session.py:22`) with
+no `frozen=` and no `slots=`, so a field is addable; `create_session`
+(`gate.py:598`) is the sole construction path reached by all 134 call sites in
+A10, and no other writer of session state exists.
+
+### D2. Trigger condition
+> Enforcement fires only when the tool's allowed_recipients is a restrictive
+> member AND a nonempty recipient is supplied. Otherwise the step is skipped.
+> Additive-only: every call that does not meet both conditions gets a decision
+> identical to v1.7.0.
+
+**CONSISTENT.** `RequestContext.recipient` defaults to `""` (`policy.py:72`) and
+A2 shows nothing reads it, so a guard on both conditions cannot alter any
+decision measured in A9.
+
+### D3. No lineage coupling
+> Recipient check is independent of the lineage engine. No coupling.
+
+**CONSISTENT.** Step 8 sits above every lineage gate (`policy.py:623`,
+`policy.py:671`) and the recipient value reaches the engine on the
+`RequestContext` field, never through `context.metadata`, which is the dict the
+`InjectionFilter` scans as attacker-controlled text.
+
+### D4. Fail-safe
+> Fail-safe: anything that fails membership denies.
+
+**CONSISTENT.** The step returns `PolicyDecision(allowed=False, ...)` in the
+shape of `policy.py:530`, and the version guard it sits behind already fails
+closed by contract (`schema.py:80-92`: an unparseable version returns `True`,
+meaning enforce).
+
+### D5. RATE_LIMITED enum
+> RATE_LIMITED: the raw string "rate_limited" (gate.py near line 940,
+> exceptions.py near line 99) becomes DenialReason.RATE_LIMITED. Wire value
+> unchanged.
+
+**CONSISTENT, with one implementation note.** Both sites confirmed at
+`exceptions.py:99` and `gate.py:940` by A6. `DeniedError.__init__` already
+normalizes at `exceptions.py:37`:
+
+```python
+        self.reason = str(reason.value if hasattr(reason, "value") else reason)
+```
+
+Measured directly: `RateLimitedError().to_dict()["reason"]` is `'rate_limited'`
+today, and `DeniedError(reason=DenialReason.RATE_LIMITED).to_dict()["reason"]`
+is also `'rate_limited'`. The wire value is unchanged and no string comparison
+breaks. Every `reason ==` comparison in the repo either compares against a
+`DenialReason` member or against a plain audit string; none is affected.
+
+Note for the build: `gate.py:940` is an argument to `AuditLogger.log`, whose
+`reason` parameter is typed `str` (`audit.py:387`) and whose `AuditRecord.reason`
+field is typed `str` (`audit.py:49`), with no normalization on the way in.
+Because `DenialReason` subclasses `str`, passing the member would still compare
+and serialize as `"rate_limited"`, but the stored object would be an enum
+member rather than a plain `str`. Use `DenialReason.RATE_LIMITED.value` at that
+call site to keep the stored type exactly what it is today. `exceptions.py:99`
+takes the bare member, since line 37 normalizes it.
+
+### D6. Signed receipts
+> Recipient denials emit a signed receipt like every other decision.
+
+**CONSISTENT.** A5 establishes that every `PolicyDecision` denial exits through
+`_sign_result` at `gate.py:1581`; a Step 8 denial inherits this with no new
+code, conditional only on a signer being configured (`gate.py:2548`).
+
+### D7. Schema default (SUPERSEDED 2026-09-09)
+> ~~The schema default of allowed_recipients changes from KNOWN_CONTACTS_ONLY to
+> the unrestricted member. Rationale: the current default is unenforced, so
+> enforcing it would change every tool's decisions; an unrestricted default
+> changes none. Explicitly configured restrictive values become enforced.~~
+
+Superseded by D7 (replaced) below. Retained for the record.
+
+### D7 (replaced, 2026-09-09). Version gating instead of default weakening
+> The schema default of allowed_recipients stays KNOWN_CONTACTS_ONLY. Step 8
+> enforcement is gated on version_at_least(permissions.version, (1, 5)),
+> mirroring how lineage_policy gates on (1, 3). Blocks at version 1.4 and below
+> get identical decisions to v1.7.0. Blocks at 1.5 get allowed_recipients
+> enforced as written, default included.
+
+**CONSISTENT.** `version_at_least` is already the established gating idiom at six
+sites (`policy.py:168`, `policy.py:623`, `policy.py:671`, `policy.py:846`,
+`gate.py:760`, `gate.py:784`) plus `action_class_audit.py:258`, and
+`AgentLockPermissions.version` defaults to `SCHEMA_VERSION`
+(`schema.py:482`). This amendment is strictly better than the superseded text:
+it preserves the secure default recorded at `tests/test_schema.py:229` instead
+of weakening it, and it buys the same additivity from the version floor. A9 was
+re-run under this amendment at both 1.5 and 1.4 and shows no behavioral
+difference on v1.7.0, which is the correct pre-build reading.
+
+### D8. create_session gains known_contacts
+> create_session gains known_contacts (iterable of str, default None). Stored on
+> the session as a frozenset after normalization. None means empty set. Empty
+> set under KNOWN_CONTACTS_ONLY denies every recipient.
+
+**CONSISTENT.** A10 counts 134 call sites, none of which pass a keyword that
+would collide, and all of which keep working under a trailing default of `None`.
+
+### D9. recipient_allowlist scope field
+> New scope field recipient_allowlist: list of str, default empty. Entries are
+> full addresses or domain entries beginning with "@". Consulted only when the
+> policy is the explicit allowlist member.
+
+**CONSISTENT.** `ScopeConfig` is `extra="forbid"` (`schema.py:105`) and A9
+measured the exact `extra_forbidden` rejection, so the field must be declared.
+Declaring it with `default_factory=list` is additive: no existing block changes
+meaning, and the field is consulted only under `ALLOWLIST`.
+
+### D10. Normalization and matching
+> Normalization on both sides: strip outer whitespace, casefold. Known contacts:
+> exact match only. Allowlist: exact match, or a domain entry matches when the
+> recipient substring after its last "@" equals the entry with the leading "@"
+> removed. Exact domain only, no subdomain wildcard.
+
+**CONSISTENT.** No recipient normalization, parsing, or matching exists anywhere
+in the package today (A2), so there is no prior behavior to contradict.
+
+### D11. Malformed recipients
+> Malformed: after stripping, a recipient containing internal whitespace, any
+> control character, a newline, a comma, or a semicolon is DENY
+> RECIPIENT_NOT_ALLOWED under any restrictive policy. Multi-recipient strings are
+> split by adapters into separate authorize calls in a later increment.
+
+**CONSISTENT.** A9 confirms both `"not an address"` and `"a@b.com, c@d.com"`
+currently ALLOW, so this is new behavior on an unenforced path, reachable only
+above the 1.5 version floor.
+
+### D12. Empty recipient
+> Empty recipient string equals not supplied: step skipped.
+
+**CONSISTENT.** `RequestContext.recipient` defaults to `""` (`policy.py:72`) and
+A9 measured `""` as ALLOW, which the skip preserves exactly.
+
+### D13. Pipeline position
+> Step 8 stays at pipeline position 8. First denial in pipeline order wins.
+
+**CONSISTENT.** The Step 8 comment block occupies position 8 verbatim between the
+PII filter return (`policy.py:558-564`) and human approval (`policy.py:571`), and
+every step above it returns early, so ordering is already first-denial-wins.
+
+### D14 (added 2026-09-09). SAME_DOMAIN semantics
+> SAME_DOMAIN: the recipient's domain (substring after its last "@", normalized
+> per D10) must equal the domain of the session user_id (substring after its last
+> "@", normalized). If user_id contains no "@", DENY RECIPIENT_NOT_ALLOWED. Exact
+> match only.
+
+**CONSISTENT.** `SAME_DOMAIN` exists at `types.py:89` and `RequestContext.user_id`
+(`policy.py:70`) is populated at `gate.py:843` and available at Step 8. This
+amendment closes the one gap flagged in the first baseline report, where
+`SAME_DOMAIN` mapped to no role in D1 through D13 and would have been a
+restrictive member with undefined semantics under D2.
+
+### D15 (added 2026-09-09). Threading
+> RequestContext gains known_contacts: frozenset[str] = frozenset().
+> gate.authorize() populates it from the resolved session, adjacent to the
+> context_state resolution. Session gains known_contacts: frozenset[str] =
+> field(default_factory=frozenset). SessionStore.create and
+> AuthorizationGate.create_session gain known_contacts: Iterable[str] | None =
+> None, normalized per D10 and frozen at creation.
+
+**CONSISTENT.** `RequestContext` is `@dataclass(slots=True)` (`policy.py:40`), so
+a new field with a default is legal and cheap; the adjacency point named is
+`gate.py:757-767`, where `resolved_session_id` and `context_state` are derived
+from `session`; `Session` and `SessionStore.create` are both mutable and take
+only keyword-defaulted additions (A4).
+
+### D16 (added 2026-09-09). Schema
+> SCHEMA_VERSION becomes "1.5". A new schema/agentlock-v1.5.json is generated
+> from AgentLockPermissions.model_json_schema() the same way v1.4 was;
+> schema/agentlock-v1.4.json is untouched. ScopeConfig gains recipient_allowlist:
+> list[str] = Field(default_factory=list). Exactly two existing test assertions
+> change, "1.4" to "1.5", at tests/test_backward_compat.py:68 and
+> tests/test_gate_v12.py:284. No other existing test is edited.
+> tests/test_schema.py:229 (the KNOWN_CONTACTS_ONLY default) remains true and
+> unedited.
+
+**CONSISTENT, verified line by line.** A grep for the hardcoded literal `"1.4"`
+across `tests/` and `agentlock/`, excluding the `SCHEMA_VERSION` definition
+itself, returns exactly two assertions:
+
+```
+tests/test_backward_compat.py:68:        assert SCHEMA_VERSION == "1.4"
+tests/test_gate_v12.py:284:        assert SCHEMA_VERSION == "1.4"
+```
+
+Every other version test compares against the `SCHEMA_VERSION` symbol rather
+than a literal (`tests/test_backward_compat.py:70`, `:78`, `:265`,
+`tests/test_gate_v12.py:293`) and therefore needs no edit.
+`tests/test_schema.py:229` reads `assert sc.allowed_recipients ==
+RecipientPolicy.KNOWN_CONTACTS_ONLY`, which amended D7 preserves. The `schema/`
+directory holds `agentlock-v1.0.json`, `agentlock-v1.2.json`,
+`agentlock-v1.3.json`, `agentlock-v1.4.json`, confirming the add-new-and-leave-old
+convention this decision follows.
+
+---
+
+## 3. Out-of-scope finding, reported and not fixed
+
+**The rate-limit denial is the one decision path that never gets a signed
+receipt.** `agentlock/gate.py:915-950` returns its `AuthResult` directly:
+
+```python
+                return AuthResult(
+                    allowed=False,
+                    decision=DecisionType.DENY,
+                    denial=e.to_dict(),
+                    audit_id=record.audit_id,
+                    hardening=directive,
+                )
+```
+
+`_sign_result` has exactly three call sites (`gate.py:1470`, `gate.py:1527`,
+`gate.py:1581`) and this return is none of them. So with a `ReceiptSigner`
+configured, an ALLOW, a MODIFY, a parameter-blocked DENY, and every policy DENY
+carry a receipt, while a rate-limit DENY carries `receipt=None`. D6 asserts that
+recipient denials are signed "like every other decision", and that premise holds
+for the path Step 8 sits on but is not universally true of the gate today.
+
+This is a finding for the human. It is out of scope for v1.8.0 as specified, it
+is not a recipient-enforcement bug, and nothing here changes it.
+
+---
+
+## 4. Predictions for increment 1 (engine build)
+
+Each is falsifiable by a command. If any fails, the increment did not match its
+prediction, and that is the finding.
+
+### P1. The denial reason is actually reachable
+Grep for `RECIPIENT_NOT_ALLOWED` returns at least three hits: the enum
+definition at `agentlock/types.py:190`, at least one return site in
+`agentlock/policy.py` Step 8, and at least one test assertion.
+
+### P2. New tests, all passing
+All new tests live in a single new file, `tests/test_v18_recipient.py`,
+mirroring the `tests/test_policy.py` style shown in A7: construct
+`AgentLockPermissions` and `RequestContext` directly and call
+`engine.evaluate` for policy-level cases; use `AuthorizationGate` for the
+session-threading and receipt cases.
+
+At schema version 1.5:
+
+| Case | Expected |
+|---|---|
+| contacts-only, recipient in `known_contacts` | ALLOW |
+| contacts-only, recipient not in `known_contacts` | DENY `RECIPIENT_NOT_ALLOWED` |
+| contacts-only, `known_contacts` empty | DENY `RECIPIENT_NOT_ALLOWED` |
+| allowlist, exact address match | ALLOW |
+| allowlist, domain entry, recipient in domain | ALLOW |
+| allowlist, domain entry, recipient out of domain | DENY `RECIPIENT_NOT_ALLOWED` |
+| allowlist, domain entry, recipient in a subdomain of it | DENY `RECIPIENT_NOT_ALLOWED` |
+| same_domain, recipient domain equals `user_id` domain | ALLOW |
+| same_domain, recipient domain differs | DENY `RECIPIENT_NOT_ALLOWED` |
+| same_domain, `user_id` contains no "@" | DENY `RECIPIENT_NOT_ALLOWED` |
+| `ANY`, arbitrary recipient | ALLOW |
+| restrictive policy, empty recipient | step skipped, baseline decision |
+| each malformed form in D11: internal whitespace, control character, newline, comma, semicolon | DENY `RECIPIENT_NOT_ALLOWED` |
+| recipient denial through the gate with a `ReceiptSigner` configured | `AuthResult.receipt` is not None and verifies |
+
+At schema version 1.4:
+
+| Case | Expected |
+|---|---|
+| the same restrictive tool, recipient `"attacker@evil.com"` | identical decision to v1.7.0, that is ALLOW |
+
+Plus: `RATE_LIMITED` is raised as `DenialReason.RATE_LIMITED` with wire value
+`"rate_limited"`, and the existing assertion at `tests/test_gate.py:118` is
+untouched and still passes.
+
+### P3. Suite arithmetic
+The full suite reports 1417 plus the number of new tests passed, 0 failed, 8
+skipped, with the identical skip list recorded in A8. Exactly two pre-existing
+assertions are edited, the two `"1.4"` to `"1.5"` lines at
+`tests/test_backward_compat.py:68` and `tests/test_gate_v12.py:284`. No other
+existing test is edited.
+
+### P4. The A9 script, rerun on the built branch
+The version 1.5 run returns DENY `RECIPIENT_NOT_ALLOWED` for
+`"attacker@evil.com"`, for `"user@company.com"` (because `known_contacts` is
+empty in that script), for `"not an address"`, and for `"a@b.com, c@d.com"`; and
+returns the baseline decision, ALLOW, for `""`.
+
+The version 1.4 run returns the baseline decisions for all five, that is ALLOW
+across the board, byte-identical to the A9 output above.
+
+A third run at version 1.5 with `known_contacts=["user@company.com"]` returns
+ALLOW for that address only, and DENY `RECIPIENT_NOT_ALLOWED` for the other
+three nonempty recipients.
+
+### P5. Raw literal cleanup
+Grep for the raw literal `"rate_limited"` returns hits only at the enum value
+definition (`agentlock/types.py:182`) and at `tests/test_gate.py:118`. The two
+current raw-literal uses at `agentlock/exceptions.py:99` and
+`agentlock/gate.py:940` are gone.
+
+### P6. Files touched
+The build touches only: `agentlock/policy.py`, `agentlock/gate.py`,
+`agentlock/exceptions.py`, `agentlock/schema.py`, `agentlock/session.py`,
+`agentlock/types.py` only if a docstring needs it, `schema/agentlock-v1.5.json`
+(new), `tests/test_v18_recipient.py` (new), the two assertion lines named in P3,
+and `CHANGELOG.md`. Nothing else. `git diff --stat` names no other path.
+
+### P7. Call-site compatibility
+All 134 existing `create_session` call sites from A10 work unmodified under the
+new `known_contacts` keyword defaulting to `None`.
+
+### P8. Schema compatibility
+Every existing schema-version test continues to pass with only the two edits from
+P3, and a v1.4 permission block still validates against
+`schema/agentlock-v1.5.json`. This mirrors the claim made for v1.4 at
+`CHANGELOG.md:137` ("A v1.3 block still validates against v1.4"), and unlike that
+claim it is to be measured, not asserted.
+
+---
+
+## 5. What this document is not
+
+It is not a design. The decisions above were made before measurement and are not
+reopened here. It is not a description of code: at the time of writing, Step 8 is
+four lines of comment and `RECIPIENT_NOT_ALLOWED` has one occurrence in the
+entire repository. Its only purpose is to make increment 1 checkable against
+something written down before it existed.
+
+---
+
+## AMENDMENT 1 (2026-09-09): P5 wording defect found at measurement time, before the build was committed
+
+Found by the build session while measuring increment 1, and recorded here before
+any build change was committed. The defect is in the prediction, not in the
+build.
+
+### The defect
+
+P5 states that a grep for the raw literal `"rate_limited"` returns hits "only at
+the enum value definition (`agentlock/types.py:182`) and at
+`tests/test_gate.py:118`."
+
+That residue list was carried over from A6, whose grep was a case-insensitive
+bare-word search for `rate_limited` and therefore matched
+`DenialReason.RATE_LIMITED.value`. `tests/test_gate.py:118` reads:
+
+```python
+        assert result.denial["reason"] == DenialReason.RATE_LIMITED.value
+```
+
+It contains no quoted literal and never did. A case-sensitive grep for the
+quoted literal cannot return it. P5's residue list is therefore unsatisfiable as
+written, by any build.
+
+### What is unchanged
+
+The operative claim of P5 is unchanged and was met: the two raw-literal uses at
+`agentlock/exceptions.py:99` and `agentlock/gate.py:940` are removed.
+
+### P5, restated
+
+> Grep for the raw literal `"rate_limited"` across `agentlock` and `tests`
+> returns exactly two hits: the enum value definition at
+> `agentlock/types.py:182`, and one intentional pin in
+> `tests/test_v18_recipient.py` asserting that the wire value is unchanged. The
+> two raw-literal uses at `agentlock/exceptions.py:99` and `agentlock/gate.py:940`
+> are gone.
+
+### Why the build was not altered to fit the original wording
+
+The build was not changed to satisfy the frozen text. The pin test was kept
+because it is the measured basis for the CHANGELOG's claim that the RATE_LIMITED
+wire value is unchanged, and any honest assertion of that claim must contain the
+literal. Removing it to make a grep come out clean would have deleted the only
+evidence behind a claim the release makes.
+
+
+---
+
+## AMENDMENT 2 (2026-09-09): increment 1 built and matched
+
+Build commit: `c1a9e01 feat: enforce recipient policy at Step 8, schema 1.5, RATE_LIMITED as enum`.
+
+Measured on `v1.8-recipient-enforcement`. P5 is scored against its restated
+wording in AMENDMENT 1, which was committed at `98d538c` before any build change
+was committed.
+
+### P1 to P8
+
+| P | Verdict | Evidence |
+|---|---|---|
+| P1 | MATCH | `grep -rn RECIPIENT_NOT_ALLOWED agentlock tests` returns 16 hits: the enum definition at `agentlock/types.py:190`, the return site at `agentlock/policy.py:1039`, and 14 assertions in `tests/test_v18_recipient.py`. |
+| P2 | MATCH | `44 passed in 0.03s`. Every row of the P2 table at version 1.5, the version 1.4 row, the session-threading case, the receipt case, and the RATE_LIMITED case. |
+| P3 | MATCH | `1461 passed, 8 skipped, 14 warnings in 3.05s`, which is 1417 plus 44 new, 0 failed. Skip list identical to A8. `git diff --stat tests/` names 2 files, 2 insertions, 2 deletions, the two `"1.4"` to `"1.5"` lines, plus the one new file. |
+| P4 | MATCH | All fifteen lines as predicted. Output below. |
+| P5 | MATCH against the restated wording | `grep -rn '"rate_limited"' agentlock tests` returns exactly two hits: `agentlock/types.py:182` and `tests/test_v18_recipient.py:383`. `agentlock/exceptions.py:99` and `agentlock/gate.py:940` are gone. MISMATCH against the original wording, for the reason recorded in AMENDMENT 1. |
+| P6 | MATCH | `git diff --stat` and `git status --short` name only P6 paths. `agentlock/types.py` needed no docstring change and is untouched. |
+| P7 | MATCH | `grep -rn "create_session(" tests examples README.md docs \| wc -l` returns 143: A10's 134 call sites unmodified, plus 2 non-call mentions inside this document, plus 7 new calls in `tests/test_v18_recipient.py`. That the 134 run is covered by P3. |
+| P8 | MATCH | Both schema-version tests pass. No repo test uses a JSON-schema validator, so `jsonschema` 4.26.0 was used: a populated v1.4 block is VALID against both `schema/agentlock-v1.4.json` and `schema/agentlock-v1.5.json`. |
+
+### Exact suite summary line
+
+```
+================= 1461 passed, 8 skipped, 14 warnings in 3.05s =================
+```
+
+Skip list, verbatim, identical to A8:
+
+```
+SKIPPED [1] tests/test_v15_integration_confirmation.py:113: could not import 'mcp': No module named 'mcp'
+SKIPPED [5] tests/test_v16_crosshop_decision_time.py:479: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:491: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:502: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+```
+
+### P1, verbatim
+
+```
+agentlock/types.py:190:    RECIPIENT_NOT_ALLOWED = "recipient_not_allowed"
+agentlock/policy.py:1036:        """A RECIPIENT_NOT_ALLOWED denial in the shape of every other step."""
+agentlock/policy.py:1039:            reason=DenialReason.RECIPIENT_NOT_ALLOWED,
+tests/test_v18_recipient.py:82:        assert decision.reason == DenialReason.RECIPIENT_NOT_ALLOWED
+tests/test_v18_recipient.py:89:        assert decision.reason == DenialReason.RECIPIENT_NOT_ALLOWED
+tests/test_v18_recipient.py:118:        assert decision.reason == DenialReason.RECIPIENT_NOT_ALLOWED
+tests/test_v18_recipient.py:124:        assert decision.reason == DenialReason.RECIPIENT_NOT_ALLOWED
+tests/test_v18_recipient.py:130:        assert decision.reason == DenialReason.RECIPIENT_NOT_ALLOWED
+tests/test_v18_recipient.py:155:        assert decision.reason == DenialReason.RECIPIENT_NOT_ALLOWED
+tests/test_v18_recipient.py:162:        assert decision.reason == DenialReason.RECIPIENT_NOT_ALLOWED
+tests/test_v18_recipient.py:169:        assert decision.reason == DenialReason.RECIPIENT_NOT_ALLOWED
+tests/test_v18_recipient.py:211:        assert decision.reason == DenialReason.RECIPIENT_NOT_ALLOWED
+tests/test_v18_recipient.py:230:        assert decision.reason == DenialReason.RECIPIENT_NOT_ALLOWED
+tests/test_v18_recipient.py:247:        assert decision.reason == DenialReason.RECIPIENT_NOT_ALLOWED
+tests/test_v18_recipient.py:268:        assert decision.reason == DenialReason.RECIPIENT_NOT_ALLOWED
+tests/test_v18_recipient.py:312:        assert result.denial["reason"] == DenialReason.RECIPIENT_NOT_ALLOWED.value
+tests/test_v18_recipient.py:324:        assert result.denial["reason"] == DenialReason.RECIPIENT_NOT_ALLOWED.value
+```
+
+### P4, verbatim, all fifteen lines
+
+The A9 script was recreated in the session scratchpad from its description in
+section A9, unchanged in its arguments, with a third run added per P4.
+
+```
+=== version 1.5 ===
+recipient='attacker@evil.com'      decision=deny   allowed=False  reason=recipient_not_allowed
+recipient='user@company.com'       decision=deny   allowed=False  reason=recipient_not_allowed
+recipient=''                       decision=allow  allowed=True  reason=None
+recipient='not an address'         decision=deny   allowed=False  reason=recipient_not_allowed
+recipient='a@b.com, c@d.com'       decision=deny   allowed=False  reason=recipient_not_allowed
+=== version 1.4 ===
+recipient='attacker@evil.com'      decision=allow  allowed=True  reason=None
+recipient='user@company.com'       decision=allow  allowed=True  reason=None
+recipient=''                       decision=allow  allowed=True  reason=None
+recipient='not an address'         decision=allow  allowed=True  reason=None
+recipient='a@b.com, c@d.com'       decision=allow  allowed=True  reason=None
+=== version 1.5, known_contacts=["user@company.com"] ===
+recipient='attacker@evil.com'      decision=deny   allowed=False  reason=recipient_not_allowed
+recipient='user@company.com'       decision=allow  allowed=True  reason=None
+recipient=''                       decision=allow  allowed=True  reason=None
+recipient='not an address'         decision=deny   allowed=False  reason=recipient_not_allowed
+recipient='a@b.com, c@d.com'       decision=deny   allowed=False  reason=recipient_not_allowed
+```
+
+The version 1.4 run is byte-identical to the A9 output recorded before the build.
+
+### P5, verbatim
+
+```
+agentlock/types.py:182:    RATE_LIMITED = "rate_limited"
+tests/test_v18_recipient.py:383:        assert RateLimitedError().to_dict()["reason"] == "rate_limited"
+```
+
+### P8, verbatim
+
+```
+schema/agentlock-v1.4.json: VALID
+schema/agentlock-v1.5.json: VALID
+schema/agentlock-v1.4.json (block with recipient_allowlist): INVALID -- Additional properties are not allowed ('recipient_allowlist' was unexpected)
+schema/agentlock-v1.5.json (block with recipient_allowlist): VALID
+```
+
+The last two lines are a control, not a prediction: the new field is accepted at
+1.5 and rejected at 1.4, which is what makes the first two lines meaningful.
+
+### Lint
+
+`ruff check agentlock/ tests/`, the exact command CI runs
+(`.github/workflows/ci.yml:32-33`), returns `All checks passed!` with exit 0.
+
+### STEP 0b: the schema file is an envelope, not raw pydantic output
+
+`schema/agentlock-v1.4.json` is NOT byte-identical to
+`AgentLockPermissions.model_json_schema()` piped through
+`json.dumps(indent=2)`. The committed file is a hand-built envelope:
+`$schema`, `$id`, `title`, `description`, `type`, a `properties` block declaring
+`name`, `description`, `parameters`, and `agentlock` as a `$ref`, a `required`
+list of `name` and `agentlock`, and a `$defs` map. The `$defs` map is pydantic's
+own `$defs` with the model's remaining top-level body promoted in under the key
+`AgentLockPermissions`, then key-sorted. `json.dumps` runs at its default
+`ensure_ascii=True`.
+
+That transform was reconstructed and diffed against the committed v1.4 file.
+The reconstruction is exact except for two lines, and
+`schema/agentlock-v1.5.json` was generated by the same transform.
+
+### Observation for release cleanup: two em dash description drifts in the v1.4 schema file
+
+The two lines by which the reconstruction differs are both pre-existing source
+drift, not envelope shape. In `schema/agentlock-v1.4.json`, the `description`
+values of `ActionClassConfig` and `LineagePolicyConfig` contain `—`, the em
+dash, at three positions each. The corresponding docstrings in
+`agentlock/schema.py` now carry a double hyphen instead. The docstrings were
+edited after `agentlock-v1.4.json` was generated and the file was never
+regenerated, so the committed v1.4 schema no longer reproduces from its own
+source.
+
+Nothing here changes it. `agentlock-v1.4.json` was left untouched, as D16
+requires. `agentlock-v1.5.json`, being generated from current source, carries the
+double hyphen form. This is recorded as an item for release cleanup, not a
+finding against increment 1.
+
+### STEP 0c note
+
+The pre-build grep for `agentshield` was expected to return zero and returned
+two, both pre-existing committed prose in Markdown, neither in code, tests, or
+any corpus:
+
+```
+SECURITY.md:119:v1.2.1 results (222 vectors, scored by AgentShield):
+docs/RELEASE_SCOPE_v16.md:230:substrate is AgentDojo, not the historical AgentShield) gates the release, and
+```
+
+Both predate this branch and are already public on `origin`. Scoped to the code
+the build touches, `grep -ri agentshield agentlock tests schema` returns zero
+hits, before and after. No test and no source file added by increment 1 contains
+the string.
+
+---
+
+## INCREMENT 2 FREEZE (2026-09-09): declared recipient parameter
+
+Measured on `v1.8-recipient-enforcement` at `e6631f4 docs: AMENDMENT 2, increment 1
+built and matched`. Working tree clean at measurement time. This section is written
+before any increment 2 mechanism code exists. It appends to this document and edits
+nothing above.
+
+### Why increment 2 exists
+
+Increment 1 made Step 8 enforce. It did not make Step 8 reachable. Neither shipped
+adapter passes `recipient` to `authorize()`: `mcp-agentlock` `wrapper.py:396` and
+`crewai-agentlock` `wrapper.py:184` both pass `tool_name`, `user_id`, `role`,
+`parameters`, `metadata`. The in-repo integrations do the same, measured below at
+M2. So `recipient` is always `""`, D12 skips the step, and every adapter call takes
+the pre-v1.8 path. Increment 2 lets the trusted permission block declare which
+parameter carries the recipient, and has the gate read it itself.
+
+---
+
+## PART M: measurements
+
+### M1. The insertion point for D18, `agentlock/gate.py:781-867`, verbatim
+
+```python
+        # Build request metadata -- include parameters for injection filter
+        request_metadata = dict(metadata or {})
+        if parameters:
+            request_metadata["parameters"] = parameters
+
+        # v1.3 lineage: the gate owns this read; callers cannot supply it.
+        # A worst-case taint summary of the session's provenance log is
+        # attached so the policy engine can gate purely on provenance.
+        _lp = permissions.lineage_policy
+        _v13 = version_at_least(permissions.version, (1, 3))
+
+        # E10 -- what each parameter-level lineage check concluded, or why it
+        # never ran.  LOCALS, deliberately: these must NOT be written into
+        # ``request_metadata``.  ``InjectionFilter`` scans that dict's values as
+        # attacker-controlled text, so evidence placed there is evidence that
+        # can change a decision.  These are read on the far side of the
+        # decision, by the audit path, and by nothing else.
+        _param_outcome: dict[str, Any] = {}
+        _novel_outcome: dict[str, Any] = {}
+
+        if _v13 and resolved_session_id:
+            request_metadata["lineage"] = self._context_tracker.lineage_summary(
+                resolved_session_id
+            )
+            if _lp is None:
+                _no_policy = {"ran": False, "reason": "no_lineage_policy"}
+                _param_outcome.update(_no_policy)
+                _novel_outcome.update(_no_policy)
+
+            # v1.3 Feature 2 -- parameter lineage. Gate-owned read: does any
+            # parameter value trace to untrusted context but not the user's
+            # authoritative request?  Attached for the policy engine.
+            if _lp is not None and _lp.param_lineage_enabled:
+                _match = self._context_tracker.parameter_lineage_check(
+                    resolved_session_id,
+                    parameters,
+                    min_len=_lp.param_lineage_min_len,
+                    outcome=_param_outcome,
+                )
+                if _match is not None:
+                    request_metadata["param_lineage"] = _match
+            elif _lp is not None:
+                _param_outcome.update({"ran": False, "reason": "check_disabled"})
+
+            # v1.4 -- novel lineage. Gate-owned read: does any parameter token
+            # trace to NEITHER the authoritative nor the untrusted context?
+            # Independent of param_lineage_enabled; exact-token membership.
+            if _lp is not None and _lp.novel_lineage_enabled:
+                _novel = self._context_tracker.novel_lineage_check(
+                    resolved_session_id,
+                    parameters,
+                    outcome=_novel_outcome,
+                )
+                if _novel is not None:
+                    request_metadata["novel_lineage"] = _novel
+            elif _lp is not None:
+                _novel_outcome.update({"ran": False, "reason": "check_disabled"})
+        else:
+            # Neither check ran, and the two reasons are not the same fact.  A
+            # grant issued with no session was never examined for parameter
+            # lineage at all, and its record has to say so rather than present
+            # an unexamined call as a clean one.
+            _reason = "no_session" if _v13 else "tool_below_v1_3"
+            _param_outcome.update({"ran": False, "reason": _reason})
+            _novel_outcome.update({"ran": False, "reason": _reason})
+
+        # Build request context
+        ctx = RequestContext(
+            user_id=user_id,
+            role=role,
+            session_id=resolved_session_id,
+            data_boundary=data_boundary or DataBoundary.AUTHENTICATED_USER_ONLY,
+            record_count=record_count,
+            recipient=recipient,
+            known_contacts=resolved_known_contacts,
+            is_bulk=is_bulk,
+            is_external=is_external,
+            is_financial=is_financial,
+            is_account_modification=is_account_modification,
+            is_consequential=is_consequential,
+            is_deletion=is_deletion,
+            is_membership_change=is_membership_change,
+            amount=amount,
+            max_output_classification=resolved_classification,
+            metadata=request_metadata,
+            context_state=context_state,
+        )
+```
+
+**Where D18 extraction goes: immediately after `agentlock/gate.py:845`, the closing
+line of the `else` branch of the v1.3 lineage block, and before the
+`# Build request context` comment at `agentlock/gate.py:847`.** That is the last
+line of the block preceding the `RequestContext` construction and the only position
+that satisfies D18's two constraints at once: after `parameters` is available and
+after `permissions` is resolved, and before `ctx` exists.
+
+**`scope` is not a local in `authorize()`.** A grep for `scope` across
+`agentlock/gate.py:630-870` returns exactly two hits, `agentlock/gate.py:670`
+(a docstring line reading "data_boundary: Requested data scope.") and
+`agentlock/gate.py:768` (the comment "# Apply restrict_scope effect"). Neither is a
+binding. `permissions.scope` is nonetheless resolved and reachable at line 845:
+`permissions` is bound at `agentlock/gate.py:692`
+(`permissions = self._tools.get(tool_name)`) and is already dereferenced for other
+fields at `agentlock/gate.py:766` (`permissions.version`), `:789`
+(`permissions.lineage_policy`) and `:790` (`permissions.version`). D18 reads
+`permissions.scope.recipient_parameter` directly, in the idiom of line 789.
+
+`ScopeConfig` itself, `agentlock/schema.py:98-108`, verbatim, showing where D17's
+field lands:
+
+```python
+class ScopeConfig(BaseModel):
+    """Constrains what data a tool invocation can access."""
+
+    data_boundary: DataBoundary = DataBoundary.AUTHENTICATED_USER_ONLY
+    max_records: int | None = Field(default=None, ge=1)
+    allowed_recipients: RecipientPolicy = RecipientPolicy.KNOWN_CONTACTS_ONLY
+    # Entries are full addresses or domain entries beginning with "@",
+    # consulted only under RecipientPolicy.ALLOWLIST.
+    recipient_allowlist: list[str] = Field(default_factory=list)
+
+    model_config = {"extra": "forbid"}
+```
+
+### M2. Every read of `context.metadata` in `policy.py`
+
+`grep -n "context\.metadata" agentlock/policy.py`, verbatim:
+
+```
+113:    # Carried on the RETURN VALUE and never through ``context.metadata``.  That
+577:            context.metadata.get("parameters"),
+578:            context.metadata,
+622:                and context.metadata.get("first_invocation", False)
+652:            pmatch = context.metadata.get("param_lineage")
+700:            nmatch = context.metadata.get("novel_lineage")
+772:            summary = context.metadata.get("lineage")
+831:                        context.metadata["session_gate_shadow"] = "DENY"
+832:                        context.metadata["session_gate_shadow_detail"] = detail
+```
+
+Line 113 is a comment. Lines 577, 578, 622, 652, 700 and 772 are the six reads.
+Lines 831 and 832 are writes, not reads.
+
+**None of the six reads reads `context.recipient` or `context.recipients`.** The
+only two references to the recipient field anywhere in `policy.py` are
+`agentlock/policy.py:594` (the Step 8 guard) and `agentlock/policy.py:955` (the
+normalization inside `_evaluate_recipient`), and neither goes through
+`context.metadata`. `context.recipients` does not exist yet. Expectation met.
+
+The `InjectionFilter` input, `agentlock/policy.py:571-597`, verbatim:
+
+```python
+        # ── Independent filter chains ─────────────────────────────────
+        # These two filters are fully decoupled.  A request blocked by
+        # the injection filter never reaches the PII filter.
+
+        # 6. Injection filter -- parameter content analysis
+        injection_decision = self._injection_filter.evaluate(
+            context.metadata.get("parameters"),
+            context.metadata,
+        )
+        if injection_decision is not None:
+            return injection_decision
+
+        # 7. PII filter -- data classification clearance
+        pii_decision = self._pii_filter.evaluate(
+            context.max_output_classification,
+            permissions.data_policy.output_classification,
+        )
+        if pii_decision is not None:
+            return pii_decision
+
+        # ── End filter chains ─────────────────────────────────────────
+
+        # 8. Recipient policy (only if recipient is provided)
+        if context.recipient and version_at_least(permissions.version, (1, 5)):
+            recipient_decision = self._evaluate_recipient(scope, context)
+            if recipient_decision is not None:
+                return recipient_decision
+```
+
+The filter is handed exactly two things: `context.metadata.get("parameters")` and
+`context.metadata`. Both are read off the dict the gate builds at
+`agentlock/gate.py:782-784`.
+
+Adapter reach, measured in this repo: `grep -rn "recipient" agentlock/integrations/`
+returns zero hits, across all four in-repo integrations (`mcp.py`, `autogen.py`,
+`flask.py`, `fastapi.py`) and six `authorize()` call sites
+(`mcp.py:167`, `autogen.py:119`, `flask.py:163`, `flask.py:271`,
+`fastapi.py:197`, `fastapi.py:290`). The representative call,
+`agentlock/integrations/mcp.py:167-172`, verbatim:
+
+```python
+                    auth = gate.authorize(
+                        name,
+                        user_id=user_id,
+                        role=role,
+                        parameters=arguments or None,
+                    )
+```
+
+Same shape as the two out-of-repo adapters named above. Step 8 is unreachable from
+every one of them.
+
+### M3. Step 8 as built in increment 1
+
+The call site, `agentlock/policy.py:593-597`, verbatim:
+
+```python
+        # 8. Recipient policy (only if recipient is provided)
+        if context.recipient and version_at_least(permissions.version, (1, 5)):
+            recipient_decision = self._evaluate_recipient(scope, context)
+            if recipient_decision is not None:
+                return recipient_decision
+```
+
+`_evaluate_recipient`, signature and docstring, `agentlock/policy.py:941-950`,
+verbatim:
+
+```python
+    def _evaluate_recipient(
+        self, scope: ScopeConfig, context: RequestContext
+    ) -> PolicyDecision | None:
+        """Enforce ``scope.allowed_recipients`` against the target recipient.
+
+        Returns ``None`` when the recipient is permitted, so the caller falls
+        through to the next pipeline step.  Every other outcome is a DENY.
+
+        Fails safe: an unrecognized policy value denies.
+        """
+```
+
+The body runs from `agentlock/policy.py:951` to `agentlock/policy.py:1032`, and the
+denial constructor is the static method `_recipient_denial` at
+`agentlock/policy.py:1034-1042`. The three helpers it uses,
+`agentlock/policy.py:162-181`, verbatim:
+
+```python
+def _normalize_recipient(value: str) -> str:
+    """Normalize a recipient or allowlist entry: strip, then casefold."""
+    return value.strip().casefold()
+
+
+def _recipient_domain(value: str) -> str:
+    """The substring after the last "@", or "" when there is no "@"."""
+    _, sep, domain = value.rpartition("@")
+    return domain if sep else ""
+
+
+def _recipient_is_malformed(value: str) -> bool:
+    """Is this normalized recipient unusable as a single address?
+
+    Control characters, any whitespace, commas, and semicolons all mark a
+    value that is either not one address or not an address at all.
+    """
+    if "," in value or ";" in value:
+        return True
+    return any(ord(c) < 32 or ord(c) == 127 or c.isspace() for c in value)
+```
+
+Signature as built: `_evaluate_recipient(self, scope: ScopeConfig, context: RequestContext) -> PolicyDecision | None`.
+It takes the scope and the context, and returns `None` on permit.
+
+### M4. The audit log call in the policy-denial path
+
+`agentlock/gate.py:1537-1565`, verbatim:
+
+```python
+        else:
+            denial_reason = (
+                decision.reason.value if decision.reason else "unknown"
+            )
+            # E5: a lineage denial cites the data that gated it.  Built from
+            # what the gate already computed, after the decision, and never
+            # read back -- ``evidence`` cannot alter ``decision``.
+            denial_meta = _class_meta()
+            provenance_ids = None
+            evidence = self._lineage_evidence(denial_reason, ctx, permissions)
+            if evidence is not None:
+                denial_meta = {**(denial_meta or {}), "lineage_evidence": evidence}
+                provenance_ids = self._evidence_provenance_ids(evidence)
+
+            record = self._audit.log(
+                tool_name=tool_name,
+                user_id=user_id,
+                role=role,
+                action="denied",
+                reason=denial_reason,
+                risk_level=permissions.risk_level.value,
+                log_level=permissions.audit.log_level,
+                include_parameters=permissions.audit.include_parameters,
+                parameters=parameters,
+                session_id=ctx.session_id,
+                duration_ms=duration_ms,
+                metadata=denial_meta,
+                context_provenance_ids=provenance_ids,
+            )
+```
+
+**Is the recipient written to the audit record? No.** `grep -rn "recipient"
+agentlock/audit.py` returns zero hits. `AuditLogger.log`
+(`agentlock/audit.py:380-404`) has no recipient parameter and `AuditRecord` has no
+recipient field. The only route by which a recipient value could reach an audit
+record is inside `parameters`, at `agentlock/gate.py:1560`.
+
+**Are parameter values written? Conditionally, under two gates.** In
+`AuditLogger.log`, `agentlock/audit.py:459-474`:
+
+```python
+            record.response_summary = ""
+            record.user_id = ""
+            record.role = ""
+            record.metadata = _drop_payload(record.metadata)
+        elif log_level == AuditLogLevel.STANDARD:
+            # + identity + scope
+            record.parameters = None
+            record.response_summary = ""
+            record.metadata = _drop_payload(record.metadata)
+        else:
+            # FULL -- include everything
+            if include_parameters:
+                record.parameters = parameters
+            else:
+                record.metadata = _drop_payload(record.metadata)
+            record.response_summary = response_summary
+```
+
+Parameter values are stored only when `log_level` is `AuditLogLevel.FULL` **and**
+`include_parameters` is true. Both come from the trusted permission block:
+`permissions.audit.log_level` at `agentlock/gate.py:1558` and
+`permissions.audit.include_parameters` at `agentlock/gate.py:1559`. At MINIMAL and
+STANDARD, `record.parameters` is cleared unconditionally. So the flag is
+`audit.include_parameters`, effective only at `audit.log_level == FULL`.
+
+Consequence for increment 2: a recipient read out of `parameters` under D18 changes
+nothing about what the audit record holds, because the record already holds the whole
+`parameters` dict or none of it, under those two flags, and the extraction adds no
+new field to the record.
+
+### M5. Behavioral baseline: the unreachable seam, measured
+
+Script in the session scratchpad, outside the repository. Tool registered at
+`version="1.5"`, `risk_level=MEDIUM`, `requires_auth=True`, `allowed_roles=["user"]`,
+`scope=ScopeConfig(allowed_recipients=RecipientPolicy.KNOWN_CONTACTS_ONLY)`; session
+`create_session(user_id="alice", role="user")` with no contacts. Output, verbatim:
+
+```
+call 1: no recipient argument, parameters={'to': 'attacker@evil.com'}
+  decision=allow  allowed=True  denial=None
+call 2: recipient='attacker@evil.com' passed explicitly
+  decision=deny  allowed=False  denial={'status': 'denied', 'reason': 'recipient_not_allowed', 'detail': "Recipient is not in the session's known contacts; rejected under recipient policy 'known_contacts_only'.", 'required_role': '', 'current_role': 'user', 'suggestion': 'Send only to an address configured as a known contact for this session.'}
+```
+
+Both as expected. Call 1 is the seam: an identical hostile address, carried in the
+parameter an adapter actually sends, is ALLOWED at version 1.5 with a restrictive
+policy in force, because nothing reads it. Call 2 is the same tool, same session,
+same address, denied, reachable only by a caller that already knows to pass
+`recipient=`. Increment 2 makes call 1 behave like call 2.
+
+The stop condition on M5 did not fire: the first call allows.
+
+### M6. `ScopeConfig(recipient_parameter="to")` today
+
+Verbatim:
+
+```
+ValidationError: 1 validation error for ScopeConfig
+recipient_parameter
+  Extra inputs are not permitted [type=extra_forbidden, input_value='to', input_type=str]
+    For further information visit https://errors.pydantic.dev/2.13/v/extra_forbidden
+```
+
+`extra_forbidden`, as expected, from `model_config = {"extra": "forbid"}` at
+`agentlock/schema.py:108`. The field must be declared before it can be set, the same
+result A9 measured for `recipient_allowlist` before increment 1.
+
+### M7. Full suite
+
+`pytest -rs`, summary line verbatim:
+
+```
+================= 1461 passed, 8 skipped, 14 warnings in 3.11s =================
+```
+
+1461 passed, 0 failed, 8 skipped. Skip list, verbatim:
+
+```
+SKIPPED [1] tests/test_v15_integration_confirmation.py:113: could not import 'mcp': No module named 'mcp'
+SKIPPED [5] tests/test_v16_crosshop_decision_time.py:479: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:491: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:502: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+```
+
+Identical to A8's skip list, line for line. The stop condition on M7 did not fire.
+
+### M8. The AMENDMENT 2 envelope generator reproduces the committed v1.5 schema
+
+The transform described in AMENDMENT 2's STEP 0b was re-applied on this tree:
+`AgentLockPermissions.model_json_schema()`, its `$defs` popped, the model's remaining
+top-level body promoted into that map under the key `AgentLockPermissions`, the map
+key-sorted, wrapped in the hand-built envelope (`$schema`, `$id`, `title`,
+`description`, `type`, `properties`, `required`, `$defs`), serialized with
+`json.dumps(..., indent=2)` at the default `ensure_ascii=True`, plus a trailing
+newline.
+
+```
+$ diff regen-v1.5.json schema/agentlock-v1.5.json && echo IDENTICAL
+IDENTICAL
+$ sha256sum schema/agentlock-v1.5.json regen-v1.5.json
+59d13c463539d4c93965bf909bb6da45bd466a9a316b3649e97752acd75235d8  schema/agentlock-v1.5.json
+59d13c463539d4c93965bf909bb6da45bd466a9a316b3649e97752acd75235d8  regen-v1.5.json
+$ cmp schema/agentlock-v1.5.json regen-v1.5.json && echo "byte-for-byte identical"
+byte-for-byte identical
+```
+
+Byte identical, by three independent checks. The stop condition on M8 did not fire.
+This is the fact Q1 depends on: regenerating `agentlock-v1.5.json` after adding
+`recipient_parameter` is a mechanical re-run, not a hand edit, and the diff it
+produces will be confined to the new field.
+
+Note, carried forward from AMENDMENT 2 and unchanged: `schema/agentlock-v1.4.json`
+still does NOT reproduce from current source, because two docstrings drifted from em
+dash to double hyphen after it was generated. That file stays untouched under D22.
+The v1.5 file reproduces exactly, as just measured.
+
+No stop condition fired. All eight measurements are as expected.
+
+---
+
+## PART N: conflict check, D17 to D23
+
+| D | Verdict | Evidence |
+|---|---|---|
+| D17 | CONSISTENT | `ScopeConfig` (`agentlock/schema.py:98-108`) is a plain `BaseModel` whose two nearest neighbours are `allowed_recipients` (`:103`) and `recipient_allowlist` (`:106`); M6 shows the field is currently rejected as `extra_forbidden`, so declaring `recipient_parameter: str \| None = None` is the additive act that admits it, and a `None` default changes no existing block. |
+| D18 | CONSISTENT | The named insertion point (`agentlock/gate.py:845`, before the `# Build request context` comment at `:847`) has `permissions` bound since `:692` and `parameters` in scope since the signature, and `version_at_least` is the established gate-side idiom at `:766`, `:790`, `:760`, `:784`. Nothing at that point writes to `request_metadata` after `:835`. |
+| D19 | CONSISTENT | `RECIPIENT_NOT_ALLOWED` is already reachable through `PolicyEngine._recipient_denial` (`agentlock/policy.py:1034-1042`), so no new denial machinery is needed for a malformed declared value; `_recipient_is_malformed` (`agentlock/policy.py:173-181`) already denies whitespace, control characters, commas and semicolons, and the empty-value skip D19 specifies is exactly D12's existing skip, measured ALLOW at A9 and preserved. |
+| D20 | CONSISTENT | `PolicyDecision.detail` is a free `str` field (`agentlock/policy.py:89-99`) and every existing denial detail is built from policy names and counts, never from caller-supplied content: the closest precedent, `agentlock/policy.py:974-976`, says "Recipient is not in the session's known contacts" without quoting the address. A detail naming the disagreement without the values is the house style, not an exception to it. |
+| D21 | CONSISTENT | `RequestContext` is `@dataclass(slots=True)` (`agentlock/policy.py:41`) and a tuple default is legal there because tuples are immutable and need no `default_factory`; verified directly, a `@dataclass(slots=True)` with `recipients: tuple[str, ...] = ()` builds, reports `__slots__ == ('a', 'recipients')`, defaults to `()`, and accepts `('a@b.com', 'c@d.com')`. `recipient: str = ""` (`:75`) is untouched, and Step 8's guard at `agentlock/policy.py:594` is the single place the "recipients else (recipient,) else skip" precedence lands. |
+| D22 | CONSISTENT | M8 proves the envelope generator reproduces `schema/agentlock-v1.5.json` byte for byte on this tree, so regeneration is mechanical. Schema 1.5 is unreleased: `git cat-file -e main:schema/agentlock-v1.5.json` reports the path absent on `main`, `git ls-tree v1.7.0 schema/` lists only v1.0, v1.2, v1.3 and v1.4, and the file's entire history is one commit, `c1a9e01`, on this branch. A 1.4 block carrying `recipient_parameter` validates in pydantic because the field lives on `ScopeConfig` with no version predicate, and is inert at runtime because D18's extraction sits behind `version_at_least(permissions.version, (1, 5))`. |
+| D23 | CONSISTENT | The two adapters named are separate repositories and are not in this tree; the four in-repo integrations contain zero occurrences of `recipient` (M2) and none is in the Q5 file list. |
+
+### D18, specifically: a local read of `parameters[key]` cannot change what `InjectionFilter` sees
+
+The filter's two inputs are fixed at `agentlock/policy.py:576-579`:
+`context.metadata.get("parameters")` and `context.metadata`. Both resolve to objects
+the gate built at `agentlock/gate.py:782-784`, where `request_metadata["parameters"]`
+is bound to the caller's `parameters` object itself, not a copy. D18 performs one
+`dict` lookup on that object and binds the result to a local. A `dict` lookup is
+non-mutating: it adds no key, removes none, and rebinds nothing. D18 further forbids
+any write into `request_metadata`, so the dict the filter receives has the identical
+key set and the identical values whether the extraction ran or not. The extraction is
+therefore invisible to Step 6 by construction.
+
+This is the same discipline the gate already documents for the lineage outcome
+dictionaries at `agentlock/gate.py:792-798`: "LOCALS, deliberately: these must NOT be
+written into `request_metadata`. `InjectionFilter` scans that dict's values as
+attacker-controlled text, so evidence placed there is evidence that can change a
+decision." D18 is that rule applied to the recipient read. Q6 is the check that the
+build kept it.
+
+One direction is worth naming because it is not symmetric. The extraction is invisible
+to the injection filter, but the injection filter is not invisible to the extraction:
+Step 6 runs at pipeline position 6 and Step 8 at position 8, so a parameter value that
+trips the injection filter is denied before Step 8 ever evaluates it. Reading a
+recipient out of `parameters` cannot weaken injection filtering, and cannot bypass it.
+
+### D21, specifically: `slots=True` and a tuple default
+
+`agentlock/policy.py:41` is `@dataclass(slots=True)`. `agentlock/policy.py:76`
+already carries `known_contacts: frozenset[str] = field(default_factory=frozenset)`,
+which uses `default_factory` because `frozenset()` is constructed. A tuple literal
+`()` is a singleton immutable and needs no factory, so `recipients: tuple[str, ...] = ()`
+is a legal bare default under `slots=True`. Verified directly, output verbatim:
+
+```
+slots= ('a', 'recipients')
+default recipients= ()
+with value= ('a@b.com', 'c@d.com')
+```
+
+---
+
+## PART Q: predictions for increment 2
+
+Each is falsifiable by a command. If any fails, the increment did not match its
+prediction, and that is the finding.
+
+### Q1. Schema
+`agentlock/schema.py`: `ScopeConfig` gains `recipient_parameter`, declared beside
+`allowed_recipients` and `recipient_allowlist`. `schema/agentlock-v1.5.json` is
+regenerated by the AMENDMENT 2 envelope method recorded at M8, and is byte identical
+to that generator's output on the built tree. `schema/agentlock-v1.4.json` is
+untouched, unchanged by `git diff`.
+
+### Q2. New tests, all passing
+All new tests live in one new file, `tests/test_v18_recipient_parameter.py`. Cases
+are gate level, through `AuthorizationGate` at permission version 1.5, unless the row
+says otherwise.
+
+| Case | Expected |
+|---|---|
+| declared key present, hostile `str` value, no caller `recipient` | DENY `RECIPIENT_NOT_ALLOWED` |
+| declared key present, `str` value that is in `known_contacts` | ALLOW |
+| declared key absent, no caller `recipient` | ALLOW, the baseline decision |
+| declared key present with value `None` | ALLOW, step skipped |
+| declared key present with value `""` | ALLOW, step skipped |
+| declared key present with value `[]` | ALLOW, step skipped |
+| declared key present with an `int` value | DENY `RECIPIENT_NOT_ALLOWED` |
+| declared key present, list of two addresses both in `known_contacts` | ALLOW |
+| declared key present, list of two, one not in `known_contacts` | DENY `RECIPIENT_NOT_ALLOWED` |
+| declared key present, list containing a non-`str` | DENY `RECIPIENT_NOT_ALLOWED` |
+| caller `recipient` equals the declared value | ALLOW |
+| caller `recipient` differs from the declared value | DENY `RECIPIENT_NOT_ALLOWED` |
+| caller `recipient` supplied, declared key absent, value in contacts | ALLOW, caller value used |
+| caller `recipient` supplied, declared key absent, value not in contacts | DENY `RECIPIENT_NOT_ALLOWED`, caller value used |
+| the same block registered at version 1.4, hostile parameter value | ALLOW, inert |
+| policy level: `RequestContext(recipients=(...))` with one bad entry | DENY `RECIPIENT_NOT_ALLOWED` |
+| policy level: `RequestContext(recipients=(...))` with all entries good | ALLOW |
+| a recipient denial through the gate with a `ReceiptSigner` configured | `AuthResult.receipt` is not `None` and verifies |
+| the `detail` string of a D20 disagreement denial | contains neither recipient value |
+
+### Q3. Suite arithmetic
+The full suite reports 1461 plus the number of new tests passed, 0 failed, 8 skipped,
+with the identical skip list recorded at M7. No existing test is edited.
+`tests/test_v18_recipient.py` is unchanged, byte for byte, by `git diff`.
+
+### Q4. M5 rerun on the built branch
+Call 1, no `recipient` argument, `parameters={"to": "attacker@evil.com"}`: DENY
+`recipient_not_allowed`. Call 2, `recipient="attacker@evil.com"` passed explicitly:
+DENY `recipient_not_allowed`. The seam is closed and the pre-existing path is
+unchanged.
+
+### Q5. Files touched
+`agentlock/gate.py`, `agentlock/policy.py`, `agentlock/schema.py`,
+`schema/agentlock-v1.5.json`, `tests/test_v18_recipient_parameter.py` (new), and
+`CHANGELOG.md`, whose existing unreleased 1.8.0 section gains lines for
+`recipient_parameter` and for recipient sets. Nothing else. `git diff --stat` and
+`git status --short` name no other path.
+
+### Q6. No new metadata write
+`grep -rn "request_metadata\[" agentlock/gate.py` returns the same four lines it
+returns at `e6631f4`, and no fifth:
+
+```
+agentlock/gate.py:784:            request_metadata["parameters"] = parameters
+agentlock/gate.py:802:            request_metadata["lineage"] = self._context_tracker.lineage_summary(
+agentlock/gate.py:821:                    request_metadata["param_lineage"] = _match
+agentlock/gate.py:835:                    request_metadata["novel_lineage"] = _novel
+```
+
+Line numbers may shift. The set of writes may not grow.
+
+### Q7. Lint and hygiene
+`ruff check agentlock/ tests/`, the exact command CI runs
+(`.github/workflows/ci.yml:32-33`), returns `All checks passed!` with exit 0.
+`grep -ri agentshield agentlock tests schema` returns 0 hits, as it does at
+`e6631f4`.
+
+---
+
+## AMENDMENT 3 (2026-09-09): D21 extended before increment 2 build
+
+Found at build time, before any increment 2 mechanism code was written, and fixed
+by amendment before code. Recorded here so the extension is on the record ahead of
+the build it governs, not read back out of the build afterwards.
+
+### The defect in D21 as frozen
+
+D19 defines the malformed-parameter outcome and D20 defines the
+assertion-disagreement outcome. Both are faults discovered by the gate during D18
+extraction, at `agentlock/gate.py:845`, well before the `RequestContext` exists.
+D21 as frozen gives the gate two channels to Step 8 and only two:
+`recipient: str` and the new `recipients: tuple[str, ...]`. Neither can carry a
+fault. A malformed parameter value produces no recipient string to place in either
+field, and an assertion disagreement is a relation between two values rather than a
+value, so it survives in neither.
+
+That leaves the gate with no way to reach Step 8 with a fault, and the only
+alternative would be for the gate to return a denial directly at the extraction
+point. A gate-side direct return is refused on two counts. It would bypass pipeline
+order, which D13 fixes at first-denial-in-pipeline-order-wins, by denying at a
+position above Step 6 and Step 7 for a fault that belongs at position 8. And it
+would bypass the signed policy-denial path, which A5 establishes reaches
+`_sign_result` only through `agentlock/gate.py:1581`, so the receipt guarantee D6
+makes for recipient denials would not hold for exactly the two outcomes D19 and D20
+introduce.
+
+### D21, extended
+
+> `RequestContext` additionally gains `recipient_fault: str = ""`, with exactly
+> three permitted values: `""`, `"malformed_parameter"`, and
+> `"assertion_disagrees"`. The gate sets it during D18 extraction and never
+> elsewhere. Step 8, when live (a nonempty `recipient`, or a nonempty `recipients`,
+> or a nonempty `recipient_fault`, at permission version 1.5 or later), checks
+> `recipient_fault` first and returns DENY `RECIPIENT_NOT_ALLOWED` with a detail
+> naming the fault kind and carrying no recipient values, before any membership
+> check runs.
+
+### Consequences that follow from the extension
+
+The Step 8 liveness guard widens by one disjunct. Under D21 as frozen the guard
+reads "a nonempty `recipients`, else a nonempty `recipient`, else skip"; a fault
+carries neither, so without the third disjunct a malformed parameter would be
+indistinguishable from no recipient at all and would ALLOW. That is the failure the
+extension removes.
+
+A fault denies under every member of `RecipientPolicy`, `ANY` included. This is the
+one place a fault departs from the frozen shape of Step 8, which returns `None`
+under `ANY` before any evaluation. The reason it departs: a malformed declared
+parameter and a disagreeing caller assertion are defects in the request itself, not
+verdicts about where the request is addressed, and an unrestricted recipient policy
+is a statement about destinations rather than a waiver on well-formedness. A tool
+that accepts any recipient still does not accept an integer where an address was
+declared, nor a caller asserting one address while the parameter carries another.
+
+The detail string obeys D20 for both fault kinds: it names which fault occurred and
+includes no recipient value, neither the declared one nor the asserted one.
+
+### What this does not change
+
+Q5's file list is unchanged. The new field lands on `RequestContext` in
+`agentlock/policy.py`, which Q5 already names, and it is set in
+`agentlock/gate.py`, which Q5 already names. No path is added.
+
+Q6 is unaffected. `recipient_fault` is a local in the gate and then a
+`RequestContext` field. It is never written into `request_metadata`, so the set of
+`request_metadata` writes does not grow.
+
+D13 is preserved rather than weakened. The fault denies at pipeline position 8, the
+position D13 assigns it, and reaches the signer through
+`agentlock/gate.py:1581` like every other policy denial, which is what D6 requires.
+
+---
+
+## AMENDMENT 4 (2026-09-09): increment 2 built and matched
+
+Build commit: `4560e53 feat: read the declared recipient parameter in the gate, recipient sets and faults`.
+
+Measured on `v1.8-recipient-enforcement`. AMENDMENT 3, which extended D21 with the
+`recipient_fault` channel, was committed at `93a4ff0` before any increment 2 build
+change was committed.
+
+### Q1 to Q7
+
+| Q | Verdict | Evidence |
+|---|---|---|
+| Q1 | MATCH | `agentlock/schema.py:109` declares `recipient_parameter: str \| None = None`, beside `allowed_recipients` (`:101`) and `recipient_allowlist` (`:105`). The AMENDMENT 2 envelope generator was re-run on the built tree: `cmp` reports byte-for-byte identity and both files hash to `9fa8d8cf937fdc8722a99951c3809838d6f2882843b1b4a50c90056baef222d4`. `git diff --stat -- schema/agentlock-v1.4.json` is empty. |
+| Q2 | MATCH | `32 passed in 0.02s` in the single new file `tests/test_v18_recipient_parameter.py`. Every row of the Q2 table, plus both fault kinds denying under `RecipientPolicy.ANY`, plus the no-write assertions. |
+| Q3 | MATCH | `1493 passed, 8 skipped, 14 warnings in 3.10s`, which is 1461 plus 32 new, 0 failed. Skip list identical to M7. `git diff --stat -- tests/` is empty: no existing test was edited, and `tests/test_v18_recipient.py` is unchanged. |
+| Q4 | MATCH | The M5 script rerun: call 1 denies with `recipient_not_allowed`, call 2 denies with `recipient_not_allowed`. Output below. |
+| Q5 | MATCH | `git diff --stat` and `git status --short` name only Q5 paths. Output below. |
+| Q6 | MATCH | `grep -rn "request_metadata\[" agentlock/gate.py` returns the same four writes and no fifth. Line numbers shifted by one, which Q6 permits; the set did not grow. Output below. |
+| Q7 | MATCH | `ruff check agentlock/ tests/` returns `All checks passed!` with exit 0. `grep -ri agentshield agentlock tests schema` returns 0 hits. |
+
+### Exact suite summary line
+
+```
+================= 1493 passed, 8 skipped, 14 warnings in 3.10s =================
+```
+
+Skip list, verbatim, identical to M7 and to A8:
+
+```
+SKIPPED [1] tests/test_v15_integration_confirmation.py:113: could not import 'mcp': No module named 'mcp'
+SKIPPED [5] tests/test_v16_crosshop_decision_time.py:479: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:491: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:502: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+```
+
+### Q1, verbatim
+
+```
+$ PYTHONPATH=. python gen_schema.py > q1-regen.json
+$ cmp schema/agentlock-v1.5.json q1-regen.json && echo "byte-for-byte identical"
+byte-for-byte identical
+$ sha256sum schema/agentlock-v1.5.json q1-regen.json
+9fa8d8cf937fdc8722a99951c3809838d6f2882843b1b4a50c90056baef222d4  schema/agentlock-v1.5.json
+9fa8d8cf937fdc8722a99951c3809838d6f2882843b1b4a50c90056baef222d4  q1-regen.json
+```
+
+The generator's output on the built tree also differs from the committed v1.5 file
+at `d27b5fb` by exactly the twelve lines of the new field and nothing else, which is
+what makes the regeneration mechanical rather than a hand edit:
+
+```
+$ diff head-v1.5.json regen-v1.5.json
+734a735,746
+>         },
+>         "recipient_parameter": {
+>           "anyOf": [
+>             {
+>               "type": "string"
+>             },
+>             {
+>               "type": "null"
+>             }
+>           ],
+>           "default": null,
+>           "title": "Recipient Parameter"
+```
+
+### Q4, verbatim
+
+```
+call 1: no recipient argument, parameters={'to': 'attacker@evil.com'}
+  decision=deny  allowed=False  denial={'status': 'denied', 'reason': 'recipient_not_allowed', 'detail': "Recipient is not in the session's known contacts; rejected under recipient policy 'known_contacts_only'.", 'required_role': '', 'current_role': 'user', 'suggestion': 'Send only to an address configured as a known contact for this session.'}
+call 2: recipient='attacker@evil.com' passed explicitly
+  decision=deny  allowed=False  denial={'status': 'denied', 'reason': 'recipient_not_allowed', 'detail': "Recipient is not in the session's known contacts; rejected under recipient policy 'known_contacts_only'.", 'required_role': '', 'current_role': 'user', 'suggestion': 'Send only to an address configured as a known contact for this session.'}
+```
+
+Call 1 is the seam M5 measured as ALLOW at `e6631f4`. It now denies, on the same
+tool, the same session and the same address as call 2, with the caller passing only
+the parameter an adapter actually sends. The pre-existing explicit path is unchanged.
+
+### Q5, verbatim
+
+```
+$ git diff --stat
+ CHANGELOG.md               |  4 +++
+ agentlock/gate.py          | 42 ++++++++++++++++++++++
+ agentlock/policy.py        | 89 +++++++++++++++++++++++++++++++++++++++++-----
+ agentlock/schema.py        |  3 ++
+ schema/agentlock-v1.5.json | 12 +++++++
+ 5 files changed, 141 insertions(+), 9 deletions(-)
+$ git status --short
+ M CHANGELOG.md
+ M agentlock/gate.py
+ M agentlock/policy.py
+ M agentlock/schema.py
+ M schema/agentlock-v1.5.json
+?? tests/test_v18_recipient_parameter.py
+```
+
+AMENDMENT 3 added no path to this list. `recipient_fault` is a field on
+`RequestContext` in `agentlock/policy.py` and a local set in `agentlock/gate.py`,
+and Q5 already named both files.
+
+### Q6, verbatim
+
+```
+agentlock/gate.py:785:            request_metadata["parameters"] = parameters
+agentlock/gate.py:803:            request_metadata["lineage"] = self._context_tracker.lineage_summary(
+agentlock/gate.py:822:                    request_metadata["param_lineage"] = _match
+agentlock/gate.py:836:                    request_metadata["novel_lineage"] = _novel
+```
+
+Four writes, the same four, no fifth. Each line number is one higher than at
+`e6631f4` because the gate's import of `_normalize_recipient` added one line above
+them. Q6 anticipates the shift and constrains the set, not the positions.
+
+### Q7, verbatim
+
+```
+$ ruff check agentlock/ tests/
+All checks passed!
+$ echo $?
+0
+$ grep -ri agentshield agentlock tests schema | wc -l
+0
+```
+
+### One deviation from the build instruction, recorded
+
+The `recipient_parameter` comment in `ScopeConfig` was specified as a one-line
+comment. Its text is 118 characters and `pyproject.toml:96` sets ruff's line length
+to 100, so a single physical line would have failed the Q7 stop condition. The
+comment is therefore wrapped across two physical lines, in the style of the
+`recipient_allowlist` comment two lines above it. The text is unchanged.
+
+### What increment 2 does and does not yet cover
+
+The four in-repo integrations under `agentlock/integrations/` (`mcp.py`,
+`autogen.py`, `flask.py`, `fastapi.py`) contain six `authorize()` call sites
+(`mcp.py:167`, `autogen.py:119`, `flask.py:163`, `flask.py:271`, `fastapi.py:197`,
+`fastapi.py:290`) and zero occurrences of `recipient`, as M2 measured and as this
+increment leaves them: not one of those files is in the Q5 list and not one was
+touched. They are nonetheless now covered by this mechanism, without any adapter
+change, for every tool whose permission block declares `recipient_parameter`,
+because each of the six already forwards the caller's parameter dict to
+`authorize()` and the gate reads the declared key out of that dict itself. That is
+the point of putting the extraction in the gate rather than in the adapters: the
+trusted permission block, not the adapter, decides which parameter carries the
+recipient, and an adapter that never heard of recipients cannot get it wrong. What
+increment 2 does not do is measure that end to end. Nothing here exercises an
+adapter, and the claim that a declared block reaches Step 8 through `mcp.py:167` or
+`fastapi.py:197` is at present an inference from the shape of those call sites
+rather than a measurement of them. Increment 3 measures it.
+
+---
+
+## INCREMENT 3a FREEZE (2026-09-09): integration end-to-end
+
+Measured on `v1.8-recipient-enforcement` at `a9c38ca docs: AMENDMENT 4, increment 2
+built and matched`. Working tree clean at measurement time. This section is written
+before any increment 3a test code exists. It appends to this document and edits
+nothing above.
+
+Increment 3a adds no engine code. Nothing under `agentlock/` and nothing under
+`schema/` is touched. AMENDMENT 4 closed with the statement that the claim that a
+declared block reaches Step 8 through the in-repo integrations "is at present an
+inference from the shape of those call sites rather than a measurement of them."
+This increment measures it where it can be measured, and records a limitation where
+it cannot.
+
+---
+
+### STEP 0a. Full suite
+
+`pytest -rs`. Summary line, verbatim:
+
+```
+================= 1493 passed, 8 skipped, 14 warnings in 3.13s =================
+```
+
+1493 passed, 0 failed, 8 skipped. Skip list, verbatim, identical to A8, M7 and
+AMENDMENT 4:
+
+```
+SKIPPED [1] tests/test_v15_integration_confirmation.py:113: could not import 'mcp': No module named 'mcp'
+SKIPPED [5] tests/test_v16_crosshop_decision_time.py:479: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:491: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:502: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+```
+
+The stop condition on 0a did not fire.
+
+### STEP 0b. The six `authorize()` call sites in `agentlock/integrations/`
+
+`grep -n "authorize(" agentlock/integrations/*.py` returns six call sites, plus four
+docstring mentions. Each call, verbatim.
+
+`agentlock/integrations/autogen.py:119-124`:
+
+```python
+            auth = gate.authorize(
+                func_name,
+                user_id=user_id,
+                role=role,
+                parameters=kwargs or None,
+            )
+```
+
+`agentlock/integrations/mcp.py:167-172`:
+
+```python
+                    auth = gate.authorize(
+                        name,
+                        user_id=user_id,
+                        role=role,
+                        parameters=arguments or None,
+                    )
+```
+
+`agentlock/integrations/fastapi.py:197-201`:
+
+```python
+        auth = self.gate.authorize(
+            tool_name,
+            user_id=user_id,
+            role=role,
+        )
+```
+
+`agentlock/integrations/fastapi.py:290-294`:
+
+```python
+        auth = gate.authorize(
+            tool_name,
+            user_id=user_id,
+            role=role,
+        )
+```
+
+`agentlock/integrations/flask.py:163-167`:
+
+```python
+            auth = gate.authorize(
+                tool_name,
+                user_id=user_id,
+                role=role,
+            )
+```
+
+`agentlock/integrations/flask.py:271-275`:
+
+```python
+        auth = self.gate.authorize(
+            tool_name,
+            user_id=user_id,
+            role=role,
+        )
+```
+
+| Call site | Passes `parameters`? |
+|---|---|
+| `autogen.py:119` | YES, `parameters=kwargs or None` |
+| `mcp.py:167` | YES, `parameters=arguments or None` |
+| `fastapi.py:197` | NO |
+| `fastapi.py:290` | NO |
+| `flask.py:163` | NO |
+| `flask.py:271` | NO |
+
+As expected: two of six pass `parameters`, four pass only `user_id` and `role`.
+
+This corrects one sentence in AMENDMENT 4, which said of the six that "each of the
+six already forwards the caller's parameter dict to `authorize()`". Two do. Four do
+not. The correction is recorded here rather than by editing that amendment, which is
+append-only. It does not change any increment 2 verdict: no Q prediction concerned
+the adapters, and Q5's file list excluded all four integration files, which were and
+remain untouched. It changes only the reach claim, and R3 below states the corrected
+reach.
+
+### STEP 0c. `tests/test_v15_integration_confirmation.py` `TestMcpServerWrapper`, in full
+
+`tests/test_v15_integration_confirmation.py:109-148`, verbatim:
+
+```python
+class TestMcpServerWrapper:
+    def test_the_mcp_handler_reports_its_execution(self):
+        """The MCP server owns execution: the gate learns the outcome only
+        because the wrapper tells it."""
+        pytest.importorskip("mcp")
+        from agentlock.integrations.mcp import AgentLockMCPServer
+
+        backend = InMemoryAuditBackend()
+        gate = AuthorizationGate(audit_backend=backend)
+
+        class FakeServer:
+            """Stands in for an MCP Server: it only has to hand us the
+            call_tool decorator the wrapper patches."""
+
+            def __init__(self):
+                self.handler = None
+
+            def call_tool(self):
+                def decorator(fn):
+                    self.handler = fn
+                    return fn
+
+                return decorator
+
+        server = FakeServer()
+        AgentLockMCPServer(
+            server, gate, {"read_file": _perms()}, default_role="user"
+        )
+
+        @server.call_tool()
+        async def handler(name: str, arguments: dict) -> str:
+            return f"read {arguments['path']}"
+
+        result = asyncio.run(server.handler("read_file", {"path": "/etc/hosts"}))
+        assert result == "read /etc/hosts"
+
+        attempt, completed = _executions(backend)
+        assert attempt.action == "execution_attempted"
+        assert completed.metadata["status"] == "succeeded"
+        assert completed.metadata["reported_by"] == "caller"
+```
+
+This is the fixture pattern R2 reuses: `pytest.importorskip("mcp")` first, then a
+local `FakeServer` whose only job is to hand back the `call_tool` decorator that
+`AgentLockMCPServer._install_hook` patches, then `asyncio.run` on the captured
+handler.
+
+### STEP 0d. `import mcp`
+
+Verbatim:
+
+```
+$ python -c "import mcp"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import mcp
+ModuleNotFoundError: No module named 'mcp'
+```
+
+`ModuleNotFoundError`, as expected. This is the environment fact behind the first
+line of the A8 skip list.
+
+### STEP 0e. `agentshield` grep
+
+```
+$ grep -ri agentshield agentlock tests schema | wc -l
+0
+```
+
+Zero, as expected, unchanged from `e6631f4` and `a9c38ca`.
+
+### STEP 0f (added at measurement time). `import autogen`, and what CI installs
+
+Not in the frozen 0-series. Measured because R1 as first drafted assumed
+`protect_functions` had no hard dependency on the `autogen` package, and it does.
+
+```
+$ python -c "import autogen"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import autogen
+ModuleNotFoundError: No module named 'autogen'
+```
+
+`agentlock/integrations/autogen.py:39-47`, verbatim, is why this matters:
+
+```python
+def _check_autogen_available() -> None:
+    """Verify that AutoGen is importable."""
+    try:
+        import autogen  # noqa: F401
+    except ImportError as exc:
+        raise ImportError(
+            "AutoGen is required for this integration. "
+            "Install it with: pip install pyautogen"
+        ) from exc
+```
+
+It is called unconditionally at `AgentLockFunctionMap.__init__`
+(`agentlock/integrations/autogen.py:79`), which `protect_functions` constructs at
+`agentlock/integrations/autogen.py:200`. Without `pyautogen` installed,
+`protect_functions` raises `ImportError` before any gate call happens. R1 as first
+written could not pass in this environment, and R4 as first written, which counted
+the new autogen tests as passed and predicted nine skips, was unsatisfiable with it.
+
+`grep -rn "autogen" tests/` returns zero hits: **there is no autogen integration
+test in `tests/` at all before this increment.** The path has never been exercised
+by the suite.
+
+R1 and R4 are restated below before the build, on the same footing as AMENDMENT 1
+and AMENDMENT 3. R1 is guarded by `pytest.importorskip("autogen")`, the same idiom
+as the `mcp` guard measured at 0c. R4's arithmetic follows from that guard.
+
+**What CI installs.** `.github/workflows/ci.yml:27-30`, verbatim:
+
+```yaml
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+```
+
+The test step, `.github/workflows/ci.yml:39-40`, verbatim:
+
+```yaml
+      - name: Run tests
+        run: pytest --cov=agentlock --cov-report=xml -v
+```
+
+`dev` is defined at `pyproject.toml:63-69`, verbatim:
+
+```toml
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "pytest-asyncio>=0.23",
+    "mypy>=1.10",
+    "ruff>=0.4",
+]
+```
+
+It contains neither `pyautogen` nor `mcp`. Those live in separate extras
+(`pyproject.toml:50-51`: `autogen = ["pyautogen>=0.2"]`, `mcp = ["mcp>=1.0"]`) and in
+the `all` extra (`pyproject.toml:55-62`), and CI installs none of them.
+
+**Therefore: CI does NOT install the autogen or all extras before pytest.** The R1
+and R2 tests do not execute for real in CI on push, and they do not execute locally
+in this venv. They are not exercised anywhere in the automated path. **This is an
+open item for the release, recorded here as such.** The nearest existing precedent
+is the v1.7.0 release note at `CHANGELOG.md:56`, which reports its suite figure "with
+the `crypto` and `mcp` extras installed (`pip install -e ".[crypto,mcp]"`)", a manual
+step outside CI that covers `mcp` but not `autogen`. Closing this open item means
+either adding the extras to the CI install line or running the suite once under
+`pip install -e ".[all]"` before the release and recording that figure. Neither is
+done in increment 3a, which touches no CI file.
+
+---
+
+### Predictions for increment 3a
+
+R1 and R4 are the restated forms. R1 as first drafted, and R4 as first drafted, are
+retained in the two blockquotes below rather than deleted, in keeping with the
+append-only discipline used for D7.
+
+#### R1 (as first drafted, SUPERSEDED at 0f, 2026-09-09)
+
+> ~~autogen. `protect_functions` over a `send_email` callable that increments a
+> counter and returns "sent". Tool registered at version "1.5",
+> `allowed_recipients=KNOWN_CONTACTS_ONLY`, `recipient_parameter="to"`. Session for
+> alice with `known_contacts=["bob@company.com"]`. `guarded(to="bob@company.com",
+> body="hi", _agentlock_user_id="alice", _agentlock_role="user")` returns "sent" and
+> the counter is 1. `guarded(to="attacker@evil.com", ...)` raises `DeniedError` whose
+> reason is `"recipient_not_allowed"` and the counter is still 1.
+> `guarded(to=["bob@company.com", "attacker@evil.com"], ...)` raises the same and the
+> counter is still 1. A second tool registered with `allowed_recipients=ANY` and the
+> same `recipient_parameter` executes for the attacker address (counter increments),
+> proving the gate and not the wrapper decided.~~
+
+Superseded only as to the guard. Every case above is unchanged.
+
+#### R1 (restated, 2026-09-09). autogen, guarded by `importorskip`
+
+The autogen tests are guarded by `pytest.importorskip("autogen")` at the head of
+their test class, the same idiom as the `mcp` guard at
+`tests/test_v15_integration_confirmation.py:113`, because
+`agentlock/integrations/autogen.py:79` raises `ImportError` without `pyautogen`
+installed. No stub module is installed for `autogen`, and `sys.modules` is not
+written to: a stub would make the tests report as passed while measuring a wrapper
+whose own import guard had been defeated, and this document does not manufacture a
+green line for a path the environment cannot run.
+
+The cases, unchanged from the first draft:
+
+`protect_functions` over a `send_email` callable that increments a counter and
+returns `"sent"`. Tool registered at version `"1.5"`,
+`allowed_recipients=KNOWN_CONTACTS_ONLY`, `recipient_parameter="to"`. Session for
+alice with `known_contacts=["bob@company.com"]`.
+
+| Case | Expected |
+|---|---|
+| `guarded(to="bob@company.com", body="hi", _agentlock_user_id="alice", _agentlock_role="user")` | returns `"sent"`, counter is 1 |
+| `guarded(to="attacker@evil.com", ...)` | raises `DeniedError`, `.reason == "recipient_not_allowed"`, counter still 1 |
+| `guarded(to=["bob@company.com", "attacker@evil.com"], ...)` | raises `DeniedError`, `.reason == "recipient_not_allowed"`, counter still 1 |
+| a second tool at `allowed_recipients=ANY`, same `recipient_parameter`, called with the attacker address | executes, its counter increments |
+
+The last row is the control. It proves the gate and not the wrapper decided: the same
+wrapper, the same declared key, the same hostile address, differing only in the
+permission block, and the outcome differs.
+
+In this environment every R1 test SKIPS. The prediction is written so that it is
+checkable wherever `pyautogen` is installed, and so that the local result is a
+recorded skip rather than a fabricated pass.
+
+#### R2. mcp
+
+Guarded by `pytest.importorskip("mcp")` exactly as the v15 test at 0c. Same
+`FakeServer` fixture. `AgentLockMCPServer` with a `perm_map` registering `send_email`
+at version `"1.5"`, `allowed_recipients=KNOWN_CONTACTS_ONLY`,
+`recipient_parameter="to"`. Session for alice with
+`known_contacts=["bob@company.com"]`.
+
+| Case | Expected |
+|---|---|
+| handler call with `{"to": "attacker@evil.com", "body": "x", "_agentlock_user_id": "alice", "_agentlock_role": "user"}` | raises `DeniedError`, `.reason == "recipient_not_allowed"`, the underlying tool never runs |
+| the same call with `"to": "bob@company.com"` | runs the tool |
+| the `arguments` dict the tool receives | does NOT contain `_agentlock_user_id` or `_agentlock_role`, and DOES contain `"to"` |
+
+The third row is the point of the test, not a detail of it: it establishes that the
+`parameters` the gate read at `mcp.py:171` were the tool's own arguments, the same
+object the tool goes on to receive, and not some separate auth-carrying envelope.
+
+In this environment every R2 test SKIPS, for the reason measured at 0d.
+
+#### R3. fastapi and flask: no test, a stated limitation
+
+No test is written for either. The four call sites measured at 0b
+(`fastapi.py:197`, `fastapi.py:290`, `flask.py:163`, `flask.py:271`) pass only
+`tool_name`, `user_id` and `role` to `authorize()`. They pass no `parameters` at all.
+Therefore `recipient_parameter`, and with it every parameter-level check in the gate,
+is unreachable through those two integrations: the gate's D18 extraction reads a key
+out of a `parameters` dict that is `None` on every one of those four paths.
+
+This is pre-existing. It is not introduced by v1.8.0 and it is not fixed here. It is
+recorded as a limitation of the release.
+
+The scope of the limitation is wider than recipients, and the CHANGELOG line says so:
+the same four call sites also carry no parameters for the injection filter at Step 6,
+for parameter lineage, or for novel lineage. Those two integrations authorize on the
+tool name and the caller identity taken from request headers, and on nothing else.
+
+#### R4 (as first drafted, SUPERSEDED at 0f, 2026-09-09)
+
+> ~~Suite: 1493 plus the number of new autogen tests passed, 0 failed, 9 skipped. The
+> ninth skip is the new file's `importorskip("mcp")` line, and the other eight are
+> the A8 list unchanged. No existing test edited.~~
+
+#### R4 (restated, 2026-09-09). Suite arithmetic
+
+The full suite reports **1493 passed, 0 failed, 10 skipped**. The ninth and tenth
+skips are the new file's two `importorskip` lines, one for `autogen` and one for
+`mcp`. The eight in the A8 list are unchanged, line for line. No existing test is
+edited: `git diff --stat -- tests/` is empty and the only new path under `tests/` is
+the one new file.
+
+The passed count does not move, because every test in the new file skips in this
+environment. That is the honest arithmetic and it is stated as a prediction, not
+discovered afterwards.
+
+#### R5. Files touched
+
+`tests/test_v18_recipient_integrations.py` (new) and `CHANGELOG.md`, which gains a
+"Limitations" line under the 1.8.0 section stating R3 in one or two sentences, naming
+both `fastapi` and `flask` and saying that they authorize on tool name and identity
+from request headers only. Nothing under `agentlock/`. Nothing under `schema/`.
+`git diff --stat` and `git status --short` name no other path.
+
+#### R6. Lint and hygiene
+
+`ruff check agentlock/ tests/`, the exact command CI runs
+(`.github/workflows/ci.yml:32-33`), returns `All checks passed!` with exit 0.
+`grep -ri agentshield agentlock tests schema` returns 0 hits.
+
+---
+
+## AMENDMENT 5 (2026-09-09): increment 3a built and matched
+
+Build commit: `1755d02 test: end-to-end recipient enforcement through the autogen and mcp integrations`.
+
+Measured on `v1.8-recipient-enforcement`. R1 and R4 are scored against their
+restated wording, recorded at STEP 0f in the freeze at
+`68e45c0 docs: freeze increment 3a, integration end-to-end predictions`, before any
+increment 3a test code was written. No engine code was added, and nothing under
+`agentlock/` or `schema/` was touched.
+
+### R1 to R6
+
+| R | Verdict | Evidence |
+|---|---|---|
+| R1 | MATCH | `TestAutogenFunctionMap` is guarded by `pytest.importorskip("autogen")` at `tests/test_v18_recipient_integrations.py:70`, and reports `SKIPPED [1] ... could not import 'autogen'`, which is what restated R1 predicts for this environment. All four cases are present, including the `RecipientPolicy.ANY` control. No stub module is installed and `sys.modules` is not written to by the test. |
+| R2 | MATCH | `TestMcpServerWrapper` is guarded by `pytest.importorskip("mcp")` at `tests/test_v18_recipient_integrations.py:121`, uses the 0c `FakeServer` fixture unchanged, and reports `SKIPPED [1] ... could not import 'mcp'`. All three rows are present, including the assertion that the arguments dict the tool receives carries `"to"` and neither `_agentlock_` key. |
+| R3 | MATCH | No test exists for either integration. `grep -n "fastapi\|flask" tests/test_v18_recipient_integrations.py` returns only the module docstring lines naming the four unreachable call sites. The limitation is recorded in `CHANGELOG.md` under the 1.8.0 `### Limitations` heading. |
+| R4 | MATCH | `1493 passed, 10 skipped, 14 warnings in 3.13s`, 0 failed. The passed count is unchanged from `a9c38ca`, as restated R4 predicts. The ninth and tenth skips are the new file's two `importorskip` lines; the A8 eight are unchanged line for line. `git diff --stat -- tests/` is empty: no existing test was edited. |
+| R5 | MATCH | `git status --short` names exactly `M CHANGELOG.md` and `?? tests/test_v18_recipient_integrations.py`. `git diff --stat` is one file, one insertion. Zero paths under `agentlock/` and zero under `schema/`. |
+| R6 | MATCH | `ruff check agentlock/ tests/` returns `All checks passed!` with exit 0. `grep -ri agentshield agentlock tests schema` returns 0 hits. |
+
+### Exact suite summary line
+
+```
+================ 1493 passed, 10 skipped, 14 warnings in 3.13s =================
+```
+
+Full skip list, verbatim. The first four lines are the A8 eight, unchanged:
+
+```
+SKIPPED [1] tests/test_v15_integration_confirmation.py:113: could not import 'mcp': No module named 'mcp'
+SKIPPED [5] tests/test_v16_crosshop_decision_time.py:479: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:491: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:502: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v18_recipient_integrations.py:70: could not import 'autogen': No module named 'autogen'
+SKIPPED [1] tests/test_v18_recipient_integrations.py:121: could not import 'mcp': No module named 'mcp'
+```
+
+### The new file, run alone, verbatim
+
+```
+$ python -m pytest tests/test_v18_recipient_integrations.py -rs
+collected 2 items
+
+tests/test_v18_recipient_integrations.py::TestAutogenFunctionMap::test_recipient_enforcement_through_the_function_map SKIPPED [ 50%]
+tests/test_v18_recipient_integrations.py::TestMcpServerWrapper::test_recipient_enforcement_through_the_call_tool_handler SKIPPED [100%]
+
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_v18_recipient_integrations.py:70: could not import 'autogen': No module named 'autogen'
+SKIPPED [1] tests/test_v18_recipient_integrations.py:121: could not import 'mcp': No module named 'mcp'
+============================== 2 skipped in 0.01s ==============================
+```
+
+### R5, verbatim
+
+```
+$ git diff --stat
+ CHANGELOG.md | 1 +
+ 1 file changed, 1 insertion(+)
+$ git status --short
+ M CHANGELOG.md
+?? tests/test_v18_recipient_integrations.py
+```
+
+### R6, verbatim
+
+```
+$ ruff check agentlock/ tests/
+All checks passed!
+$ echo $?
+0
+$ grep -ri agentshield agentlock tests schema | wc -l
+0
+```
+
+### What the suite proves here, and what it does not
+
+Every R is a MATCH, and the reader should not take more from that than it holds.
+What the suite measured is the guards and the arithmetic. Both test bodies skipped,
+so the suite did not execute a single assertion in the R1 or R2 tables. A green
+suite line is compatible with those two tests being syntactically valid and
+semantically wrong, and that is the honest reading of the ten-skip result.
+
+They are not wrong, and the check that establishes it is recorded here as a
+diagnostic rather than as R1 or R2 evidence, because it was run outside the suite
+and outside the repository. Both test bodies were copied to the session scratchpad
+and run once against a `conftest.py` that placed empty `autogen`, `mcp`,
+`mcp.server` and `mcp.types` modules into `sys.modules`. Result, verbatim:
+
+```
+diag_test_integrations.py::TestAutogenFunctionMap::test_recipient_enforcement_through_the_function_map PASSED [ 50%]
+diag_test_integrations.py::TestMcpServerWrapper::test_recipient_enforcement_through_the_call_tool_handler PASSED [100%]
+
+============================== 2 passed in 0.10s ===============================
+```
+
+The stub defeats exactly one thing in each integration: the import guard at
+`agentlock/integrations/autogen.py:42` and the one at
+`agentlock/integrations/mcp.py:42`. Neither integration uses the imported package
+for anything else on the authorization path, and `_import_mcp_types`
+(`agentlock/integrations/mcp.py:51`) has zero call sites in the file. Everything
+after the guard is real AgentLock code, so the two `recipient_not_allowed` denials
+observed in that run came from pipeline Step 8 through the real gate, reached
+through the real `autogen.py:119` and `mcp.py:167` call sites, with the recipient
+read out of the parameters those call sites forward.
+
+That is the substantive result of increment 3a: the reach claim AMENDMENT 4 left as
+an inference is now an observation for both integrations that can carry it. It is
+recorded at the strength of the evidence, which is a diagnostic run under stubbed
+imports, not a suite pass. Neither this nor the suite proves anything about
+compatibility with the real `pyautogen` or `mcp` packages.
+
+The stub lives only in the scratchpad. Nothing in the committed test file writes to
+`sys.modules`, and `git status --short` at R5 shows no scratchpad path in the tree.
+
+### The 0b correction, restated for the record
+
+STEP 0b measured that two of the six in-repo `authorize()` call sites forward the
+caller's parameter dict and four do not. AMENDMENT 4 had written that "each of the
+six already forwards the caller's parameter dict to `authorize()`". Four do not:
+`fastapi.py:197`, `fastapi.py:290`, `flask.py:163` and `flask.py:271` pass only the
+tool name, `user_id` and `role`. AMENDMENT 4 is append-only and is not edited; the
+correction stands here and in the freeze at STEP 0b, and R3 is the corrected reach
+claim. No increment 2 verdict depends on it: no Q prediction concerned the
+adapters, and all four files were and remain untouched.
+
+### Open item carried forward from STEP 0f
+
+Neither the R1 nor the R2 test is exercised anywhere in the automated path.
+`.github/workflows/ci.yml:30` installs `pip install -e ".[dev]"`, and `dev`
+(`pyproject.toml:63-69`) contains neither `pyautogen` nor `mcp`, so these two tests
+skip in CI on every push exactly as they skip locally. Closing the item means
+either adding the extras to the CI install line or running the suite once under
+`pip install -e ".[all]"` before the release and recording that figure alongside the
+default one. Increment 3a touches no CI file and does not close it.
+
+---
+
+## INCREMENT 3b FREEZE (2026-09-09): full-extras verification run
+
+Written on `v1.8-recipient-enforcement` at `63f3e9d docs: AMENDMENT 5, increment 3a
+built and matched`, working tree clean, before anything in this increment is run.
+This section appends to this document and edits nothing above it.
+
+Increment 3b adds no code of any kind. Nothing under `agentlock/`, nothing under
+`schema/`, nothing under `tests/`, and no CI file is touched. The only repository
+change in the whole increment is this section and the amendment that scores it.
+
+The purpose is to close, or to measure the exact shape of, the open item carried
+forward twice: at STEP 0f of the increment 3a freeze and again at the end of
+AMENDMENT 5. The R1 and R2 tests written in increment 3a have never executed a
+single assertion. They skip locally and they skip in CI. AMENDMENT 5 recorded that
+their bodies are correct on the strength of a scratchpad diagnostic run under
+stubbed `sys.modules` entries, and stated plainly that such a run "proves nothing
+about compatibility with the real `pyautogen` or `mcp` packages". This increment
+installs the real packages in a throwaway virtual environment and runs the suite
+there.
+
+The environment constraint is absolute and is recorded as part of the prediction:
+the virtual environment lives at `/tmp/al18-extras`, this checkout's own
+environment is not modified, and no global site-packages directory is written to.
+
+---
+
+### Predictions for increment 3b
+
+#### S1. The venv and the install
+
+A virtual environment created at `/tmp/al18-extras` with `python -m venv`, followed
+by `pip install -e "$REPO[dev,all]"` from this checkout, succeeds.
+
+If `pyautogen` fails to install, the error is recorded verbatim and the install is
+retried with `[dev,mcp,fastapi,flask,crypto]`. In that case the autogen test remains
+unexecuted, and that is recorded as the finding rather than worked around. No stub
+module is installed under any circumstance, in keeping with the discipline stated at
+restated R1.
+
+#### S2. The resolved `mcp` version
+
+In that venv, `pip show mcp` reports the resolved version.
+
+Prediction: **2.x**, because the `mcp` extra is unpinned at `pyproject.toml:51`
+(`mcp = ["mcp>=1.0"]`) and `mcp` 2.0.0 exists. The version is recorded whatever it
+turns out to be.
+
+#### S3. The MCP integration imports under the resolved version
+
+`python -c "from agentlock.integrations.mcp import AgentLockMCPServer"` in that venv
+succeeds.
+
+Reasoning, stated so it can be scored rather than assumed:
+`agentlock/integrations/mcp.py` imports only `mcp.server` (at `_import_mcp`,
+`mcp.py:39`) and `mcp.types` (at `_import_mcp_types`, `mcp.py:51`, which has zero
+call sites in the file). It does not import `mcp.server.lowlevel.server.request_ctx`
+or any other symbol implicated in the mcp-agentlock 2.0 breakage, so that breakage is
+predicted not to apply here. This is a measurement, not an assumption: if the import
+fails, the traceback is recorded verbatim and S3 is a MISMATCH.
+
+#### S4. The full suite in that venv
+
+`pytest -rs` in the venv reports **1493 passed plus every previously skipped
+extras-guarded test that now runs, 0 failed**.
+
+The extras-guarded tests are exactly three:
+
+| Test | Guard | Extra that unblocks it |
+|---|---|---|
+| `tests/test_v15_integration_confirmation.py::TestMcpServerWrapper::test_the_mcp_handler_reports_its_execution` | `importorskip("mcp")` at line 113 | `mcp` |
+| `tests/test_v18_recipient_integrations.py::TestAutogenFunctionMap::test_recipient_enforcement_through_the_function_map` | `importorskip("autogen")` at line 70 | `autogen` |
+| `tests/test_v18_recipient_integrations.py::TestMcpServerWrapper::test_recipient_enforcement_through_the_call_tool_handler` | `importorskip("mcp")` at line 121 | `mcp` |
+
+So the arithmetic is: **1496 passed, 7 skipped** if `pyautogen` installs, and **1495
+passed, 8 skipped** if it does not. Nothing else in the suite is guarded on an
+optional package.
+
+The remaining skips are **only** the seven `tests/test_v16_crosshop_decision_time.py`
+pre-increment-3 baselines (5 at line 479, 1 at line 491, 1 at line 502). Those are
+engine-state skips, not environment skips: they turn on
+`_reachable_untrusted_entries` being present in `context.py`, and no virtual
+environment can change that. The `mcp` skip at
+`test_v15_integration_confirmation.py:113`, present in every prior measurement in
+this document from A8 onward, is predicted to be **absent** for the first time.
+
+The summary line and the full `pytest -rs` short summary are recorded verbatim.
+
+**Any failure is a STOP and a finding.** If S4 shows a failure, the full traceback is
+reported and nothing further is committed.
+
+#### S5. R1 and R2 pass for real
+
+In that venv the R1 and R2 case tables from the increment 3a freeze pass against the
+real packages, not against stubs. Specifically: the autogen denial and the mcp denial
+both come from pipeline Step 8 with reason `recipient_not_allowed`, and each
+underlying tool runs only for the contact address, never for the attacker address.
+
+If `pyautogen` does not install, the R2 half of this stands alone and the R1 half is
+recorded as still unexecuted.
+
+This is the prediction that carries the substance of the increment. S4 measures
+arithmetic; S5 is what AMENDMENT 5 said the suite had not established.
+
+#### S6. Lint and hygiene, unchanged
+
+`ruff check agentlock/ tests/` returns `All checks passed!` with exit 0, and
+`grep -ri agentshield agentlock tests schema` returns 0 hits. Both are run from the
+checkout, and both are unchanged from R6, because no repository file outside this
+document changes in this increment.
+
+---
+
+### What increment 3b can and cannot close
+
+It can close the question of whether the two integration tests pass against the real
+packages, which is the open item. It cannot by itself close the CI half of that item,
+because it touches no CI file: a green run in a throwaway venv is evidence for a
+release note, not a change to what runs on push. AMENDMENT 6 records the measured
+decision input for that choice, and the choice itself is David's.
+
+---
+
+## AMENDMENT 6 (2026-09-09): increment 3b measured
+
+Measured on `v1.8-recipient-enforcement` at `a7513bf docs: freeze increment 3b,
+full-extras verification`, working tree clean before and after. No file in the
+repository was modified by this increment other than this document. No CI file was
+touched. Nothing under `agentlock/`, `schema/` or `tests/` was touched.
+
+The virtual environment is `/tmp/al18-extras`, built on the host interpreter, CPython
+3.14.6 at `/usr/bin/python`. This checkout's environment and every global
+site-packages directory were left alone.
+
+### S1 to S6
+
+| S | Verdict | One line |
+|---|---|---|
+| S1 | MATCH | The venv built and `pip install -e "${REPO}[dev,all]"` exited 0 in 14 s. `pyautogen` installed, so the reduced-extras contingency did not fire. |
+| S2 | MATCH | `mcp` resolved to `2.2.0`, which is the predicted 2.x. |
+| S3 | MATCH | `from agentlock.integrations.mcp import AgentLockMCPServer` succeeded under mcp 2.2.0. The mcp 2.0 breakage does not apply, as reasoned. |
+| S4 | **MISMATCH** | `1495 passed, 8 skipped, 0 failed`. Predicted 1496 passed and 7 skipped for the branch in which `pyautogen` installs. `pyautogen` installed and the autogen test skipped anyway. |
+| S5 | **MISMATCH** (R2 half MATCH, R1 half unexecuted) | The mcp denial came from Step 8 with reason `recipient_not_allowed` under the real package, and the tool ran only for the contact address. The autogen half did not execute at all. |
+| S6 | MATCH | `ruff check agentlock/ tests/` returns `All checks passed!` with exit 0. `grep -ri agentshield agentlock tests schema` returns 0. |
+
+Two of six missed. Both misses have the same root cause, recorded in full below: the
+prediction treated "the `pyautogen` distribution installed" and "the `autogen` module
+is importable" as the same fact. They are not the same fact, and on this index they
+are no longer even correlated.
+
+---
+
+### S1, verbatim
+
+> A virtual environment created at `/tmp/al18-extras` with `python -m venv`, followed
+> by `pip install -e "$REPO[dev,all]"` from this checkout, succeeds.
+
+**MATCH.** Exit 0, wall clock 14 s.
+
+```
+$ /usr/bin/python -m venv /tmp/al18-extras
+$ /tmp/al18-extras/bin/pip install -e "${REPO}[dev,all]"
+...
+Successfully built agentlock
+Successfully installed agentlock-1.7.0 annotated-doc-0.0.5 annotated-types-0.8.0
+anyio-4.15.1 ast-serialize-0.11.1 attrs-26.1.0 autogen-agentchat-0.7.5
+autogen-core-0.7.5 blinker-1.9.0 cffi-2.1.1 click-8.5.0 coverage-7.16.0
+cryptography-50.0.1 ecdsa-0.19.2 fastapi-0.141.1 flask-3.1.3 h11-0.16.0
+httpcore2-2.12.0 httpx2-2.12.0 idna-3.19 iniconfig-2.3.0 itsdangerous-2.2.0
+jinja2-3.1.6 jsonref-1.1.0 jsonschema-4.26.0 jsonschema-specifications-2025.9.1
+librt-0.15.0 markupsafe-3.0.3 mcp-2.2.0 mcp-types-2.2.0 mypy-2.3.1
+mypy_extensions-1.1.0 opentelemetry-api-1.44.0 packaging-26.3 pathspec-1.1.1
+pillow-12.3.0 pluggy-1.6.0 protobuf-5.29.6 pyasn1-0.6.4 pyautogen-0.10.0
+pycparser-3.0 pydantic-2.13.5 pydantic-core-2.46.5 pygments-2.21.0 pyjwt-2.13.0
+pynacl-1.6.2 pytest-9.1.1 pytest-asyncio-1.4.0 pytest-cov-7.1.0 python-jose-3.5.0
+python-multipart-0.0.32 referencing-0.37.0 rpds-py-2026.6.3 rsa-4.9.1 ruff-0.16.6
+six-1.17.0 sse-starlette-3.4.11 starlette-1.6.0 truststore-0.10.4
+typing-extensions-4.16.0 typing-inspection-0.4.4 uvicorn-0.52.4 werkzeug-3.1.8
+```
+
+63 distributions, `agentlock` itself included. `pyautogen` installed, at 0.10.0, so
+the contingency written into S1 ("if `pyautogen` fails to install") did not fire.
+What the contingency was guarding against happened anyway by another route. See the
+autogen finding below.
+
+**One deviation from the command as frozen, recorded.** The shell here is zsh, in
+which `$REPO[dev,all]` is array subscript syntax, not a variable followed by a
+literal bracket. The frozen form failed:
+
+```
+$ /tmp/al18-extras/bin/pip install -e "$REPO[dev,all]"
+ERROR:  is not a valid editable requirement. It should either be a path to a local project or a VCS URL (beginning with bzr+http, ...).
+```
+
+The variable expanded to the empty string. The command actually run, and the one
+every figure in this amendment comes from, braces the variable:
+`pip install -e "${REPO}[dev,all]"`. Same requirement, same resolution. Recorded
+because the freeze wrote one string and the measurement ran another.
+
+### S2, verbatim
+
+> Prediction: **2.x**, because the `mcp` extra is unpinned at `pyproject.toml:51`
+> (`mcp = ["mcp>=1.0"]`) and `mcp` 2.0.0 exists. The version is recorded whatever it
+> turns out to be.
+
+**MATCH.**
+
+```
+$ /tmp/al18-extras/bin/pip show mcp
+Name: mcp
+Version: 2.2.0
+Summary: Model Context Protocol SDK
+Home-page: https://modelcontextprotocol.io
+License: MIT
+Location: /tmp/al18-extras/lib/python3.14/site-packages
+```
+
+`mcp 2.2.0`, not 1.x. The unpinned `mcp>=1.0` in `pyproject.toml:51` resolves across
+a major version boundary, which is the fact the prediction was testing for.
+
+### S3, verbatim
+
+> `python -c "from agentlock.integrations.mcp import AgentLockMCPServer"` in that venv
+> succeeds.
+
+**MATCH.**
+
+```
+$ /tmp/al18-extras/bin/python -c "from agentlock.integrations.mcp import AgentLockMCPServer; print('OK', AgentLockMCPServer)"
+OK <class 'agentlock.integrations.mcp.AgentLockMCPServer'>
+```
+
+Exit 0. The reasoning given in the freeze holds under measurement: the integration
+touches only `mcp.server` and `mcp.types`, and neither moved in mcp 2.x in a way this
+file can see.
+
+### S4, verbatim
+
+> `pytest -rs` in the venv reports **1493 passed plus every previously skipped
+> extras-guarded test that now runs, 0 failed** ... So the arithmetic is: **1496
+> passed, 7 skipped** if `pyautogen` installs, and **1495 passed, 8 skipped** if it
+> does not ... The remaining skips are **only** the seven
+> `tests/test_v16_crosshop_decision_time.py` pre-increment-3 baselines.
+
+**MISMATCH.** Measured, verbatim:
+
+```
+================= 1495 passed, 8 skipped, 14 warnings in 3.34s =================
+```
+
+Zero failed, so the stop condition did not fire. The full `pytest -rs` short summary,
+verbatim:
+
+```
+SKIPPED [5] tests/test_v16_crosshop_decision_time.py:479: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:491: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:502: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v18_recipient_integrations.py:70: could not import 'autogen': No module named 'autogen'
+```
+
+Two of the three extras-guarded tests now run: the v15 mcp test at
+`test_v15_integration_confirmation.py:113` and the 3a mcp test at
+`test_v18_recipient_integrations.py:121`. Both of their skip lines are gone, the v15
+one for the first time since A8. The third, the 3a autogen test at
+`test_v18_recipient_integrations.py:70`, still skips.
+
+The count 1495 is the number the freeze attached to the wrong branch. It predicted
+1495 only for the case where `pyautogen` fails to install. `pyautogen` installed
+cleanly and the number came out 1495 regardless, so a reader checking the headline
+alone would call this a MATCH. It is not one. The prediction's stated mechanism is
+wrong, and this document scores mechanisms, not coincidences of arithmetic.
+
+The other half of the miss is the skip list: eight skips, not the predicted seven. The
+seven crosshop engine-state baselines are unchanged line for line, and the eighth is
+the autogen guard, which the freeze predicted would be absent.
+
+### S5, verbatim
+
+> In that venv the R1 and R2 case tables from the increment 3a freeze pass against the
+> real packages, not against stubs. Specifically: the autogen denial and the mcp
+> denial both come from pipeline Step 8 with reason `recipient_not_allowed`, and each
+> underlying tool runs only for the contact address, never for the attacker address.
+
+**MISMATCH as written. The R2 half is a MATCH and is the substantive result of the
+increment. The R1 half did not execute.**
+
+R2, run in the venv:
+
+```
+$ /tmp/al18-extras/bin/python -m pytest tests/test_v18_recipient_integrations.py tests/test_v15_integration_confirmation.py -v -rs
+tests/test_v18_recipient_integrations.py::TestAutogenFunctionMap::test_recipient_enforcement_through_the_function_map SKIPPED [ 16%]
+tests/test_v18_recipient_integrations.py::TestMcpServerWrapper::test_recipient_enforcement_through_the_call_tool_handler PASSED [ 33%]
+tests/test_v15_integration_confirmation.py::TestAsyncDecorator::test_a_successful_async_tool_is_confirmed PASSED [ 50%]
+tests/test_v15_integration_confirmation.py::TestAsyncDecorator::test_a_failing_async_tool_is_recorded_as_failed_and_still_raises PASSED [ 66%]
+tests/test_v15_integration_confirmation.py::TestAsyncDecorator::test_a_denied_async_call_confirms_nothing PASSED [ 83%]
+tests/test_v15_integration_confirmation.py::TestMcpServerWrapper::test_the_mcp_handler_reports_its_execution PASSED [100%]
+=================== 5 passed, 1 skipped, 3 warnings in 0.30s ===================
+```
+
+All three rows of the R2 table are asserted inside that one test and all three now
+hold against mcp 2.2.0 rather than against a stubbed `sys.modules` entry: the hostile
+address denies with `recipient_not_allowed` and `seen == []`, the contact address
+returns `"sent"`, and the arguments dict the tool receives carries `"to"` and neither
+`_agentlock_` key.
+
+The Step 8 clause was checked directly rather than inferred from the reason string. A
+scratchpad diagnostic wrapped `PolicyEngine._evaluate_recipient`, the function called
+from the numbered `# 8. Recipient policy` block at `agentlock/policy.py:628`, and drove
+the real `AgentLockMCPServer` under the real package. Verbatim:
+
+```
+mcp version: /tmp/al18-extras/lib/python3.14/site-packages/mcp/__init__.py
+DENIED reason: recipient_not_allowed
+DENIED detail: Recipient is not in the session's known contacts; rejected under recipient policy 'known_contacts_only'.
+tool executions after hostile call: 0
+ok: sent | executions now: 1
+arguments the tool received: {'to': 'bob@company.com', 'body': 'x'}
+step 8 hook fired: [('_evaluate_recipient', ('attacker@evil.com',), <DenialReason.RECIPIENT_NOT_ALLOWED: 'recipient_not_allowed'>), ('_evaluate_recipient', ('bob@company.com',), None)]
+```
+
+The recipient reached Step 8 as the tuple `('attacker@evil.com',)`, extracted from the
+`arguments` dict that `mcp.py:171` forwards, and Step 8 returned the denial. For the
+contact address the same block returned `None` and the tool ran. That is the reach
+claim AMENDMENT 4 left as an inference and AMENDMENT 5 could only support with a
+stubbed diagnostic, now measured through the real MCP SDK.
+
+R1 is unexecuted. The freeze's own fallback sentence, written for a different
+condition, is the one that applies: "the R2 half of this stands alone and the R1 half
+is recorded as still unexecuted." **No assertion in the R1 table has ever run against
+the real `pyautogen` package, and this increment did not change that.**
+
+### S6, verbatim
+
+> `ruff check agentlock/ tests/` returns `All checks passed!` with exit 0, and
+> `grep -ri agentshield agentlock tests schema` returns 0 hits.
+
+**MATCH.**
+
+```
+$ ruff check agentlock/ tests/          # checkout ruff, 0.15.6
+All checks passed!
+$ echo $?
+0
+$ /tmp/al18-extras/bin/ruff check agentlock/ tests/   # venv ruff, 0.16.6
+All checks passed!
+$ echo $?
+0
+$ grep -ri agentshield agentlock tests schema | wc -l
+0
+$ git status --short
+```
+
+Run under both ruff versions because the venv install brought a newer one than the
+checkout has. Both pass. `git status --short` is empty: the editable install wrote no
+artifact into the working tree.
+
+---
+
+### The autogen finding
+
+This is the finding of increment 3b, and it is larger than the missed prediction.
+
+`pyautogen` installed. `import autogen` still fails:
+
+```
+$ /tmp/al18-extras/bin/python -c "import autogen"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import autogen
+ModuleNotFoundError: No module named 'autogen'
+```
+
+Why, from `pip show pyautogen` and `pip show -f pyautogen`:
+
+```
+Name: pyautogen
+Version: 0.10.0
+Summary: A programming framework for agentic AI. Proxy package for autogen-agentchat.
+Requires: autogen-agentchat
+Files:
+  pyautogen-0.10.0.dist-info/INSTALLER
+  pyautogen-0.10.0.dist-info/METADATA
+  pyautogen-0.10.0.dist-info/RECORD
+  pyautogen-0.10.0.dist-info/WHEEL
+  pyautogen-0.10.0.dist-info/licenses/LICENSE-CODE
+  pyautogen/__init__.py
+  pyautogen/__pycache__/__init__.cpython-314.pyc
+```
+
+`pyautogen` 0.10.0 is a proxy distribution. It ships one file, `pyautogen/__init__.py`,
+and depends on `autogen-agentchat`, which installs `autogen_agentchat` and
+`autogen_core`. It provides no top-level `autogen` module at all. The import guard at
+`agentlock/integrations/autogen.py:42` asks for `autogen`, so the guard fails and
+`protect_functions` raises `ImportError` exactly as it does with nothing installed.
+
+The extra as declared cannot resolve to anything else. `pyproject.toml:50` says
+`autogen = ["pyautogen>=0.2"]`, and the index today offers, for that name:
+
+```
+$ pip index versions pyautogen
+pyautogen (0.10.0)
+Available versions: 0.10.0, 0.1.14, 0.1.13, ..., 0.1.0, 0.0.1
+```
+
+The entire 0.2 through 0.9 line, which is the line that shipped a real `autogen`
+package, is not installable here. Asking for one says why:
+
+```
+$ pip install --dry-run "pyautogen==0.2.35"
+ERROR: Ignored the following versions that require a different python version: ... 0.2.35 Requires-Python >=3.8,<3.13; ... 0.9.0 Requires-Python >=3.9,<3.14 ...
+ERROR: Could not find a version that satisfies the requirement pyautogen==0.2.35 (from versions: 0.0.1, 0.1.0, 0.1.1rc1, 0.1.1, ..., 0.1.14, 0.2.0b1, 0.2.0b2, 0.10.0)
+```
+
+Every release from 0.2.0 to 0.9.x carries an upper bound on Requires-Python, the
+highest of them `<3.14`, so on this 3.14 host pip excludes all of them and takes
+0.10.0.
+
+**This is not merely a 3.14 artifact, and that was measured rather than assumed.**
+CI's matrix is `["3.10", "3.11", "3.12", "3.13"]` (`.github/workflows/ci.yml:17`). The
+same install was run on `/usr/bin/python3.13`, the top of that matrix:
+
+```
+$ /usr/bin/python3.13 -m venv /tmp/al18-probe313
+$ /tmp/al18-probe313/bin/pip install -e "${REPO}[dev,all]"     # exit 0, 9 s
+... autogen-agentchat-0.7.5 autogen-core-0.7.5 mcp-2.2.0 pyautogen-0.10.0 pynacl-1.6.2 ...
+$ /tmp/al18-probe313/bin/python -c "import autogen"
+ModuleNotFoundError: No module named 'autogen'
+$ /tmp/al18-probe313/bin/python -m pytest -rs
+SKIPPED [1] tests/test_v18_recipient_integrations.py:70: could not import 'autogen': No module named 'autogen'
+======================= 1495 passed, 8 skipped in 3.59s ========================
+```
+
+On Python 3.13, with every extra installed, `pyautogen>=0.2` still resolves to 0.10.0
+and the autogen test still skips. pip prefers the highest satisfying version, and
+0.10.0 is satisfying on every interpreter in the matrix.
+
+**Consequence for the release, stated plainly.** Adding `autogen` to the CI install
+line would not cause the R1 test to execute on any interpreter CI runs. The R1 table
+is unexecuted code today and would remain unexecuted after that change. Closing it
+means a decision about `pyproject.toml:50`, which is outside increment 3b: the extra
+either names a distribution that provides the module the integration imports, or the
+integration's guard is changed to accept the module the current distribution provides,
+or the extra and the integration are documented as historical. This amendment records
+the measurement and takes none of those three.
+
+---
+
+### Resolved versions in `/tmp/al18-extras`
+
+| Package | Resolved | Declared as |
+|---|---|---|
+| `mcp` | 2.2.0 | `mcp>=1.0` (`pyproject.toml:51`) |
+| `pyautogen` | 0.10.0 | `pyautogen>=0.2` (`pyproject.toml:50`) |
+| `PyNaCl` | 1.6.2 | `PyNaCl>=1.5.0` (`pyproject.toml:54`) |
+| `fastapi` | 0.141.1 | `fastapi>=0.100` (`pyproject.toml:52`) |
+| `Flask` | 3.1.3 | `flask>=2.0` (`pyproject.toml:53`) |
+
+Host interpreter CPython 3.14.6. `pytest` in the venv is 9.1.1 and `ruff` is 0.16.6,
+both newer than the checkout's, and the suite and the lint pass identically under both.
+
+---
+
+### Decision input for the release commit, measured
+
+The question is which extras CI would need in its install line for the receipt tests
+and the mcp integration tests to execute on push. It is answered by measurement, not
+by reading `pyproject.toml`.
+
+**The baseline nobody had measured.** CI installs `pip install -e ".[dev]"`
+(`.github/workflows/ci.yml:30`). A venv built that way and run against this checkout
+reports:
+
+```
+================ 1479 passed, 24 skipped, 14 warnings in 2.93s =================
+```
+
+Not 1493 passed and 10 skipped. **Sixteen tests that pass in every local measurement
+in this document do not run on push.** Fourteen of them are crypto-gated and have
+never appeared as a skip anywhere above, for a reason that is worth naming: the host
+python at `/usr/bin/python` has `PyNaCl 1.6.2` installed globally, so every
+`requires_nacl` test has always executed locally, invisibly, and the document's skip
+lists never showed them. The `[dev]` skip list shows them:
+
+```
+SKIPPED [1] tests/test_chain.py:316: PyNaCl not installed
+SKIPPED [1] tests/test_receipts.py:103: PyNaCl not installed
+SKIPPED [1] tests/test_receipts.py:110: PyNaCl not installed
+SKIPPED [1] tests/test_receipts.py:121: PyNaCl not installed
+SKIPPED [1] tests/test_receipts.py:133: PyNaCl not installed
+SKIPPED [1] tests/test_receipts.py:145: PyNaCl not installed
+SKIPPED [1] tests/test_receipts.py:161: PyNaCl not installed
+SKIPPED [1] tests/test_receipts.py:173: PyNaCl not installed
+SKIPPED [1] tests/test_receipts.py:179: PyNaCl not installed
+SKIPPED [1] tests/test_receipts.py:192: PyNaCl not installed
+SKIPPED [1] tests/test_receipts.py:248: PyNaCl not installed
+SKIPPED [1] tests/test_receipts.py:357: PyNaCl not installed
+SKIPPED [1] tests/test_v18_recipient.py:359: PyNaCl not installed
+SKIPPED [1] tests/test_v18_recipient_parameter.py:336: PyNaCl not installed
+```
+
+Two of those fourteen are v1.8 tests, at `test_v18_recipient.py:359` and
+`test_v18_recipient_parameter.py:336`. The signed-receipt behavior of the feature
+being released in v1.8.0 is not exercised by CI on push today.
+
+**What each candidate install line buys, measured.**
+
+| Install line | Suite result |
+|---|---|
+| `pip install -e ".[dev]"` (CI today) | `1479 passed, 24 skipped` |
+| `pip install -e ".[dev,crypto,mcp]"` | `1495 passed, 8 skipped` |
+| `pip install -e ".[dev,all]"` | `1495 passed, 8 skipped` |
+
+`[dev,crypto,mcp]` and `[dev,all]` are identical, measured, not reasoned. The
+`fastapi`, `flask` and `autogen` extras buy zero executed tests between them: no test
+in the suite is guarded on `fastapi` or `flask`, and the `autogen` guard fails even
+with the extra installed, for the reason given above. **The answer to the question is
+`crypto` and `mcp`, and nothing else.** The remaining 8 skips under that line are the
+7 crosshop engine-state baselines and the 1 autogen guard, neither of which any
+install line can clear.
+
+**Cost of each extra, as pip reported it.** Measured in a separate throwaway venv,
+`/tmp/al18-probe`, on the same 3.14.6 host, installing `[dev]` first and then each
+extra in the order shown, so each row is the incremental cost of appending that extra
+to an install line that already has the ones above it. The pip HTTP cache was warm
+from the `/tmp/al18-extras` install, so these wall times are cache-warm and a cold CI
+runner will be slower; the distribution counts do not depend on the cache. The
+`agentlock` editable wheel rebuilds on every one of these commands and is excluded
+from the "new distributions" column.
+
+| Extra | Wall time | New distributions | What they are |
+|---|---|---|---|
+| `dev` | 5 s | 19 | pytest 9.1.1, pytest-cov, pytest-asyncio, coverage, mypy, ruff, pydantic and their support packages |
+| `crypto` | 2 s | 3 | `pynacl`, `cffi`, `pycparser` |
+| `mcp` | 2 s | 21 | `mcp`, `mcp-types`, `starlette`, `uvicorn`, `httpx2`, `httpcore2`, `jsonschema`, `cryptography`, `anyio`, `sse-starlette` and support |
+| `fastapi` | 2 s | 7 | `fastapi`, `python-jose`, `ecdsa`, `rsa`, `pyasn1`, `six`, `annotated-doc` |
+| `flask` | 2 s | 6 | `flask`, `werkzeug`, `jinja2`, `markupsafe`, `itsdangerous`, `blinker` |
+| `autogen` | 3 s | 6 | `pyautogen`, `autogen-agentchat`, `autogen-core`, `protobuf`, `pillow`, `jsonref` |
+
+Two combined installs, each into its own fresh venv, for comparison:
+
+| Install line | Wall time | Total distributions |
+|---|---|---|
+| `[dev,crypto,mcp]` (`/tmp/al18-probe2`) | 6 s | 44 |
+| `[dev,all]` (`/tmp/al18-extras`) | 14 s | 63 |
+
+So the measured cost of making the receipt tests and the mcp integration tests run on
+push is 24 distributions and roughly 1 second of warm-cache install time on top of
+`dev`, and it recovers 16 tests. Going all the way to `[dev,all]` costs 19 further
+distributions, including `pillow` and `protobuf`, and recovers nothing.
+
+`ci.yml` was not edited. The change is David's to make.
+
+---
+
+### Two observations, neither acted on
+
+1. `pip` built the editable wheel as `agentlock-1.7.0`, from `pyproject.toml:7` and
+   `agentlock/__init__.py:37`, which agree with each other. The version bump for a
+   v1.8.0 release has not happened yet, which is expected at this point in the branch
+   and is noted only because it appears in the install output quoted above.
+2. The suite passes unchanged on CPython 3.14.6, which is outside the declared
+   `requires-python = ">=3.10"` floor in the direction nobody tests, and outside CI's
+   matrix. That is a data point for a future matrix decision, not a recommendation.
+
+### What increment 3b closed
+
+The mcp half of the open item carried from STEP 0f and AMENDMENT 5 is closed. The R2
+test executes against the real MCP SDK at version 2.2.0 and passes, the denial is
+observed leaving the numbered Step 8 block, and the integration imports cleanly across
+the 1.x to 2.x boundary that the unpinned extra crosses.
+
+The autogen half is not closed and is now known to be unclosable by an install line
+alone. That is a stronger and more useful result than the green row the freeze
+predicted.
+
+The CI half is not closed either, by design: this increment touched no CI file. What
+it produced is the measured input for that decision, above, including the fact that
+CI's real figure on push today is `1479 passed, 24 skipped` and not the `1493 passed,
+10 skipped` that every prior section of this document reports from a host whose global
+site-packages happens to contain PyNaCl.
+
+The venvs `/tmp/al18-extras`, `/tmp/al18-probe`, `/tmp/al18-probe2` and
+`/tmp/al18-probe313` are left in place. This checkout's environment and every global
+site-packages directory were not modified.
+
+---
+
+## RELEASE FREEZE (2026-09-09): v1.8.0
+
+Written on `v1.8-recipient-enforcement` at `fdb3190 docs: AMENDMENT 6, increment 3b
+measured`, working tree clean. This section appends to this document and edits
+nothing above it. It is written before any release edit exists: no version bump, no
+CHANGELOG entry, no CITATION file, no CI change, no schema fix.
+
+This is the release session for v1.8.0. It produces the release commit and nothing
+beyond it. No merge, no tag, no push, no upload.
+
+---
+
+### STEP 0a: the pinned autogen probe, measured before the predictions are frozen
+
+STEP 0a is a probe, not a prediction. It runs first because prediction T1 is
+conditional on its result. The environment is `/tmp/al18-probe313`, the CPython
+3.13.14 venv built in increment 3b and recorded in AMENDMENT 6, which already had
+`agentlock` installed editable with `[dev,all]` and therefore carried
+`pyautogen 0.10.0`, the proxy distribution that provides no `autogen` module. The
+venv was present, so it was not recreated. The only command run against it before
+the measurements below was the pin install.
+
+```
+$ /tmp/al18-probe313/bin/pip install "pyautogen>=0.2,<0.10"
+...
+Downloading pyautogen-0.9.0-py3-none-any.whl (781 kB)
+Installing collected packages: urllib3, termcolor, regex, python-dotenv, diskcache, charset_normalizer, certifi, requests, httpcore, asyncer, tiktoken, httpx, docker, pyautogen
+  Attempting uninstall: pyautogen
+    Found existing installation: pyautogen 0.10.0
+    Uninstalling pyautogen-0.10.0:
+      Successfully uninstalled pyautogen-0.10.0
+
+Successfully installed asyncer-0.0.8 certifi-2026.7.22 charset_normalizer-3.5.1 diskcache-5.6.3 docker-7.2.0 httpcore-1.0.9 httpx-0.28.1 pyautogen-0.9.0 python-dotenv-1.2.3 regex-2026.9.3 requests-2.34.2 termcolor-3.3.0 tiktoken-0.14.0 urllib3-2.7.0
+```
+
+Resolved version, verbatim:
+
+```
+$ /tmp/al18-probe313/bin/pip show pyautogen
+Name: pyautogen
+Version: 0.9.0
+Summary: A programming framework for agentic AI
+Home-page: https://ag2.ai/
+Author: 
+Author-email: Chi Wang & Qingyun Wu <support@ag2.ai>
+License: 
+Location: /tmp/al18-probe313/lib/python3.13/site-packages
+Requires: anyio, asyncer, diskcache, docker, httpx, packaging, pydantic, python-dotenv, termcolor, tiktoken
+Required-by: 
+```
+
+`pyautogen>=0.2,<0.10` resolves to **0.9.0**, the top of the line that ships a real
+top-level `autogen` package. It replaced 0.10.0 in place. Fourteen distributions were
+added, none of which the unpinned extra pulls, because the proxy distribution has one
+dependency and 0.9.0 has ten.
+
+Import, verbatim:
+
+```
+$ /tmp/al18-probe313/bin/python -c "import autogen; print(autogen.__version__)"
+0.9.0
+$ echo $?
+0
+```
+
+**The import succeeds.** This is the fact AMENDMENT 6 recorded as failing under the
+unpinned extra, and it is the first time in this document that `import autogen`
+returns a module.
+
+The integration test file, verbatim, whole run:
+
+```
+$ /tmp/al18-probe313/bin/python -m pytest tests/test_v18_recipient_integrations.py -v -rs
+============================= test session starts ==============================
+platform linux -- Python 3.13.14, pytest-9.1.1, pluggy-1.6.0 -- /tmp/al18-probe313/bin/python
+cachedir: .pytest_cache
+rootdir: /home/n1trolab/agentlock-v1.4
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, cov-7.1.0, anyio-4.15.1
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 2 items
+
+tests/test_v18_recipient_integrations.py::TestAutogenFunctionMap::test_recipient_enforcement_through_the_function_map PASSED [ 50%]
+tests/test_v18_recipient_integrations.py::TestMcpServerWrapper::test_recipient_enforcement_through_the_call_tool_handler PASSED [100%]
+
+============================== 2 passed in 0.43s ===============================
+```
+
+Two passed, zero skipped, zero failed. The `-rs` short summary section is absent
+because nothing skipped.
+
+**The R1 table executed for the first time.** The open item carried forward from
+STEP 0f of the increment 3a freeze, restated at the end of AMENDMENT 5, and left
+explicitly unclosed by AMENDMENT 6, is closed by this probe: the autogen half of the
+increment 3a work now runs against a real `pyautogen` and passes. AMENDMENT 6 stated
+that closing it "means a decision about `pyproject.toml:50`", and named as the first
+of three options that "the extra either names a distribution that provides the module
+the integration imports". This probe measures that option and finds it available.
+
+**Verdict for the conditional in T1: the import succeeds and the autogen test passes,
+so the pin branch is taken.**
+
+#### One environment fact recorded here, because it constrains where the pin can be verified
+
+`pyautogen 0.9.0` carries `Requires-Python >=3.9,<3.14`. AMENDMENT 6 measured this
+already, in the `pip install --dry-run "pyautogen==0.2.35"` output quoted there, which
+lists the bound for 0.9.0 explicitly. `/tmp/al18-probe313` is CPython 3.13.14 and
+satisfies it. `/tmp/al18-extras` is CPython 3.14.6 and does not. That is a fact about
+the two environments, recorded now rather than discovered later; it is not a
+prediction and it does not alter one.
+
+---
+
+### Predictions for the v1.8.0 release commit
+
+Frozen verbatim as given. T1 is stated with its conditional intact and the branch
+selected by STEP 0a marked.
+
+#### T1. The autogen extra
+
+Conditional, decided by 0a: if 0a imports and the autogen test passes, the release
+pins the extra to `pyautogen>=0.2,<0.10` in both the `autogen` and `all` extras and
+the CHANGELOG states the pin, the reason (0.10.0 is a proxy distribution with no
+`autogen` module), and that the pinned range requires Python below 3.14. If 0a fails,
+the extra is left as is and the CHANGELOG Limitations paragraph states that the
+autogen extra does not currently resolve to an importable module on Python 3.13 or
+3.14 and the integration has no executed test in any environment.
+
+**Branch selected by 0a: the pin branch.**
+
+#### T2. Version
+
+Version 1.8.0 in `pyproject.toml` and `agentlock/__init__.py`, and nowhere else says
+1.7.0 as the current version (`grep -rn "1\.7\.0" README.md pyproject.toml
+agentlock/__init__.py` returns only history table rows or CHANGELOG entries).
+
+#### T3. CHANGELOG
+
+CHANGELOG 1.8.0 heading carries today's date; the entry adds: measured suite figures
+(1495 passed 8 skipped with `[dev,all]` on this machine, 1479 passed 24 skipped with
+`[dev]` only), the CI install change, and the PyNaCl finding (receipt tests were not
+executing in CI before this release). No corpus mention. `grep -i agentshield` over
+the diff returns 0.
+
+#### T4. CI
+
+`.github/workflows/ci.yml` install line becomes `pip install -e ".[dev,crypto,mcp]"`.
+No other CI change.
+
+#### T5. Schema
+
+`schema/agentlock-v1.4.json`: the two `\u2014` sequences in the `ActionClassConfig` and
+`LineagePolicyConfig` descriptions (AMENDMENT 2 finding) are replaced so that the file
+matches the current docstrings, and after the edit: `json.load` succeeds, `git diff`
+shows exactly two changed lines, and a grep for `\u2014` (both the escape sequence and
+the literal byte) across the repo excluding `.git` returns 0.
+
+#### T6. README
+
+`README.md`: the versions table gains a 1.8.0 row in the existing style; the badge row
+gains two Zenodo DOI badges; a `## Papers` section is added immediately before the
+first install or quickstart heading. Exact text below. Nothing else in README changes
+except what a 1.7.0 to 1.8.0 update requires.
+
+#### T7. CITATION
+
+`CITATION.cff` at repo root, exact text below, validated by
+`python -c "import yaml; yaml.safe_load(open('CITATION.cff'))"` (install `pyyaml` in
+the probe venv if needed, not in the repo).
+
+#### T8. Build
+
+`rm -rf dist build`; `python -m build` in `/tmp/al18-extras`; `twine check dist/*`
+passes; the wheel's METADATA reports `Version: 1.8.0` and `Metadata-Version: 2.4` (the
+level 1.7.0 shipped; if the toolchain emits 2.5, pin hatchling as the 1.7.0 release did
+and record it). A fresh venv at `/tmp/al18-wheel` installing the wheel with
+`[crypto,mcp]` runs `python -c "import agentlock; print(agentlock.__version__)"` and
+prints 1.8.0, and imports `agentlock.integrations.mcp`.
+
+#### T9. Suite
+
+Full suite in `/tmp/al18-extras` after reinstall: 1495 passed, 8 skipped, plus 1 more
+passed and 1 fewer skipped if T1's pin branch was taken. `ruff` clean.
+
+#### T10. Files
+
+Files in the release commit: `pyproject.toml`, `agentlock/__init__.py`, `CHANGELOG.md`,
+`README.md`, `CITATION.cff`, `.github/workflows/ci.yml`,
+`schema/agentlock-v1.4.json`. Nothing else.
+
+---
+
+### Exact text frozen for T6 and T7
+
+README badge lines, added to the existing badge row:
+
+```
+[![Paper 1 DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21270300.svg)](https://doi.org/10.5281/zenodo.21270300)
+[![Paper 2 DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21363120.svg)](https://doi.org/10.5281/zenodo.21363120)
+```
+
+README Papers section:
+
+```
+## Papers
+
+1. Grice, D. (2026). Provenance-Based Pre-Action Authorization for LLM Agents: A Structural Defense Evaluated on AgentDojo with AgentLock. Zenodo. https://doi.org/10.5281/zenodo.21270300
+2. Grice, D. (2026). Selective Provenance Gating: Recovering Agent Utility Where Recovery Is Sound. Zenodo. https://doi.org/10.5281/zenodo.21363120
+
+Paper 2 builds on Paper 1. Each record pins the engine commit it measured.
+```
+
+`CITATION.cff`:
+
+```
+cff-version: 1.2.0
+message: "If you use AgentLock, cite the software and the paper that matches the mechanism you rely on."
+type: software
+title: "AgentLock"
+abstract: "Provenance-based pre-action authorization for AI agent tool calls. Gates consequential actions on where a value came from, not what it says."
+authors:
+  - family-names: Grice
+    given-names: David
+    orcid: "https://orcid.org/0009-0005-5388-123X"
+version: 1.8.0
+date-released: 2026-09-09
+license: AGPL-3.0
+repository-code: "https://github.com/webpro255/agentlock"
+url: "https://agentlock.dev"
+keywords:
+  - prompt injection
+  - LLM agents
+  - provenance
+  - tool-call authorization
+  - information-flow control
+references:
+  - type: article
+    title: "Provenance-Based Pre-Action Authorization for LLM Agents: A Structural Defense Evaluated on AgentDojo with AgentLock"
+    authors:
+      - family-names: Grice
+        given-names: David
+    year: 2026
+    doi: 10.5281/zenodo.21270300
+  - type: article
+    title: "Selective Provenance Gating: Recovering Agent Utility Where Recovery Is Sound"
+    authors:
+      - family-names: Grice
+        given-names: David
+    year: 2026
+    doi: 10.5281/zenodo.21363120
+```
+
+---
+
+### Stop conditions for this session
+
+Any MISMATCH in T1 through T10, any test failure, any `twine check` failure, or any
+path in the release commit outside the T10 list: do not commit, report the raw output,
+stop. The release commit is produced only if the table is all MATCH.
+
+---
+
+## AMENDMENT 8 (2026-09-09): release predictions restated before commit B
+
+Written on `v1.8-recipient-enforcement` at `5373d12 docs: freeze v1.8.0 release
+predictions`, after the release was built and T1 through T10 were measured against the
+frozen wording, and before any release commit exists. This section appends to this
+document and edits nothing above it.
+
+The measurement pass against the frozen wording returned two MISMATCH verdicts, T5 and
+T9. Neither was a build failure. Both were defects in the frozen predictions
+themselves, and both were reported with raw output before any release commit was made.
+This amendment records the defects, restates the four predictions they touch, and
+fixes the scope of the release commit accordingly. The restated wording is what commit
+B is scored against. The original frozen wording is retained above, unaltered.
+
+One prediction that did not miss is restated here as well, T10, because the T5 fix
+adds a file to it.
+
+---
+
+### T1 restated: the pin carries an environment marker
+
+**The defect.** T1 as frozen selected the bare pin `pyautogen>=0.2,<0.10` for both the
+`autogen` extra and the `all` extra. Measured, that makes `pip install "agentlock[all]"`
+fail outright on CPython 3.14, because every `pyautogen` release in the pinned range
+caps `Requires-Python` at `<3.14` or lower and pip therefore finds no satisfying
+version:
+
+```
+$ /tmp/al18-extras/bin/pip install -e "${REPO}[dev,all]"
+ERROR: Could not find a version that satisfies the requirement pyautogen<0.10,>=0.2; extra == "all" (from agentlock[all,dev]) (from versions: 0.0.1, 0.1.0, 0.1.1rc1, 0.1.1, 0.1.2, 0.1.3, 0.1.4, 0.1.5, 0.1.6, 0.1.7, 0.1.8, 0.1.9, 0.1.10, 0.1.11, 0.1.12, 0.1.13, 0.1.14, 0.2.0b1, 0.2.0b2, 0.10.0)
+ERROR: No matching distribution found for pyautogen<0.10,>=0.2; extra == "all"
+```
+
+`pyproject.toml` declares `requires-python = ">=3.10"` with no upper bound, so the
+package claims to support 3.14 while one of its published extras cannot be installed
+there. That is a packaging regression introduced by the release, not a property of the
+test environment, and it would reach every user of `agentlock[all]` on 3.14.
+
+**Restated.** The `autogen` extra and the `all` extra carry
+
+```
+"pyautogen>=0.2,<0.10; python_version < '3.14'"
+```
+
+The marker keeps the pinned range on the interpreters where it resolves and drops the
+requirement on the ones where it cannot, so `agentlock[all]` installs on every
+interpreter the package claims to support. The reason for the upper bound is unchanged
+from T1 as frozen: `pyautogen` 0.10.0 is a proxy distribution for `autogen-agentchat`
+that ships one file and provides no top-level `autogen` module, so the guard at
+`agentlock/integrations/autogen.py:42` fails with it installed.
+
+The CHANGELOG states the marker, states that autogen support resolves only below
+Python 3.14, and states that on 3.14 the `autogen` extra resolves to nothing and the
+integration test skips, which is the behavior every measurement in AMENDMENT 6
+recorded.
+
+---
+
+### T5 restated: v1.3 carries the same drift, and the grep is scoped
+
+**The defect, in two parts.**
+
+Part one is scope. AMENDMENT 2 recorded the description drift in
+`schema/agentlock-v1.4.json` only, and T5 inherited that scope.
+`schema/agentlock-v1.3.json:418` carries the identical drift in its
+`LineagePolicyConfig` description, measured now:
+
+```
+$ grep -rn "u2014" --exclude-dir=.git .
+schema/agentlock-v1.3.json:418:      "description": "Governs provenance-lineage gating of ...
+docs/PREDICTIONS_v18_recipient.md:3030:`schema/agentlock-v1.4.json`: the two `\u2014` sequ...
+docs/PREDICTIONS_v18_recipient.md:3033:shows exactly two changed lines, and a grep for `\u...
+```
+
+Part two is the grep itself. T5 as frozen required a repo-wide zero, which is
+unreachable by construction: this document names the sequence in order to specify
+removing it, at line 900 as the literal byte and at lines 3030 and 3033 as the escape
+text, and the document is append-only with deletions 0. A prediction that can only be
+satisfied by deleting committed text from the document that states it is a defective
+prediction, not a failed one.
+
+**Restated.** `schema/agentlock-v1.3.json:418` receives the same fix as
+`schema/agentlock-v1.4.json`: the description value is replaced so that it matches the
+current docstring in `agentlock/schema.py`, exactly one line changes in that file, and
+`json.load` succeeds afterward.
+
+The zero-hit grep is scoped to the release surface:
+
+```
+agentlock/ schema/ README.md CHANGELOG.md CITATION.cff
+```
+
+Both forms are checked, the `\u2014` escape sequence and the literal em dash byte, and
+both return zero over that scope. `docs/` is out of scope for the reason above, and it
+is the only path excluded.
+
+**Count correction to AMENDMENT 2, recorded.** AMENDMENT 2 stated the two v1.4
+descriptions contain the em dash "at three positions each". Measured, it is
+**6 positions in `ActionClassConfig` and 2 in `LineagePolicyConfig`, 8 in total across
+2 lines**. The `LineagePolicyConfig` value in `schema/agentlock-v1.3.json` carries the
+same 2, for 10 across 3 lines repo-wide. The AMENDMENT 2 figure was wrong. The finding
+it supported, that the committed schema files no longer reproduce from their own
+source, was correct.
+
+---
+
+### T9 restated: both interpreters, and both figures in the CHANGELOG
+
+**The defect.** T9 as frozen fixed the verification environment to `/tmp/al18-extras`
+before STEP 0a had decided T1, then attached a conditional clause ("plus 1 more passed
+and 1 fewer skipped if T1's pin branch was taken") whose condition can never hold in
+that environment. `/tmp/al18-extras` is CPython 3.14.6 and the pinned range does not
+resolve there at any version. Under the bare pin the venv could not be reinstalled at
+all; under the marker it installs and the autogen test skips, because the extra
+resolves to nothing on 3.14. Either way the conditional clause is unsatisfiable in the
+venv T9 named. The figure it predicts is real, and it is reached on 3.13.
+
+**Restated.** Two runs, both recorded, each with its interpreter version:
+
+| Environment | Interpreter | Install line | Predicted |
+|---|---|---|---|
+| `/tmp/al18-extras` | CPython 3.14.6 | `pip install -e "${REPO}[dev,all]"` | 1495 passed, 8 skipped |
+| `/tmp/al18-probe313` | CPython 3.13.14 | `pip install -e "${REPO}[dev,all]"` | 1496 passed, 7 skipped |
+
+Under the marker, `[dev,all]` installs in both. On 3.14 the `autogen` requirement drops
+out, `import autogen` fails, and the AutoGen integration test skips, giving 8 skips: 7
+crosshop engine-state baselines plus that one. On 3.13 the requirement holds, resolves
+to `pyautogen 0.9.0`, and the test runs, giving 7 skips and one more pass.
+
+Both figures go in the CHANGELOG, each attributed to its interpreter version, rather
+than one figure presented as the suite result.
+
+`ruff check agentlock/ tests/` returns `All checks passed!` with exit 0, unchanged.
+
+---
+
+### T10 restated: eight files
+
+The T5 fix adds `schema/agentlock-v1.3.json` to the release commit. Files in commit B,
+and nothing else:
+
+```
+pyproject.toml
+agentlock/__init__.py
+CHANGELOG.md
+README.md
+CITATION.cff
+.github/workflows/ci.yml
+schema/agentlock-v1.4.json
+schema/agentlock-v1.3.json
+```
+
+Eight paths. The seventh and eighth are the two schema files; the other six are
+unchanged from T10 as frozen.
+
+---
+
+### What is unchanged
+
+T2, T3, T4, T6, T7 and T8 stand exactly as frozen and are re-scored against that
+wording, not against anything here. T8's own fallback clause was exercised during the
+first measurement pass: hatchling 1.32.0 emitted `Metadata-Version: 2.5`, so hatchling
+is pinned and the pin is recorded in AMENDMENT 9 with the version boundary that was
+measured to justify it.
+
+T3 gains no new requirement from this amendment beyond the sentences T1 and T9
+restated call for: the marker and its consequence on 3.14, and both suite figures with
+their interpreter versions.
+
+The stop condition is unchanged and now applies to the restated wording: any MISMATCH
+in T1 through T10 as restated, any test failure, any `twine check` failure, or any path
+in the release commit outside the eight above means no commit and a report of the raw
+output.
+
+---
+
+## AMENDMENT 9 (2026-09-09): v1.8.0 release commit verified
+
+Measured on `v1.8-recipient-enforcement` at `9bf7278 docs: AMENDMENT 8, release
+predictions restated before commit B`, working tree clean before the release edits and
+clean after the release commit. Scored against the restated wording in AMENDMENT 8 for
+T1, T5, T9 and T10, and against the frozen wording in the RELEASE FREEZE section for
+T2, T3, T4, T6, T7 and T8.
+
+Release commit: **`4a6a7e4983541b96e2f6d1c4322ab97b81f9751a`**, message `release: v1.8.0`,
+eight files, no trailer.
+
+### T1 to T10
+
+| T | Verdict | One line |
+|---|---|---|
+| T1 restated | MATCH | Both extras carry the marker. The wheel METADATA records it on both, and the CHANGELOG states the marker, the below-3.14 resolution, and the skip on 3.14. |
+| T2 | MATCH | `1.8.0` in `pyproject.toml` and `agentlock/__init__.py`. The `1.7.0` grep returns two README lines, a history table row and history prose. |
+| T3 | MATCH | Heading dated 2026-09-09. Both suite figures with their interpreters, the bare-`[dev]` figure, the CI install change, and the PyNaCl finding. |
+| T4 | MATCH | One changed line in `ci.yml`, nothing else in the file. |
+| T5 restated | MATCH | v1.4 two lines, v1.3 one line, both files parse, all three description values equal the current docstrings, scoped grep returns 0 in both forms. |
+| T6 | MATCH | Two DOI badges, a `Papers` section before `Install`, a 1.8.0 versions row. |
+| T7 | MATCH | `CITATION.cff` loads and reports version 1.8.0, release date 2026-09-09, two references. |
+| T8 | MATCH | `twine check` passed on both artifacts; `Metadata-Version: 2.4` after the hatchling pin; the wheel venv prints 1.8.0 and imports the MCP integration. |
+| T9 restated | MATCH | 1495 passed 8 skipped on 3.14.6 and 1496 passed 7 skipped on 3.13.14, both with `[dev,all]`. Lint clean. |
+| T10 restated | MATCH | Exactly the eight paths, `CITATION.cff` added and seven modified. |
+
+Ten of ten. No failure, no `twine check` failure, and no path outside the restated
+list, so the stop condition did not fire.
+
+---
+
+### The two suite lines, verbatim, with interpreter versions
+
+CPython **3.14.6**, `/tmp/al18-extras`, `pip install -e "${REPO}[dev,all]"`. The
+`autogen` requirement drops out under the marker, so `import autogen` fails and the
+AutoGen integration test skips:
+
+```
+$ /tmp/al18-extras/bin/python -c "import autogen"
+import autogen -> No module named 'autogen'
+$ /tmp/al18-extras/bin/python -m pytest -rs
+SKIPPED [5] tests/test_v16_crosshop_decision_time.py:479: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:491: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:502: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v18_recipient_integrations.py:70: could not import 'autogen': No module named 'autogen'
+================= 1495 passed, 8 skipped, 14 warnings in 3.33s =================
+```
+
+CPython **3.13.14**, `/tmp/al18-probe313`, `pip install -e "${REPO}[dev,all]"`. The
+marker holds, `pyautogen` resolves to 0.9.0, and the AutoGen integration test runs:
+
+```
+$ /tmp/al18-probe313/bin/pip show pyautogen | head -2
+Name: pyautogen
+Version: 0.9.0
+$ /tmp/al18-probe313/bin/python -c "import autogen; print(autogen.__version__)"
+0.9.0
+$ /tmp/al18-probe313/bin/python -m pytest -rs
+SKIPPED [5] tests/test_v16_crosshop_decision_time.py:479: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:491: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:502: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+======================= 1496 passed, 7 skipped in 3.25s ========================
+```
+
+The difference between the two lines is exactly one test, and the seven skips common to
+both are the pre-increment-3 crosshop engine-state baselines, unchanged line for line
+from AMENDMENT 6.
+
+Lint, run from the checkout under both installed ruff versions:
+
+```
+$ ruff check agentlock/ tests/                        # checkout ruff 0.15.6
+All checks passed!
+$ /tmp/al18-extras/bin/ruff check agentlock/ tests/   # venv ruff 0.16.6
+All checks passed!
+```
+
+---
+
+### Artifacts
+
+Built with `/tmp/al18-extras/bin/python -m build` from a clean `dist` and `build`, on
+CPython 3.14.6.
+
+| Artifact | sha256 |
+|---|---|
+| `agentlock-1.8.0-py3-none-any.whl` | `b22560ad30594d6c78b8a8552e36bb599408679c251b4077901f1f3f9330ec84` |
+| `agentlock-1.8.0.tar.gz` | `6a1f20bfbffc9e7af9262e9cddba48cfd3e2c10bbc9803a3e025fc0f5c650693` |
+
+```
+$ /tmp/al18-extras/bin/twine check dist/*
+Checking dist/agentlock-1.8.0-py3-none-any.whl: PASSED
+Checking dist/agentlock-1.8.0.tar.gz: PASSED
+```
+
+The wheel's `METADATA`, the two lines T8 names, plus the two requirement lines the T1
+marker produces:
+
+```
+Metadata-Version: 2.4
+Version: 1.8.0
+Requires-Python: >=3.10
+Requires-Dist: pyautogen<0.10,>=0.2; (python_version < '3.14') and extra == 'all'
+Requires-Dist: pyautogen<0.10,>=0.2; (python_version < '3.14') and extra == 'autogen'
+```
+
+Fresh venv at `/tmp/al18-wheel`, CPython 3.14.6, installing the built wheel with
+`[crypto,mcp]`:
+
+```
+$ /tmp/al18-wheel/bin/python -c "import agentlock; print(agentlock.__version__)"
+1.8.0
+$ /tmp/al18-wheel/bin/python -c "import agentlock.integrations.mcp as m; print(m.AgentLockMCPServer)"
+<class 'agentlock.integrations.mcp.AgentLockMCPServer'>
+```
+
+Note that `[crypto,mcp]` installs on 3.14 as it always did. Only the `autogen` and
+`all` extras are touched by the marker, and `all` still installs on 3.14, with the
+autogen requirement omitted.
+
+---
+
+### The hatchling pin, and the measurement that set the boundary
+
+T8 predicted `Metadata-Version: 2.4`, the level 1.7.0 shipped, and provided that if the
+toolchain emitted 2.5 then hatchling would be pinned and the pin recorded. The toolchain
+emitted 2.5. `build-system.requires` was `["hatchling"]`, unpinned, so the first build
+resolved hatchling 1.32.0:
+
+```
+* Installed build dependency versions:
+  - hatchling==1.32.0
+...
+Metadata-Version: 2.5
+Version: 1.8.0
+```
+
+No hatchling pin exists anywhere in this repository's history: `git log --all -S hatchling
+-- pyproject.toml` returns only the v1.0.0 commit that introduced the unpinned line, and
+no document records one. So the boundary was measured rather than recalled. Each
+published hatchling wheel from 1.27.0 through 1.32.0 was downloaded and its Python
+sources searched for the metadata levels it can emit:
+
+| hatchling | Metadata levels present in the wheel |
+|---|---|
+| 1.27.0 | 2.1, 2.2, 2.3, 2.4 |
+| 1.28.0 | 2.1, 2.2, 2.3, 2.4 |
+| 1.29.0 | 2.1, 2.2, 2.3, 2.4 |
+| 1.30.1 | 2.1, 2.2, 2.3, 2.4, **2.5** |
+| 1.31.0 | 2.1, 2.2, 2.3, 2.4, **2.5** |
+| 1.32.0 | 2.1, 2.2, 2.3, 2.4, **2.5** |
+
+2.5 appears first at 1.30.1, and the index publishes no 1.30.0, so the last version that
+cannot emit 2.5 is 1.29.0 and the correct constraint is `hatchling<1.30`.
+`build-system.requires` is now `["hatchling<1.30"]`, the build resolved
+`hatchling==1.29.0`, and the wheel reports `Metadata-Version: 2.4`. This is the one
+change in the release commit that no prediction called for by name; T8's fallback clause
+called for it by condition, and the condition held.
+
+---
+
+### What the release commit contains
+
+```
+ 1  1  .github/workflows/ci.yml
+ 9  1  CHANGELOG.md
+35  0  CITATION.cff
+20  2  README.md
+ 1  1  agentlock/__init__.py
+ 4  4  pyproject.toml
+ 1  1  schema/agentlock-v1.3.json
+ 2  2  schema/agentlock-v1.4.json
+```
+
+Eight paths, matching T10 as restated. The two schema files change by three lines
+between them, which is the whole of the description fix. No file under `agentlock/`
+changes except the one-line version, no file under `tests/` changes at all, and no
+mechanism code is touched by this release commit: every mechanism in v1.8.0 landed in
+increments 1 through 3a and was scored in AMENDMENTS 2, 4 and 5.
+
+The session stops here. Nothing is merged, tagged, pushed, or uploaded.

@@ -54,7 +54,7 @@ __all__ = [
     "ToolDefinition",
 ]
 
-SCHEMA_VERSION = "1.4"
+SCHEMA_VERSION = "1.5"
 
 
 def parse_version(version: str) -> tuple[int, ...] | None:
@@ -101,6 +101,12 @@ class ScopeConfig(BaseModel):
     data_boundary: DataBoundary = DataBoundary.AUTHENTICATED_USER_ONLY
     max_records: int | None = Field(default=None, ge=1)
     allowed_recipients: RecipientPolicy = RecipientPolicy.KNOWN_CONTACTS_ONLY
+    # Entries are full addresses or domain entries beginning with "@",
+    # consulted only under RecipientPolicy.ALLOWLIST.
+    recipient_allowlist: list[str] = Field(default_factory=list)
+    # Top-level key in ``parameters`` that carries the recipient; declared
+    # here, read by the gate, never asserted by the caller.
+    recipient_parameter: str | None = None
 
     model_config = {"extra": "forbid"}
 
