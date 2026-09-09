@@ -764,3 +764,163 @@ wire value is unchanged, and any honest assertion of that claim must contain the
 literal. Removing it to make a grep come out clean would have deleted the only
 evidence behind a claim the release makes.
 
+
+---
+
+## AMENDMENT 2 (2026-09-09): increment 1 built and matched
+
+Build commit: `c1a9e01 feat: enforce recipient policy at Step 8, schema 1.5, RATE_LIMITED as enum`.
+
+Measured on `v1.8-recipient-enforcement`. P5 is scored against its restated
+wording in AMENDMENT 1, which was committed at `98d538c` before any build change
+was committed.
+
+### P1 to P8
+
+| P | Verdict | Evidence |
+|---|---|---|
+| P1 | MATCH | `grep -rn RECIPIENT_NOT_ALLOWED agentlock tests` returns 16 hits: the enum definition at `agentlock/types.py:190`, the return site at `agentlock/policy.py:1039`, and 14 assertions in `tests/test_v18_recipient.py`. |
+| P2 | MATCH | `44 passed in 0.03s`. Every row of the P2 table at version 1.5, the version 1.4 row, the session-threading case, the receipt case, and the RATE_LIMITED case. |
+| P3 | MATCH | `1461 passed, 8 skipped, 14 warnings in 3.05s`, which is 1417 plus 44 new, 0 failed. Skip list identical to A8. `git diff --stat tests/` names 2 files, 2 insertions, 2 deletions, the two `"1.4"` to `"1.5"` lines, plus the one new file. |
+| P4 | MATCH | All fifteen lines as predicted. Output below. |
+| P5 | MATCH against the restated wording | `grep -rn '"rate_limited"' agentlock tests` returns exactly two hits: `agentlock/types.py:182` and `tests/test_v18_recipient.py:383`. `agentlock/exceptions.py:99` and `agentlock/gate.py:940` are gone. MISMATCH against the original wording, for the reason recorded in AMENDMENT 1. |
+| P6 | MATCH | `git diff --stat` and `git status --short` name only P6 paths. `agentlock/types.py` needed no docstring change and is untouched. |
+| P7 | MATCH | `grep -rn "create_session(" tests examples README.md docs \| wc -l` returns 143: A10's 134 call sites unmodified, plus 2 non-call mentions inside this document, plus 7 new calls in `tests/test_v18_recipient.py`. That the 134 run is covered by P3. |
+| P8 | MATCH | Both schema-version tests pass. No repo test uses a JSON-schema validator, so `jsonschema` 4.26.0 was used: a populated v1.4 block is VALID against both `schema/agentlock-v1.4.json` and `schema/agentlock-v1.5.json`. |
+
+### Exact suite summary line
+
+```
+================= 1461 passed, 8 skipped, 14 warnings in 3.05s =================
+```
+
+Skip list, verbatim, identical to A8:
+
+```
+SKIPPED [1] tests/test_v15_integration_confirmation.py:113: could not import 'mcp': No module named 'mcp'
+SKIPPED [5] tests/test_v16_crosshop_decision_time.py:479: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:491: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:502: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+```
+
+### P1, verbatim
+
+```
+agentlock/types.py:190:    RECIPIENT_NOT_ALLOWED = "recipient_not_allowed"
+agentlock/policy.py:1036:        """A RECIPIENT_NOT_ALLOWED denial in the shape of every other step."""
+agentlock/policy.py:1039:            reason=DenialReason.RECIPIENT_NOT_ALLOWED,
+tests/test_v18_recipient.py:82:        assert decision.reason == DenialReason.RECIPIENT_NOT_ALLOWED
+tests/test_v18_recipient.py:89:        assert decision.reason == DenialReason.RECIPIENT_NOT_ALLOWED
+tests/test_v18_recipient.py:118:        assert decision.reason == DenialReason.RECIPIENT_NOT_ALLOWED
+tests/test_v18_recipient.py:124:        assert decision.reason == DenialReason.RECIPIENT_NOT_ALLOWED
+tests/test_v18_recipient.py:130:        assert decision.reason == DenialReason.RECIPIENT_NOT_ALLOWED
+tests/test_v18_recipient.py:155:        assert decision.reason == DenialReason.RECIPIENT_NOT_ALLOWED
+tests/test_v18_recipient.py:162:        assert decision.reason == DenialReason.RECIPIENT_NOT_ALLOWED
+tests/test_v18_recipient.py:169:        assert decision.reason == DenialReason.RECIPIENT_NOT_ALLOWED
+tests/test_v18_recipient.py:211:        assert decision.reason == DenialReason.RECIPIENT_NOT_ALLOWED
+tests/test_v18_recipient.py:230:        assert decision.reason == DenialReason.RECIPIENT_NOT_ALLOWED
+tests/test_v18_recipient.py:247:        assert decision.reason == DenialReason.RECIPIENT_NOT_ALLOWED
+tests/test_v18_recipient.py:268:        assert decision.reason == DenialReason.RECIPIENT_NOT_ALLOWED
+tests/test_v18_recipient.py:312:        assert result.denial["reason"] == DenialReason.RECIPIENT_NOT_ALLOWED.value
+tests/test_v18_recipient.py:324:        assert result.denial["reason"] == DenialReason.RECIPIENT_NOT_ALLOWED.value
+```
+
+### P4, verbatim, all fifteen lines
+
+The A9 script was recreated in the session scratchpad from its description in
+section A9, unchanged in its arguments, with a third run added per P4.
+
+```
+=== version 1.5 ===
+recipient='attacker@evil.com'      decision=deny   allowed=False  reason=recipient_not_allowed
+recipient='user@company.com'       decision=deny   allowed=False  reason=recipient_not_allowed
+recipient=''                       decision=allow  allowed=True  reason=None
+recipient='not an address'         decision=deny   allowed=False  reason=recipient_not_allowed
+recipient='a@b.com, c@d.com'       decision=deny   allowed=False  reason=recipient_not_allowed
+=== version 1.4 ===
+recipient='attacker@evil.com'      decision=allow  allowed=True  reason=None
+recipient='user@company.com'       decision=allow  allowed=True  reason=None
+recipient=''                       decision=allow  allowed=True  reason=None
+recipient='not an address'         decision=allow  allowed=True  reason=None
+recipient='a@b.com, c@d.com'       decision=allow  allowed=True  reason=None
+=== version 1.5, known_contacts=["user@company.com"] ===
+recipient='attacker@evil.com'      decision=deny   allowed=False  reason=recipient_not_allowed
+recipient='user@company.com'       decision=allow  allowed=True  reason=None
+recipient=''                       decision=allow  allowed=True  reason=None
+recipient='not an address'         decision=deny   allowed=False  reason=recipient_not_allowed
+recipient='a@b.com, c@d.com'       decision=deny   allowed=False  reason=recipient_not_allowed
+```
+
+The version 1.4 run is byte-identical to the A9 output recorded before the build.
+
+### P5, verbatim
+
+```
+agentlock/types.py:182:    RATE_LIMITED = "rate_limited"
+tests/test_v18_recipient.py:383:        assert RateLimitedError().to_dict()["reason"] == "rate_limited"
+```
+
+### P8, verbatim
+
+```
+schema/agentlock-v1.4.json: VALID
+schema/agentlock-v1.5.json: VALID
+schema/agentlock-v1.4.json (block with recipient_allowlist): INVALID -- Additional properties are not allowed ('recipient_allowlist' was unexpected)
+schema/agentlock-v1.5.json (block with recipient_allowlist): VALID
+```
+
+The last two lines are a control, not a prediction: the new field is accepted at
+1.5 and rejected at 1.4, which is what makes the first two lines meaningful.
+
+### Lint
+
+`ruff check agentlock/ tests/`, the exact command CI runs
+(`.github/workflows/ci.yml:32-33`), returns `All checks passed!` with exit 0.
+
+### STEP 0b: the schema file is an envelope, not raw pydantic output
+
+`schema/agentlock-v1.4.json` is NOT byte-identical to
+`AgentLockPermissions.model_json_schema()` piped through
+`json.dumps(indent=2)`. The committed file is a hand-built envelope:
+`$schema`, `$id`, `title`, `description`, `type`, a `properties` block declaring
+`name`, `description`, `parameters`, and `agentlock` as a `$ref`, a `required`
+list of `name` and `agentlock`, and a `$defs` map. The `$defs` map is pydantic's
+own `$defs` with the model's remaining top-level body promoted in under the key
+`AgentLockPermissions`, then key-sorted. `json.dumps` runs at its default
+`ensure_ascii=True`.
+
+That transform was reconstructed and diffed against the committed v1.4 file.
+The reconstruction is exact except for two lines, and
+`schema/agentlock-v1.5.json` was generated by the same transform.
+
+### Observation for release cleanup: two em dash description drifts in the v1.4 schema file
+
+The two lines by which the reconstruction differs are both pre-existing source
+drift, not envelope shape. In `schema/agentlock-v1.4.json`, the `description`
+values of `ActionClassConfig` and `LineagePolicyConfig` contain `—`, the em
+dash, at three positions each. The corresponding docstrings in
+`agentlock/schema.py` now carry a double hyphen instead. The docstrings were
+edited after `agentlock-v1.4.json` was generated and the file was never
+regenerated, so the committed v1.4 schema no longer reproduces from its own
+source.
+
+Nothing here changes it. `agentlock-v1.4.json` was left untouched, as D16
+requires. `agentlock-v1.5.json`, being generated from current source, carries the
+double hyphen form. This is recorded as an item for release cleanup, not a
+finding against increment 1.
+
+### STEP 0c note
+
+The pre-build grep for `agentshield` was expected to return zero and returned
+two, both pre-existing committed prose in Markdown, neither in code, tests, or
+any corpus:
+
+```
+SECURITY.md:119:v1.2.1 results (222 vectors, scored by AgentShield):
+docs/RELEASE_SCOPE_v16.md:230:substrate is AgentDojo, not the historical AgentShield) gates the release, and
+```
+
+Both predate this branch and are already public on `origin`. Scoped to the code
+the build touches, `grep -ri agentshield agentlock tests schema` returns zero
+hits, before and after. No test and no source file added by increment 1 contains
+the string.
