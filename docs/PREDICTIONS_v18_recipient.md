@@ -2409,3 +2409,467 @@ packages, which is the open item. It cannot by itself close the CI half of that 
 because it touches no CI file: a green run in a throwaway venv is evidence for a
 release note, not a change to what runs on push. AMENDMENT 6 records the measured
 decision input for that choice, and the choice itself is David's.
+
+---
+
+## AMENDMENT 6 (2026-09-09): increment 3b measured
+
+Measured on `v1.8-recipient-enforcement` at `a7513bf docs: freeze increment 3b,
+full-extras verification`, working tree clean before and after. No file in the
+repository was modified by this increment other than this document. No CI file was
+touched. Nothing under `agentlock/`, `schema/` or `tests/` was touched.
+
+The virtual environment is `/tmp/al18-extras`, built on the host interpreter, CPython
+3.14.6 at `/usr/bin/python`. This checkout's environment and every global
+site-packages directory were left alone.
+
+### S1 to S6
+
+| S | Verdict | One line |
+|---|---|---|
+| S1 | MATCH | The venv built and `pip install -e "${REPO}[dev,all]"` exited 0 in 14 s. `pyautogen` installed, so the reduced-extras contingency did not fire. |
+| S2 | MATCH | `mcp` resolved to `2.2.0`, which is the predicted 2.x. |
+| S3 | MATCH | `from agentlock.integrations.mcp import AgentLockMCPServer` succeeded under mcp 2.2.0. The mcp 2.0 breakage does not apply, as reasoned. |
+| S4 | **MISMATCH** | `1495 passed, 8 skipped, 0 failed`. Predicted 1496 passed and 7 skipped for the branch in which `pyautogen` installs. `pyautogen` installed and the autogen test skipped anyway. |
+| S5 | **MISMATCH** (R2 half MATCH, R1 half unexecuted) | The mcp denial came from Step 8 with reason `recipient_not_allowed` under the real package, and the tool ran only for the contact address. The autogen half did not execute at all. |
+| S6 | MATCH | `ruff check agentlock/ tests/` returns `All checks passed!` with exit 0. `grep -ri agentshield agentlock tests schema` returns 0. |
+
+Two of six missed. Both misses have the same root cause, recorded in full below: the
+prediction treated "the `pyautogen` distribution installed" and "the `autogen` module
+is importable" as the same fact. They are not the same fact, and on this index they
+are no longer even correlated.
+
+---
+
+### S1, verbatim
+
+> A virtual environment created at `/tmp/al18-extras` with `python -m venv`, followed
+> by `pip install -e "$REPO[dev,all]"` from this checkout, succeeds.
+
+**MATCH.** Exit 0, wall clock 14 s.
+
+```
+$ /usr/bin/python -m venv /tmp/al18-extras
+$ /tmp/al18-extras/bin/pip install -e "${REPO}[dev,all]"
+...
+Successfully built agentlock
+Successfully installed agentlock-1.7.0 annotated-doc-0.0.5 annotated-types-0.8.0
+anyio-4.15.1 ast-serialize-0.11.1 attrs-26.1.0 autogen-agentchat-0.7.5
+autogen-core-0.7.5 blinker-1.9.0 cffi-2.1.1 click-8.5.0 coverage-7.16.0
+cryptography-50.0.1 ecdsa-0.19.2 fastapi-0.141.1 flask-3.1.3 h11-0.16.0
+httpcore2-2.12.0 httpx2-2.12.0 idna-3.19 iniconfig-2.3.0 itsdangerous-2.2.0
+jinja2-3.1.6 jsonref-1.1.0 jsonschema-4.26.0 jsonschema-specifications-2025.9.1
+librt-0.15.0 markupsafe-3.0.3 mcp-2.2.0 mcp-types-2.2.0 mypy-2.3.1
+mypy_extensions-1.1.0 opentelemetry-api-1.44.0 packaging-26.3 pathspec-1.1.1
+pillow-12.3.0 pluggy-1.6.0 protobuf-5.29.6 pyasn1-0.6.4 pyautogen-0.10.0
+pycparser-3.0 pydantic-2.13.5 pydantic-core-2.46.5 pygments-2.21.0 pyjwt-2.13.0
+pynacl-1.6.2 pytest-9.1.1 pytest-asyncio-1.4.0 pytest-cov-7.1.0 python-jose-3.5.0
+python-multipart-0.0.32 referencing-0.37.0 rpds-py-2026.6.3 rsa-4.9.1 ruff-0.16.6
+six-1.17.0 sse-starlette-3.4.11 starlette-1.6.0 truststore-0.10.4
+typing-extensions-4.16.0 typing-inspection-0.4.4 uvicorn-0.52.4 werkzeug-3.1.8
+```
+
+63 distributions, `agentlock` itself included. `pyautogen` installed, at 0.10.0, so
+the contingency written into S1 ("if `pyautogen` fails to install") did not fire.
+What the contingency was guarding against happened anyway by another route. See the
+autogen finding below.
+
+**One deviation from the command as frozen, recorded.** The shell here is zsh, in
+which `$REPO[dev,all]` is array subscript syntax, not a variable followed by a
+literal bracket. The frozen form failed:
+
+```
+$ /tmp/al18-extras/bin/pip install -e "$REPO[dev,all]"
+ERROR:  is not a valid editable requirement. It should either be a path to a local project or a VCS URL (beginning with bzr+http, ...).
+```
+
+The variable expanded to the empty string. The command actually run, and the one
+every figure in this amendment comes from, braces the variable:
+`pip install -e "${REPO}[dev,all]"`. Same requirement, same resolution. Recorded
+because the freeze wrote one string and the measurement ran another.
+
+### S2, verbatim
+
+> Prediction: **2.x**, because the `mcp` extra is unpinned at `pyproject.toml:51`
+> (`mcp = ["mcp>=1.0"]`) and `mcp` 2.0.0 exists. The version is recorded whatever it
+> turns out to be.
+
+**MATCH.**
+
+```
+$ /tmp/al18-extras/bin/pip show mcp
+Name: mcp
+Version: 2.2.0
+Summary: Model Context Protocol SDK
+Home-page: https://modelcontextprotocol.io
+License: MIT
+Location: /tmp/al18-extras/lib/python3.14/site-packages
+```
+
+`mcp 2.2.0`, not 1.x. The unpinned `mcp>=1.0` in `pyproject.toml:51` resolves across
+a major version boundary, which is the fact the prediction was testing for.
+
+### S3, verbatim
+
+> `python -c "from agentlock.integrations.mcp import AgentLockMCPServer"` in that venv
+> succeeds.
+
+**MATCH.**
+
+```
+$ /tmp/al18-extras/bin/python -c "from agentlock.integrations.mcp import AgentLockMCPServer; print('OK', AgentLockMCPServer)"
+OK <class 'agentlock.integrations.mcp.AgentLockMCPServer'>
+```
+
+Exit 0. The reasoning given in the freeze holds under measurement: the integration
+touches only `mcp.server` and `mcp.types`, and neither moved in mcp 2.x in a way this
+file can see.
+
+### S4, verbatim
+
+> `pytest -rs` in the venv reports **1493 passed plus every previously skipped
+> extras-guarded test that now runs, 0 failed** ... So the arithmetic is: **1496
+> passed, 7 skipped** if `pyautogen` installs, and **1495 passed, 8 skipped** if it
+> does not ... The remaining skips are **only** the seven
+> `tests/test_v16_crosshop_decision_time.py` pre-increment-3 baselines.
+
+**MISMATCH.** Measured, verbatim:
+
+```
+================= 1495 passed, 8 skipped, 14 warnings in 3.34s =================
+```
+
+Zero failed, so the stop condition did not fire. The full `pytest -rs` short summary,
+verbatim:
+
+```
+SKIPPED [5] tests/test_v16_crosshop_decision_time.py:479: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:491: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:502: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v18_recipient_integrations.py:70: could not import 'autogen': No module named 'autogen'
+```
+
+Two of the three extras-guarded tests now run: the v15 mcp test at
+`test_v15_integration_confirmation.py:113` and the 3a mcp test at
+`test_v18_recipient_integrations.py:121`. Both of their skip lines are gone, the v15
+one for the first time since A8. The third, the 3a autogen test at
+`test_v18_recipient_integrations.py:70`, still skips.
+
+The count 1495 is the number the freeze attached to the wrong branch. It predicted
+1495 only for the case where `pyautogen` fails to install. `pyautogen` installed
+cleanly and the number came out 1495 regardless, so a reader checking the headline
+alone would call this a MATCH. It is not one. The prediction's stated mechanism is
+wrong, and this document scores mechanisms, not coincidences of arithmetic.
+
+The other half of the miss is the skip list: eight skips, not the predicted seven. The
+seven crosshop engine-state baselines are unchanged line for line, and the eighth is
+the autogen guard, which the freeze predicted would be absent.
+
+### S5, verbatim
+
+> In that venv the R1 and R2 case tables from the increment 3a freeze pass against the
+> real packages, not against stubs. Specifically: the autogen denial and the mcp
+> denial both come from pipeline Step 8 with reason `recipient_not_allowed`, and each
+> underlying tool runs only for the contact address, never for the attacker address.
+
+**MISMATCH as written. The R2 half is a MATCH and is the substantive result of the
+increment. The R1 half did not execute.**
+
+R2, run in the venv:
+
+```
+$ /tmp/al18-extras/bin/python -m pytest tests/test_v18_recipient_integrations.py tests/test_v15_integration_confirmation.py -v -rs
+tests/test_v18_recipient_integrations.py::TestAutogenFunctionMap::test_recipient_enforcement_through_the_function_map SKIPPED [ 16%]
+tests/test_v18_recipient_integrations.py::TestMcpServerWrapper::test_recipient_enforcement_through_the_call_tool_handler PASSED [ 33%]
+tests/test_v15_integration_confirmation.py::TestAsyncDecorator::test_a_successful_async_tool_is_confirmed PASSED [ 50%]
+tests/test_v15_integration_confirmation.py::TestAsyncDecorator::test_a_failing_async_tool_is_recorded_as_failed_and_still_raises PASSED [ 66%]
+tests/test_v15_integration_confirmation.py::TestAsyncDecorator::test_a_denied_async_call_confirms_nothing PASSED [ 83%]
+tests/test_v15_integration_confirmation.py::TestMcpServerWrapper::test_the_mcp_handler_reports_its_execution PASSED [100%]
+=================== 5 passed, 1 skipped, 3 warnings in 0.30s ===================
+```
+
+All three rows of the R2 table are asserted inside that one test and all three now
+hold against mcp 2.2.0 rather than against a stubbed `sys.modules` entry: the hostile
+address denies with `recipient_not_allowed` and `seen == []`, the contact address
+returns `"sent"`, and the arguments dict the tool receives carries `"to"` and neither
+`_agentlock_` key.
+
+The Step 8 clause was checked directly rather than inferred from the reason string. A
+scratchpad diagnostic wrapped `PolicyEngine._evaluate_recipient`, the function called
+from the numbered `# 8. Recipient policy` block at `agentlock/policy.py:628`, and drove
+the real `AgentLockMCPServer` under the real package. Verbatim:
+
+```
+mcp version: /tmp/al18-extras/lib/python3.14/site-packages/mcp/__init__.py
+DENIED reason: recipient_not_allowed
+DENIED detail: Recipient is not in the session's known contacts; rejected under recipient policy 'known_contacts_only'.
+tool executions after hostile call: 0
+ok: sent | executions now: 1
+arguments the tool received: {'to': 'bob@company.com', 'body': 'x'}
+step 8 hook fired: [('_evaluate_recipient', ('attacker@evil.com',), <DenialReason.RECIPIENT_NOT_ALLOWED: 'recipient_not_allowed'>), ('_evaluate_recipient', ('bob@company.com',), None)]
+```
+
+The recipient reached Step 8 as the tuple `('attacker@evil.com',)`, extracted from the
+`arguments` dict that `mcp.py:171` forwards, and Step 8 returned the denial. For the
+contact address the same block returned `None` and the tool ran. That is the reach
+claim AMENDMENT 4 left as an inference and AMENDMENT 5 could only support with a
+stubbed diagnostic, now measured through the real MCP SDK.
+
+R1 is unexecuted. The freeze's own fallback sentence, written for a different
+condition, is the one that applies: "the R2 half of this stands alone and the R1 half
+is recorded as still unexecuted." **No assertion in the R1 table has ever run against
+the real `pyautogen` package, and this increment did not change that.**
+
+### S6, verbatim
+
+> `ruff check agentlock/ tests/` returns `All checks passed!` with exit 0, and
+> `grep -ri agentshield agentlock tests schema` returns 0 hits.
+
+**MATCH.**
+
+```
+$ ruff check agentlock/ tests/          # checkout ruff, 0.15.6
+All checks passed!
+$ echo $?
+0
+$ /tmp/al18-extras/bin/ruff check agentlock/ tests/   # venv ruff, 0.16.6
+All checks passed!
+$ echo $?
+0
+$ grep -ri agentshield agentlock tests schema | wc -l
+0
+$ git status --short
+```
+
+Run under both ruff versions because the venv install brought a newer one than the
+checkout has. Both pass. `git status --short` is empty: the editable install wrote no
+artifact into the working tree.
+
+---
+
+### The autogen finding
+
+This is the finding of increment 3b, and it is larger than the missed prediction.
+
+`pyautogen` installed. `import autogen` still fails:
+
+```
+$ /tmp/al18-extras/bin/python -c "import autogen"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import autogen
+ModuleNotFoundError: No module named 'autogen'
+```
+
+Why, from `pip show pyautogen` and `pip show -f pyautogen`:
+
+```
+Name: pyautogen
+Version: 0.10.0
+Summary: A programming framework for agentic AI. Proxy package for autogen-agentchat.
+Requires: autogen-agentchat
+Files:
+  pyautogen-0.10.0.dist-info/INSTALLER
+  pyautogen-0.10.0.dist-info/METADATA
+  pyautogen-0.10.0.dist-info/RECORD
+  pyautogen-0.10.0.dist-info/WHEEL
+  pyautogen-0.10.0.dist-info/licenses/LICENSE-CODE
+  pyautogen/__init__.py
+  pyautogen/__pycache__/__init__.cpython-314.pyc
+```
+
+`pyautogen` 0.10.0 is a proxy distribution. It ships one file, `pyautogen/__init__.py`,
+and depends on `autogen-agentchat`, which installs `autogen_agentchat` and
+`autogen_core`. It provides no top-level `autogen` module at all. The import guard at
+`agentlock/integrations/autogen.py:42` asks for `autogen`, so the guard fails and
+`protect_functions` raises `ImportError` exactly as it does with nothing installed.
+
+The extra as declared cannot resolve to anything else. `pyproject.toml:50` says
+`autogen = ["pyautogen>=0.2"]`, and the index today offers, for that name:
+
+```
+$ pip index versions pyautogen
+pyautogen (0.10.0)
+Available versions: 0.10.0, 0.1.14, 0.1.13, ..., 0.1.0, 0.0.1
+```
+
+The entire 0.2 through 0.9 line, which is the line that shipped a real `autogen`
+package, is not installable here. Asking for one says why:
+
+```
+$ pip install --dry-run "pyautogen==0.2.35"
+ERROR: Ignored the following versions that require a different python version: ... 0.2.35 Requires-Python >=3.8,<3.13; ... 0.9.0 Requires-Python >=3.9,<3.14 ...
+ERROR: Could not find a version that satisfies the requirement pyautogen==0.2.35 (from versions: 0.0.1, 0.1.0, 0.1.1rc1, 0.1.1, ..., 0.1.14, 0.2.0b1, 0.2.0b2, 0.10.0)
+```
+
+Every release from 0.2.0 to 0.9.x carries an upper bound on Requires-Python, the
+highest of them `<3.14`, so on this 3.14 host pip excludes all of them and takes
+0.10.0.
+
+**This is not merely a 3.14 artifact, and that was measured rather than assumed.**
+CI's matrix is `["3.10", "3.11", "3.12", "3.13"]` (`.github/workflows/ci.yml:17`). The
+same install was run on `/usr/bin/python3.13`, the top of that matrix:
+
+```
+$ /usr/bin/python3.13 -m venv /tmp/al18-probe313
+$ /tmp/al18-probe313/bin/pip install -e "${REPO}[dev,all]"     # exit 0, 9 s
+... autogen-agentchat-0.7.5 autogen-core-0.7.5 mcp-2.2.0 pyautogen-0.10.0 pynacl-1.6.2 ...
+$ /tmp/al18-probe313/bin/python -c "import autogen"
+ModuleNotFoundError: No module named 'autogen'
+$ /tmp/al18-probe313/bin/python -m pytest -rs
+SKIPPED [1] tests/test_v18_recipient_integrations.py:70: could not import 'autogen': No module named 'autogen'
+======================= 1495 passed, 8 skipped in 3.59s ========================
+```
+
+On Python 3.13, with every extra installed, `pyautogen>=0.2` still resolves to 0.10.0
+and the autogen test still skips. pip prefers the highest satisfying version, and
+0.10.0 is satisfying on every interpreter in the matrix.
+
+**Consequence for the release, stated plainly.** Adding `autogen` to the CI install
+line would not cause the R1 test to execute on any interpreter CI runs. The R1 table
+is unexecuted code today and would remain unexecuted after that change. Closing it
+means a decision about `pyproject.toml:50`, which is outside increment 3b: the extra
+either names a distribution that provides the module the integration imports, or the
+integration's guard is changed to accept the module the current distribution provides,
+or the extra and the integration are documented as historical. This amendment records
+the measurement and takes none of those three.
+
+---
+
+### Resolved versions in `/tmp/al18-extras`
+
+| Package | Resolved | Declared as |
+|---|---|---|
+| `mcp` | 2.2.0 | `mcp>=1.0` (`pyproject.toml:51`) |
+| `pyautogen` | 0.10.0 | `pyautogen>=0.2` (`pyproject.toml:50`) |
+| `PyNaCl` | 1.6.2 | `PyNaCl>=1.5.0` (`pyproject.toml:54`) |
+| `fastapi` | 0.141.1 | `fastapi>=0.100` (`pyproject.toml:52`) |
+| `Flask` | 3.1.3 | `flask>=2.0` (`pyproject.toml:53`) |
+
+Host interpreter CPython 3.14.6. `pytest` in the venv is 9.1.1 and `ruff` is 0.16.6,
+both newer than the checkout's, and the suite and the lint pass identically under both.
+
+---
+
+### Decision input for the release commit, measured
+
+The question is which extras CI would need in its install line for the receipt tests
+and the mcp integration tests to execute on push. It is answered by measurement, not
+by reading `pyproject.toml`.
+
+**The baseline nobody had measured.** CI installs `pip install -e ".[dev]"`
+(`.github/workflows/ci.yml:30`). A venv built that way and run against this checkout
+reports:
+
+```
+================ 1479 passed, 24 skipped, 14 warnings in 2.93s =================
+```
+
+Not 1493 passed and 10 skipped. **Sixteen tests that pass in every local measurement
+in this document do not run on push.** Fourteen of them are crypto-gated and have
+never appeared as a skip anywhere above, for a reason that is worth naming: the host
+python at `/usr/bin/python` has `PyNaCl 1.6.2` installed globally, so every
+`requires_nacl` test has always executed locally, invisibly, and the document's skip
+lists never showed them. The `[dev]` skip list shows them:
+
+```
+SKIPPED [1] tests/test_chain.py:316: PyNaCl not installed
+SKIPPED [1] tests/test_receipts.py:103: PyNaCl not installed
+SKIPPED [1] tests/test_receipts.py:110: PyNaCl not installed
+SKIPPED [1] tests/test_receipts.py:121: PyNaCl not installed
+SKIPPED [1] tests/test_receipts.py:133: PyNaCl not installed
+SKIPPED [1] tests/test_receipts.py:145: PyNaCl not installed
+SKIPPED [1] tests/test_receipts.py:161: PyNaCl not installed
+SKIPPED [1] tests/test_receipts.py:173: PyNaCl not installed
+SKIPPED [1] tests/test_receipts.py:179: PyNaCl not installed
+SKIPPED [1] tests/test_receipts.py:192: PyNaCl not installed
+SKIPPED [1] tests/test_receipts.py:248: PyNaCl not installed
+SKIPPED [1] tests/test_receipts.py:357: PyNaCl not installed
+SKIPPED [1] tests/test_v18_recipient.py:359: PyNaCl not installed
+SKIPPED [1] tests/test_v18_recipient_parameter.py:336: PyNaCl not installed
+```
+
+Two of those fourteen are v1.8 tests, at `test_v18_recipient.py:359` and
+`test_v18_recipient_parameter.py:336`. The signed-receipt behavior of the feature
+being released in v1.8.0 is not exercised by CI on push today.
+
+**What each candidate install line buys, measured.**
+
+| Install line | Suite result |
+|---|---|
+| `pip install -e ".[dev]"` (CI today) | `1479 passed, 24 skipped` |
+| `pip install -e ".[dev,crypto,mcp]"` | `1495 passed, 8 skipped` |
+| `pip install -e ".[dev,all]"` | `1495 passed, 8 skipped` |
+
+`[dev,crypto,mcp]` and `[dev,all]` are identical, measured, not reasoned. The
+`fastapi`, `flask` and `autogen` extras buy zero executed tests between them: no test
+in the suite is guarded on `fastapi` or `flask`, and the `autogen` guard fails even
+with the extra installed, for the reason given above. **The answer to the question is
+`crypto` and `mcp`, and nothing else.** The remaining 8 skips under that line are the
+7 crosshop engine-state baselines and the 1 autogen guard, neither of which any
+install line can clear.
+
+**Cost of each extra, as pip reported it.** Measured in a separate throwaway venv,
+`/tmp/al18-probe`, on the same 3.14.6 host, installing `[dev]` first and then each
+extra in the order shown, so each row is the incremental cost of appending that extra
+to an install line that already has the ones above it. The pip HTTP cache was warm
+from the `/tmp/al18-extras` install, so these wall times are cache-warm and a cold CI
+runner will be slower; the distribution counts do not depend on the cache. The
+`agentlock` editable wheel rebuilds on every one of these commands and is excluded
+from the "new distributions" column.
+
+| Extra | Wall time | New distributions | What they are |
+|---|---|---|---|
+| `dev` | 5 s | 19 | pytest 9.1.1, pytest-cov, pytest-asyncio, coverage, mypy, ruff, pydantic and their support packages |
+| `crypto` | 2 s | 3 | `pynacl`, `cffi`, `pycparser` |
+| `mcp` | 2 s | 21 | `mcp`, `mcp-types`, `starlette`, `uvicorn`, `httpx2`, `httpcore2`, `jsonschema`, `cryptography`, `anyio`, `sse-starlette` and support |
+| `fastapi` | 2 s | 7 | `fastapi`, `python-jose`, `ecdsa`, `rsa`, `pyasn1`, `six`, `annotated-doc` |
+| `flask` | 2 s | 6 | `flask`, `werkzeug`, `jinja2`, `markupsafe`, `itsdangerous`, `blinker` |
+| `autogen` | 3 s | 6 | `pyautogen`, `autogen-agentchat`, `autogen-core`, `protobuf`, `pillow`, `jsonref` |
+
+Two combined installs, each into its own fresh venv, for comparison:
+
+| Install line | Wall time | Total distributions |
+|---|---|---|
+| `[dev,crypto,mcp]` (`/tmp/al18-probe2`) | 6 s | 44 |
+| `[dev,all]` (`/tmp/al18-extras`) | 14 s | 63 |
+
+So the measured cost of making the receipt tests and the mcp integration tests run on
+push is 24 distributions and roughly 1 second of warm-cache install time on top of
+`dev`, and it recovers 16 tests. Going all the way to `[dev,all]` costs 19 further
+distributions, including `pillow` and `protobuf`, and recovers nothing.
+
+`ci.yml` was not edited. The change is David's to make.
+
+---
+
+### Two observations, neither acted on
+
+1. `pip` built the editable wheel as `agentlock-1.7.0`, from `pyproject.toml:7` and
+   `agentlock/__init__.py:37`, which agree with each other. The version bump for a
+   v1.8.0 release has not happened yet, which is expected at this point in the branch
+   and is noted only because it appears in the install output quoted above.
+2. The suite passes unchanged on CPython 3.14.6, which is outside the declared
+   `requires-python = ">=3.10"` floor in the direction nobody tests, and outside CI's
+   matrix. That is a data point for a future matrix decision, not a recommendation.
+
+### What increment 3b closed
+
+The mcp half of the open item carried from STEP 0f and AMENDMENT 5 is closed. The R2
+test executes against the real MCP SDK at version 2.2.0 and passes, the denial is
+observed leaving the numbered Step 8 block, and the integration imports cleanly across
+the 1.x to 2.x boundary that the unpinned extra crosses.
+
+The autogen half is not closed and is now known to be unclosable by an install line
+alone. That is a stronger and more useful result than the green row the freeze
+predicted.
+
+The CI half is not closed either, by design: this increment touched no CI file. What
+it produced is the measured input for that decision, above, including the fact that
+CI's real figure on push today is `1479 passed, 24 skipped` and not the `1493 passed,
+10 skipped` that every prior section of this document reports from a host whose global
+site-packages happens to contain PyNaCl.
+
+The venvs `/tmp/al18-extras`, `/tmp/al18-probe`, `/tmp/al18-probe2` and
+`/tmp/al18-probe313` are left in place. This checkout's environment and every global
+site-packages directory were not modified.
