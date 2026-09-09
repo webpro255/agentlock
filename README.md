@@ -334,18 +334,28 @@ Full feature history:
 [v1.3](docs/history.md#v13-provenance-lineage-gating--deferred-commit).
 Changelog: [CHANGELOG.md](CHANGELOG.md).
 
-## Paper
+## Citing
 
 Provenance-Based Pre-Action Authorization for LLM Agents (Grice, 2026).
 DOI: 10.5281/zenodo.21270300. The v1.4 selective-gating evaluation was
 pre-registered before the benchmark runs; prediction files and the full
 benchmark report ship with the release.
 
-If you use AgentLock in your research, please cite:
+Selective Provenance Gating: Recovering Agent Utility Where Recovery Is
+Sound (Grice, 2026). DOI: 10.5281/zenodo.21363120. It builds on the
+first paper and evaluates the selective action-class gating introduced
+in v1.4.
+
+If you use AgentLock in your research, please cite the paper that
+matches the mechanism you rely on:
 
 > Grice, D. (2026). *Provenance-Based Pre-Action Authorization for LLM Agents:
 > A Structural Defense Evaluated on AgentDojo with AgentLock.* Zenodo.
 > https://doi.org/10.5281/zenodo.21270300
+
+> Grice, D. (2026). *Selective Provenance Gating: Recovering Agent Utility
+> Where Recovery Is Sound.* Zenodo.
+> https://doi.org/10.5281/zenodo.21363120
 
 ```bibtex
 @misc{grice2026agentlock,
@@ -358,6 +368,20 @@ If you use AgentLock in your research, please cite:
   url          = {https://doi.org/10.5281/zenodo.21270300}
 }
 ```
+
+```bibtex
+@misc{grice2026selective,
+  author       = {Grice, David},
+  title        = {Selective Provenance Gating: Recovering Agent Utility
+                  Where Recovery Is Sound},
+  year         = {2026},
+  publisher    = {Zenodo},
+  doi          = {10.5281/zenodo.21363120},
+  url          = {https://doi.org/10.5281/zenodo.21363120}
+}
+```
+
+`CITATION.cff` at the repository root carries the software citation.
 
 *Research commits authored as `schen-analytics` were made under an alternate
 GitHub identity of the author, configured on the research machine
