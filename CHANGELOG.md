@@ -7,13 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.8.0] - unreleased
+## [1.8.0] - 2026-09-09
 
 The recipient release. Pipeline Step 8 was a comment block from v1.0 through v1.7.0: the `recipient` argument was threaded end to end and then discarded, and `RECIPIENT_NOT_ALLOWED` existed only as an enum member that nothing raised. It is now enforced.
 
 **The claim, at the strength the measurements support:**
 
 > For a tool registered at permissions version 1.5 or later, a nonempty recipient is checked against the tool's `scope.allowed_recipients` at Step 8, and a recipient the policy does not admit denies with reason `recipient_not_allowed`. Blocks at version 1.4 and below take the same path they took in v1.7.0.
+
+Suite, both runs with `pip install -e ".[dev,all]"` and 0 failed: **1495 passed, 8 skipped on CPython 3.14.6**, and **1496 passed, 7 skipped on CPython 3.13.14**. The one test between them is the AutoGen integration test, which executes on 3.13 and skips on 3.14 because the `autogen` extra resolves only below 3.14 (see below). The 7 skips common to both interpreters are the pre-increment-3 cross-hop baselines carried from 1.7.0, which are engine-state skips no install line can clear. A bare `pip install -e ".[dev]"` runs **1479 passed, 24 skipped**, and `pip install -e ".[dev,crypto,mcp]"`, the line CI now uses, reproduces the 3.14 figure exactly.
 
 ### Added
 
@@ -26,6 +28,7 @@ The recipient release. Pipeline Step 8 was a comment block from v1.0 through v1.
 - **`recipient_allowlist` on `ScopeConfig`.** A list of strings, empty by default. Entries are full addresses or domain entries beginning with `@`, and the field is consulted only under the `allowlist` policy.
 - **`recipient_parameter` on `ScopeConfig`.** The name of one top-level key in the tool's `parameters` that carries the recipient, declared in the trusted permission block and read by the gate. `None` by default, meaning no extraction. This is what makes Step 8 reachable from an adapter: through v1.7.0 the step only fired when a caller passed `recipient=` explicitly, which no shipped adapter does. The gate reads exactly the declared key at the top level. There is no scan of the parameter dict, no descent into nested values, and no guessing from key names.
 - **Recipient sets.** When the declared parameter carries a list or tuple of strings, every entry is evaluated against the policy and the first denial wins. A single string is evaluated as a set of one. An explicit `recipients` tuple on `RequestContext` carries the set to the policy engine and takes precedence over the single `recipient` field when nonempty.
+- **`CITATION.cff` at the repository root.** Cites the software and both papers, with the ORCID of the author and the two Zenodo DOIs. The README gains a `Papers` section and two DOI badges alongside it.
 
 ### Changed
 
@@ -35,6 +38,11 @@ The recipient release. Pipeline Step 8 was a comment block from v1.0 through v1.
 - **A caller assertion may not contradict the declared parameter.** When a caller passes `recipient=` and the declared parameter also carries a recipient, the two must agree: the asserted address, normalized, must be the sole member of the normalized declared set. Disagreement is a fault and denies with `recipient_not_allowed`. Neither value is trusted over the other and neither appears in the denial detail, which names only the kind of fault.
 - **A malformed declared parameter denies.** When the declared key is present but carries neither a string nor a list of strings, no recipient can be resolved from it and the request is denied without inspecting the value. A declared key carrying `None`, an empty string, or an empty list is not malformed: it carries no recipient, and the step is skipped as it is when no recipient is supplied at all. Both faults deny under every recipient policy, `any` included, because a request that is malformed or self-contradictory is defective regardless of where it is addressed.
 - **`RATE_LIMITED` is raised as the enum member** at `exceptions.py` rather than the raw string `"rate_limited"`, and the audit call site in `gate.py` passes `DenialReason.RATE_LIMITED.value` so the stored reason stays a plain `str`. The wire value is unchanged in both paths.
+- **CI installs the `crypto` and `mcp` extras.** The workflow install step is now `pip install -e ".[dev,crypto,mcp]"`. It was `pip install -e ".[dev]"`. Those two extras are the whole of what buys executed tests: measured, `[dev,crypto,mcp]` and `[dev,all]` produce an identical suite result, and the `fastapi`, `flask` and `autogen` extras add no executed test between them on the interpreters CI runs.
+- **The signed-receipt tests were not executing in CI before this release.** Under the old `[dev]` install line the suite reports 1479 passed and 24 skipped, and 14 of those skips read `PyNaCl not installed`. Two of the 14 are v1.8 tests, so the signed-receipt behaviour of the feature this release ships had no CI coverage on push. The gap was invisible in local runs because the host interpreter used for development carries PyNaCl in its global site-packages, so those tests always ran there and never appeared in a skip list. The new install line closes it.
+- **The `autogen` extra is pinned to `pyautogen>=0.2,<0.10; python_version < '3.14'`**, in both the `autogen` extra and the `all` extra. `pyautogen` 0.10.0 is a proxy distribution for `autogen-agentchat`: it ships a single `pyautogen/__init__.py` and provides no top-level `autogen` module at all, so `agentlock.integrations.autogen`, which imports `autogen`, raises `ImportError` with the unpinned extra installed. The pinned range resolves to 0.9.0, which does provide the module. **AutoGen support therefore resolves only below Python 3.14**, because every `pyautogen` release in that range caps `Requires-Python` at `<3.14` or lower. The environment marker is what keeps that from becoming a packaging regression: on 3.14 the requirement drops out, so `agentlock[autogen]` and `agentlock[all]` still install, the `autogen` extra resolves to nothing, `import autogen` fails as before, and the AutoGen integration test skips. Without the marker a bare pin would make `agentlock[all]` uninstallable on 3.14 while `requires-python` stays `>=3.10` with no upper bound. The other extras are unaffected.
+- **The build pins `hatchling<1.30`.** hatchling 1.30.0 and later emit core metadata 2.5. The pin holds the wheel at `Metadata-Version: 2.4`, the level 1.7.0 shipped.
+- **The committed schema files reproduce from their source again.** In `schema/agentlock-v1.4.json` the `ActionClassConfig` and `LineagePolicyConfig` description values carried an em dash at eight positions, and in `schema/agentlock-v1.3.json` the `LineagePolicyConfig` value carried it at two more, all left over from docstrings that were edited after the files were generated. Every one of those values now matches the current docstring exactly. Three lines change across the two files, the descriptions parse as before, and no field, type, or structure moves.
 
 ### Limitations
 

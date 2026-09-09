@@ -34,7 +34,7 @@ Copyright 2026 David Grice
 SPDX-License-Identifier: AGPL-3.0-or-later
 """
 
-__version__ = "1.7.0"
+__version__ = "1.8.0"
 
 from agentlock.action_class_audit import (
     ActionClassAudit,

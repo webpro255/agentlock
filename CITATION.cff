@@ -1,0 +1,35 @@
+cff-version: 1.2.0
+message: "If you use AgentLock, cite the software and the paper that matches the mechanism you rely on."
+type: software
+title: "AgentLock"
+abstract: "Provenance-based pre-action authorization for AI agent tool calls. Gates consequential actions on where a value came from, not what it says."
+authors:
+  - family-names: Grice
+    given-names: David
+    orcid: "https://orcid.org/0009-0005-5388-123X"
+version: 1.8.0
+date-released: 2026-09-09
+license: AGPL-3.0
+repository-code: "https://github.com/webpro255/agentlock"
+url: "https://agentlock.dev"
+keywords:
+  - prompt injection
+  - LLM agents
+  - provenance
+  - tool-call authorization
+  - information-flow control
+references:
+  - type: article
+    title: "Provenance-Based Pre-Action Authorization for LLM Agents: A Structural Defense Evaluated on AgentDojo with AgentLock"
+    authors:
+      - family-names: Grice
+        given-names: David
+    year: 2026
+    doi: 10.5281/zenodo.21270300
+  - type: article
+    title: "Selective Provenance Gating: Recovering Agent Utility Where Recovery Is Sound"
+    authors:
+      - family-names: Grice
+        given-names: David
+    year: 2026
+    doi: 10.5281/zenodo.21363120

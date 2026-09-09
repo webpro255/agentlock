@@ -415,7 +415,7 @@
     },
     "LineagePolicyConfig": {
       "additionalProperties": false,
-      "description": "Governs provenance-lineage gating of tool calls (v1.3).\n\nA tool is gated purely on the *provenance* of what is already in the\nsession's context window \u2014 not on the content of its parameters.  If\nuntrusted content (authority ``UNTRUSTED``) has entered context, a\ngated action (financial / external / bulk) is blocked.  This is the\nopposite of a content rule: it never inspects the payload, only where\nthe session's context came from.\n\nWhen ``require_post_authoritative`` is True, only untrusted content\nthat entered *after* the last authoritative (user/system) message\ntaints the action \u2014 an untrusted document read before the user's\ninstruction does not, but one read after it does.",
+      "description": "Governs provenance-lineage gating of tool calls (v1.3).\n\nA tool is gated purely on the *provenance* of what is already in the\nsession's context window -- not on the content of its parameters.  If\nuntrusted content (authority ``UNTRUSTED``) has entered context, a\ngated action (financial / external / bulk) is blocked.  This is the\nopposite of a content rule: it never inspects the payload, only where\nthe session's context came from.\n\nWhen ``require_post_authoritative`` is True, only untrusted content\nthat entered *after* the last authoritative (user/system) message\ntaints the action -- an untrusted document read before the user's\ninstruction does not, but one read after it does.",
       "properties": {
         "enabled": {
           "default": false,
