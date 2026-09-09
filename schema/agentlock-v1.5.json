@@ -732,6 +732,18 @@
           },
           "title": "Recipient Allowlist",
           "type": "array"
+        },
+        "recipient_parameter": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Recipient Parameter"
         }
       },
       "title": "ScopeConfig",

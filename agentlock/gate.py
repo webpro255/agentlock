@@ -68,6 +68,7 @@ from agentlock.policy import (
     ActionFlags,
     PolicyEngine,
     RequestContext,
+    _normalize_recipient,
     active_lineage_policy,
     lineage_gated_action,
 )
@@ -844,6 +845,45 @@ class AuthorizationGate:
             _param_outcome.update({"ran": False, "reason": _reason})
             _novel_outcome.update({"ran": False, "reason": _reason})
 
+        # v1.5 D18 -- the declared recipient parameter.  The trusted
+        # permission block names one top-level key in ``parameters``; the gate
+        # reads that key and nothing else.  No scan, no nesting, no guessing.
+        # LOCALS, deliberately, in the discipline documented above: this block
+        # writes nothing into ``request_metadata`` and nothing into
+        # ``parameters``, so what ``InjectionFilter`` sees at pipeline step 6
+        # is identical whether the extraction ran or not.
+        _v15 = version_at_least(permissions.version, (1, 5))
+        resolved_recipients: tuple[str, ...] = ()
+        recipient_fault = ""
+        _rp = permissions.scope.recipient_parameter
+        if _v15 and _rp and isinstance(parameters, dict) and _rp in parameters:
+            _raw = parameters[_rp]
+            if (
+                _raw is None
+                or _raw == ""
+                or (isinstance(_raw, list | tuple) and len(_raw) == 0)
+            ):
+                # Declared but carrying nothing: no recipient from the
+                # parameter, and not a fault.  D12's skip is preserved.
+                pass
+            elif isinstance(_raw, str):
+                resolved_recipients = (_raw,)
+            elif isinstance(_raw, list | tuple) and all(
+                isinstance(x, str) for x in _raw
+            ):
+                resolved_recipients = tuple(_raw)
+            else:
+                recipient_fault = "malformed_parameter"
+
+            # D20 -- the caller may assert a recipient, but it may not
+            # contradict the block's declared parameter.  Disagreement is a
+            # fault; it is not resolved in either direction.
+            if resolved_recipients and recipient:
+                _asserted = _normalize_recipient(recipient)
+                _declared = {_normalize_recipient(r) for r in resolved_recipients}
+                if _declared != {_asserted}:
+                    recipient_fault = "assertion_disagrees"
+
         # Build request context
         ctx = RequestContext(
             user_id=user_id,
@@ -853,6 +893,8 @@ class AuthorizationGate:
             record_count=record_count,
             recipient=recipient,
             known_contacts=resolved_known_contacts,
+            recipients=resolved_recipients,
+            recipient_fault=recipient_fault,
             is_bulk=is_bulk,
             is_external=is_external,
             is_financial=is_financial,

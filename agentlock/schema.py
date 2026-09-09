@@ -104,6 +104,9 @@ class ScopeConfig(BaseModel):
     # Entries are full addresses or domain entries beginning with "@",
     # consulted only under RecipientPolicy.ALLOWLIST.
     recipient_allowlist: list[str] = Field(default_factory=list)
+    # Top-level key in ``parameters`` that carries the recipient; declared
+    # here, read by the gate, never asserted by the caller.
+    recipient_parameter: str | None = None
 
     model_config = {"extra": "forbid"}
 

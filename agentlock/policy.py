@@ -51,6 +51,12 @@ class RequestContext:
         recipient: For outbound tools, the target recipient.
         known_contacts: Normalized recipient addresses carried by the
             session, supplied by the deployer at session creation.
+        recipients: For outbound tools, the full set of target recipients,
+            resolved by the gate from the tool's declared recipient
+            parameter.  Takes precedence over ``recipient`` when nonempty.
+        recipient_fault: Why the gate could not resolve a usable recipient
+            from the declared parameter.  Exactly one of "",
+            "malformed_parameter", or "assertion_disagrees".
         is_bulk: Whether this is a bulk operation.
         is_external: Whether this sends data externally.
         is_financial: Whether this involves financial operations.
@@ -74,6 +80,8 @@ class RequestContext:
     record_count: int = 1
     recipient: str = ""
     known_contacts: frozenset[str] = field(default_factory=frozenset)
+    recipients: tuple[str, ...] = ()
+    recipient_fault: str = ""
     is_bulk: bool = False
     is_external: bool = False
     is_financial: bool = False
@@ -179,6 +187,33 @@ def _recipient_is_malformed(value: str) -> bool:
     if "," in value or ";" in value:
         return True
     return any(ord(c) < 32 or ord(c) == 127 or c.isspace() for c in value)
+
+
+# Recipient faults, per D21 as extended by AMENDMENT 3.  The gate sets
+# ``RequestContext.recipient_fault`` when it cannot resolve a usable recipient
+# from the tool's declared recipient parameter.  Every detail here names the
+# fault kind and carries no recipient value, declared or asserted.
+_RECIPIENT_FAULTS: dict[str, tuple[str, str]] = {
+    "malformed_parameter": (
+        "The declared recipient parameter does not carry a string or a list "
+        "of strings, so no recipient could be resolved from it.",
+        "Send the declared recipient parameter as one address string, or as "
+        "a list of address strings.",
+    ),
+    "assertion_disagrees": (
+        "The asserted recipient disagrees with the recipient the declared "
+        "parameter carries; neither is trusted over the other.",
+        "Assert no recipient, or assert one that matches the declared "
+        "recipient parameter.",
+    ),
+}
+
+# Fail safe: a fault kind this engine does not recognize still denies.
+_RECIPIENT_FAULT_UNKNOWN: tuple[str, str] = (
+    "The gate reported an unrecognized recipient fault; denied by default.",
+    "Report this: the gate and the policy engine disagree about the set of "
+    "recipient fault kinds.",
+)
 
 
 def active_lineage_policy(permissions: AgentLockPermissions):
@@ -590,8 +625,11 @@ class PolicyEngine:
 
         # ── End filter chains ─────────────────────────────────────────
 
-        # 8. Recipient policy (only if recipient is provided)
-        if context.recipient and version_at_least(permissions.version, (1, 5)):
+        # 8. Recipient policy (only if a recipient, a recipient set, or a
+        # recipient fault is provided)
+        if version_at_least(permissions.version, (1, 5)) and (
+            context.recipient or context.recipients or context.recipient_fault
+        ):
             recipient_decision = self._evaluate_recipient(scope, context)
             if recipient_decision is not None:
                 return recipient_decision
@@ -941,18 +979,51 @@ class PolicyEngine:
     def _evaluate_recipient(
         self, scope: ScopeConfig, context: RequestContext
     ) -> PolicyDecision | None:
-        """Enforce ``scope.allowed_recipients`` against the target recipient.
+        """Enforce ``scope.allowed_recipients`` against every target recipient.
 
-        Returns ``None`` when the recipient is permitted, so the caller falls
-        through to the next pipeline step.  Every other outcome is a DENY.
+        Returns ``None`` when every recipient is permitted, so the caller
+        falls through to the next pipeline step.  Every other outcome is a
+        DENY, and the first denial in candidate order wins.
+
+        A recipient fault is checked before anything else and denies under
+        every policy member, ``RecipientPolicy.ANY`` included.  A malformed
+        declared parameter, or a caller assertion that disagrees with the
+        declared parameter, is a defect in the request itself rather than a
+        verdict about where the request is addressed, and an unrestricted
+        recipient policy waives destinations, not well-formedness.  The
+        detail names the fault kind and carries no recipient value.
+
+        Fails safe: an unrecognized fault kind denies, and so does an
+        unrecognized policy value.
+        """
+        if context.recipient_fault:
+            detail, suggestion = _RECIPIENT_FAULTS.get(
+                context.recipient_fault, _RECIPIENT_FAULT_UNKNOWN
+            )
+            return self._recipient_denial(detail=detail, suggestion=suggestion)
+
+        if scope.allowed_recipients is RecipientPolicy.ANY:
+            return None
+
+        candidates = context.recipients or (context.recipient,)
+        for candidate in candidates:
+            decision = self._evaluate_one_recipient(scope, context, candidate)
+            if decision is not None:
+                return decision
+        return None
+
+    def _evaluate_one_recipient(
+        self, scope: ScopeConfig, context: RequestContext, value: str
+    ) -> PolicyDecision | None:
+        """Enforce ``scope.allowed_recipients`` against one target recipient.
+
+        Returns ``None`` when this recipient is permitted.  Every other
+        outcome is a DENY.
 
         Fails safe: an unrecognized policy value denies.
         """
         policy = scope.allowed_recipients
-        if policy is RecipientPolicy.ANY:
-            return None
-
-        recipient = _normalize_recipient(context.recipient)
+        recipient = _normalize_recipient(value)
 
         if _recipient_is_malformed(recipient):
             return self._recipient_denial(
