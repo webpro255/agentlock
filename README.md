@@ -16,6 +16,7 @@
 
 <div align="center">
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22681594.svg)](https://doi.org/10.5281/zenodo.22681594)
 [![Paper 1 DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21270300.svg)](https://doi.org/10.5281/zenodo.21270300)
 [![Paper 2 DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21363120.svg)](https://doi.org/10.5281/zenodo.21363120)
 
@@ -356,6 +357,8 @@ matches the mechanism you rely on:
 > Grice, D. (2026). *Selective Provenance Gating: Recovering Agent Utility
 > Where Recovery Is Sound.* Zenodo.
 > https://doi.org/10.5281/zenodo.21363120
+
+Software archive (all versions): https://doi.org/10.5281/zenodo.22681594. This release: https://doi.org/10.5281/zenodo.22681595.
 
 ```bibtex
 @misc{grice2026agentlock,
