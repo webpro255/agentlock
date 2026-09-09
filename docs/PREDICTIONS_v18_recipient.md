@@ -2873,3 +2873,265 @@ site-packages happens to contain PyNaCl.
 The venvs `/tmp/al18-extras`, `/tmp/al18-probe`, `/tmp/al18-probe2` and
 `/tmp/al18-probe313` are left in place. This checkout's environment and every global
 site-packages directory were not modified.
+
+---
+
+## RELEASE FREEZE (2026-09-09): v1.8.0
+
+Written on `v1.8-recipient-enforcement` at `fdb3190 docs: AMENDMENT 6, increment 3b
+measured`, working tree clean. This section appends to this document and edits
+nothing above it. It is written before any release edit exists: no version bump, no
+CHANGELOG entry, no CITATION file, no CI change, no schema fix.
+
+This is the release session for v1.8.0. It produces the release commit and nothing
+beyond it. No merge, no tag, no push, no upload.
+
+---
+
+### STEP 0a: the pinned autogen probe, measured before the predictions are frozen
+
+STEP 0a is a probe, not a prediction. It runs first because prediction T1 is
+conditional on its result. The environment is `/tmp/al18-probe313`, the CPython
+3.13.14 venv built in increment 3b and recorded in AMENDMENT 6, which already had
+`agentlock` installed editable with `[dev,all]` and therefore carried
+`pyautogen 0.10.0`, the proxy distribution that provides no `autogen` module. The
+venv was present, so it was not recreated. The only command run against it before
+the measurements below was the pin install.
+
+```
+$ /tmp/al18-probe313/bin/pip install "pyautogen>=0.2,<0.10"
+...
+Downloading pyautogen-0.9.0-py3-none-any.whl (781 kB)
+Installing collected packages: urllib3, termcolor, regex, python-dotenv, diskcache, charset_normalizer, certifi, requests, httpcore, asyncer, tiktoken, httpx, docker, pyautogen
+  Attempting uninstall: pyautogen
+    Found existing installation: pyautogen 0.10.0
+    Uninstalling pyautogen-0.10.0:
+      Successfully uninstalled pyautogen-0.10.0
+
+Successfully installed asyncer-0.0.8 certifi-2026.7.22 charset_normalizer-3.5.1 diskcache-5.6.3 docker-7.2.0 httpcore-1.0.9 httpx-0.28.1 pyautogen-0.9.0 python-dotenv-1.2.3 regex-2026.9.3 requests-2.34.2 termcolor-3.3.0 tiktoken-0.14.0 urllib3-2.7.0
+```
+
+Resolved version, verbatim:
+
+```
+$ /tmp/al18-probe313/bin/pip show pyautogen
+Name: pyautogen
+Version: 0.9.0
+Summary: A programming framework for agentic AI
+Home-page: https://ag2.ai/
+Author: 
+Author-email: Chi Wang & Qingyun Wu <support@ag2.ai>
+License: 
+Location: /tmp/al18-probe313/lib/python3.13/site-packages
+Requires: anyio, asyncer, diskcache, docker, httpx, packaging, pydantic, python-dotenv, termcolor, tiktoken
+Required-by: 
+```
+
+`pyautogen>=0.2,<0.10` resolves to **0.9.0**, the top of the line that ships a real
+top-level `autogen` package. It replaced 0.10.0 in place. Fourteen distributions were
+added, none of which the unpinned extra pulls, because the proxy distribution has one
+dependency and 0.9.0 has ten.
+
+Import, verbatim:
+
+```
+$ /tmp/al18-probe313/bin/python -c "import autogen; print(autogen.__version__)"
+0.9.0
+$ echo $?
+0
+```
+
+**The import succeeds.** This is the fact AMENDMENT 6 recorded as failing under the
+unpinned extra, and it is the first time in this document that `import autogen`
+returns a module.
+
+The integration test file, verbatim, whole run:
+
+```
+$ /tmp/al18-probe313/bin/python -m pytest tests/test_v18_recipient_integrations.py -v -rs
+============================= test session starts ==============================
+platform linux -- Python 3.13.14, pytest-9.1.1, pluggy-1.6.0 -- /tmp/al18-probe313/bin/python
+cachedir: .pytest_cache
+rootdir: /home/n1trolab/agentlock-v1.4
+configfile: pyproject.toml
+plugins: asyncio-1.4.0, cov-7.1.0, anyio-4.15.1
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 2 items
+
+tests/test_v18_recipient_integrations.py::TestAutogenFunctionMap::test_recipient_enforcement_through_the_function_map PASSED [ 50%]
+tests/test_v18_recipient_integrations.py::TestMcpServerWrapper::test_recipient_enforcement_through_the_call_tool_handler PASSED [100%]
+
+============================== 2 passed in 0.43s ===============================
+```
+
+Two passed, zero skipped, zero failed. The `-rs` short summary section is absent
+because nothing skipped.
+
+**The R1 table executed for the first time.** The open item carried forward from
+STEP 0f of the increment 3a freeze, restated at the end of AMENDMENT 5, and left
+explicitly unclosed by AMENDMENT 6, is closed by this probe: the autogen half of the
+increment 3a work now runs against a real `pyautogen` and passes. AMENDMENT 6 stated
+that closing it "means a decision about `pyproject.toml:50`", and named as the first
+of three options that "the extra either names a distribution that provides the module
+the integration imports". This probe measures that option and finds it available.
+
+**Verdict for the conditional in T1: the import succeeds and the autogen test passes,
+so the pin branch is taken.**
+
+#### One environment fact recorded here, because it constrains where the pin can be verified
+
+`pyautogen 0.9.0` carries `Requires-Python >=3.9,<3.14`. AMENDMENT 6 measured this
+already, in the `pip install --dry-run "pyautogen==0.2.35"` output quoted there, which
+lists the bound for 0.9.0 explicitly. `/tmp/al18-probe313` is CPython 3.13.14 and
+satisfies it. `/tmp/al18-extras` is CPython 3.14.6 and does not. That is a fact about
+the two environments, recorded now rather than discovered later; it is not a
+prediction and it does not alter one.
+
+---
+
+### Predictions for the v1.8.0 release commit
+
+Frozen verbatim as given. T1 is stated with its conditional intact and the branch
+selected by STEP 0a marked.
+
+#### T1. The autogen extra
+
+Conditional, decided by 0a: if 0a imports and the autogen test passes, the release
+pins the extra to `pyautogen>=0.2,<0.10` in both the `autogen` and `all` extras and
+the CHANGELOG states the pin, the reason (0.10.0 is a proxy distribution with no
+`autogen` module), and that the pinned range requires Python below 3.14. If 0a fails,
+the extra is left as is and the CHANGELOG Limitations paragraph states that the
+autogen extra does not currently resolve to an importable module on Python 3.13 or
+3.14 and the integration has no executed test in any environment.
+
+**Branch selected by 0a: the pin branch.**
+
+#### T2. Version
+
+Version 1.8.0 in `pyproject.toml` and `agentlock/__init__.py`, and nowhere else says
+1.7.0 as the current version (`grep -rn "1\.7\.0" README.md pyproject.toml
+agentlock/__init__.py` returns only history table rows or CHANGELOG entries).
+
+#### T3. CHANGELOG
+
+CHANGELOG 1.8.0 heading carries today's date; the entry adds: measured suite figures
+(1495 passed 8 skipped with `[dev,all]` on this machine, 1479 passed 24 skipped with
+`[dev]` only), the CI install change, and the PyNaCl finding (receipt tests were not
+executing in CI before this release). No corpus mention. `grep -i agentshield` over
+the diff returns 0.
+
+#### T4. CI
+
+`.github/workflows/ci.yml` install line becomes `pip install -e ".[dev,crypto,mcp]"`.
+No other CI change.
+
+#### T5. Schema
+
+`schema/agentlock-v1.4.json`: the two `\u2014` sequences in the `ActionClassConfig` and
+`LineagePolicyConfig` descriptions (AMENDMENT 2 finding) are replaced so that the file
+matches the current docstrings, and after the edit: `json.load` succeeds, `git diff`
+shows exactly two changed lines, and a grep for `\u2014` (both the escape sequence and
+the literal byte) across the repo excluding `.git` returns 0.
+
+#### T6. README
+
+`README.md`: the versions table gains a 1.8.0 row in the existing style; the badge row
+gains two Zenodo DOI badges; a `## Papers` section is added immediately before the
+first install or quickstart heading. Exact text below. Nothing else in README changes
+except what a 1.7.0 to 1.8.0 update requires.
+
+#### T7. CITATION
+
+`CITATION.cff` at repo root, exact text below, validated by
+`python -c "import yaml; yaml.safe_load(open('CITATION.cff'))"` (install `pyyaml` in
+the probe venv if needed, not in the repo).
+
+#### T8. Build
+
+`rm -rf dist build`; `python -m build` in `/tmp/al18-extras`; `twine check dist/*`
+passes; the wheel's METADATA reports `Version: 1.8.0` and `Metadata-Version: 2.4` (the
+level 1.7.0 shipped; if the toolchain emits 2.5, pin hatchling as the 1.7.0 release did
+and record it). A fresh venv at `/tmp/al18-wheel` installing the wheel with
+`[crypto,mcp]` runs `python -c "import agentlock; print(agentlock.__version__)"` and
+prints 1.8.0, and imports `agentlock.integrations.mcp`.
+
+#### T9. Suite
+
+Full suite in `/tmp/al18-extras` after reinstall: 1495 passed, 8 skipped, plus 1 more
+passed and 1 fewer skipped if T1's pin branch was taken. `ruff` clean.
+
+#### T10. Files
+
+Files in the release commit: `pyproject.toml`, `agentlock/__init__.py`, `CHANGELOG.md`,
+`README.md`, `CITATION.cff`, `.github/workflows/ci.yml`,
+`schema/agentlock-v1.4.json`. Nothing else.
+
+---
+
+### Exact text frozen for T6 and T7
+
+README badge lines, added to the existing badge row:
+
+```
+[![Paper 1 DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21270300.svg)](https://doi.org/10.5281/zenodo.21270300)
+[![Paper 2 DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21363120.svg)](https://doi.org/10.5281/zenodo.21363120)
+```
+
+README Papers section:
+
+```
+## Papers
+
+1. Grice, D. (2026). Provenance-Based Pre-Action Authorization for LLM Agents: A Structural Defense Evaluated on AgentDojo with AgentLock. Zenodo. https://doi.org/10.5281/zenodo.21270300
+2. Grice, D. (2026). Selective Provenance Gating: Recovering Agent Utility Where Recovery Is Sound. Zenodo. https://doi.org/10.5281/zenodo.21363120
+
+Paper 2 builds on Paper 1. Each record pins the engine commit it measured.
+```
+
+`CITATION.cff`:
+
+```
+cff-version: 1.2.0
+message: "If you use AgentLock, cite the software and the paper that matches the mechanism you rely on."
+type: software
+title: "AgentLock"
+abstract: "Provenance-based pre-action authorization for AI agent tool calls. Gates consequential actions on where a value came from, not what it says."
+authors:
+  - family-names: Grice
+    given-names: David
+    orcid: "https://orcid.org/0009-0005-5388-123X"
+version: 1.8.0
+date-released: 2026-09-09
+license: AGPL-3.0
+repository-code: "https://github.com/webpro255/agentlock"
+url: "https://agentlock.dev"
+keywords:
+  - prompt injection
+  - LLM agents
+  - provenance
+  - tool-call authorization
+  - information-flow control
+references:
+  - type: article
+    title: "Provenance-Based Pre-Action Authorization for LLM Agents: A Structural Defense Evaluated on AgentDojo with AgentLock"
+    authors:
+      - family-names: Grice
+        given-names: David
+    year: 2026
+    doi: 10.5281/zenodo.21270300
+  - type: article
+    title: "Selective Provenance Gating: Recovering Agent Utility Where Recovery Is Sound"
+    authors:
+      - family-names: Grice
+        given-names: David
+    year: 2026
+    doi: 10.5281/zenodo.21363120
+```
+
+---
+
+### Stop conditions for this session
+
+Any MISMATCH in T1 through T10, any test failure, any `twine check` failure, or any
+path in the release commit outside the T10 list: do not commit, report the raw output,
+stop. The release commit is produced only if the table is all MATCH.
