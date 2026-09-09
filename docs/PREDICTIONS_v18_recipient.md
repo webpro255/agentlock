@@ -1582,3 +1582,159 @@ Q6 is unaffected. `recipient_fault` is a local in the gate and then a
 D13 is preserved rather than weakened. The fault denies at pipeline position 8, the
 position D13 assigns it, and reaches the signer through
 `agentlock/gate.py:1581` like every other policy denial, which is what D6 requires.
+
+---
+
+## AMENDMENT 4 (2026-09-09): increment 2 built and matched
+
+Build commit: `4560e53 feat: read the declared recipient parameter in the gate, recipient sets and faults`.
+
+Measured on `v1.8-recipient-enforcement`. AMENDMENT 3, which extended D21 with the
+`recipient_fault` channel, was committed at `93a4ff0` before any increment 2 build
+change was committed.
+
+### Q1 to Q7
+
+| Q | Verdict | Evidence |
+|---|---|---|
+| Q1 | MATCH | `agentlock/schema.py:109` declares `recipient_parameter: str \| None = None`, beside `allowed_recipients` (`:101`) and `recipient_allowlist` (`:105`). The AMENDMENT 2 envelope generator was re-run on the built tree: `cmp` reports byte-for-byte identity and both files hash to `9fa8d8cf937fdc8722a99951c3809838d6f2882843b1b4a50c90056baef222d4`. `git diff --stat -- schema/agentlock-v1.4.json` is empty. |
+| Q2 | MATCH | `32 passed in 0.02s` in the single new file `tests/test_v18_recipient_parameter.py`. Every row of the Q2 table, plus both fault kinds denying under `RecipientPolicy.ANY`, plus the no-write assertions. |
+| Q3 | MATCH | `1493 passed, 8 skipped, 14 warnings in 3.10s`, which is 1461 plus 32 new, 0 failed. Skip list identical to M7. `git diff --stat -- tests/` is empty: no existing test was edited, and `tests/test_v18_recipient.py` is unchanged. |
+| Q4 | MATCH | The M5 script rerun: call 1 denies with `recipient_not_allowed`, call 2 denies with `recipient_not_allowed`. Output below. |
+| Q5 | MATCH | `git diff --stat` and `git status --short` name only Q5 paths. Output below. |
+| Q6 | MATCH | `grep -rn "request_metadata\[" agentlock/gate.py` returns the same four writes and no fifth. Line numbers shifted by one, which Q6 permits; the set did not grow. Output below. |
+| Q7 | MATCH | `ruff check agentlock/ tests/` returns `All checks passed!` with exit 0. `grep -ri agentshield agentlock tests schema` returns 0 hits. |
+
+### Exact suite summary line
+
+```
+================= 1493 passed, 8 skipped, 14 warnings in 3.10s =================
+```
+
+Skip list, verbatim, identical to M7 and to A8:
+
+```
+SKIPPED [1] tests/test_v15_integration_confirmation.py:113: could not import 'mcp': No module named 'mcp'
+SKIPPED [5] tests/test_v16_crosshop_decision_time.py:479: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:491: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+SKIPPED [1] tests/test_v16_crosshop_decision_time.py:502: '_reachable_untrusted_entries' is present in context.py, so these pre-increment-3 baselines no longer describe the engine. The after-behavior tests in this file are the live ones.
+```
+
+### Q1, verbatim
+
+```
+$ PYTHONPATH=. python gen_schema.py > q1-regen.json
+$ cmp schema/agentlock-v1.5.json q1-regen.json && echo "byte-for-byte identical"
+byte-for-byte identical
+$ sha256sum schema/agentlock-v1.5.json q1-regen.json
+9fa8d8cf937fdc8722a99951c3809838d6f2882843b1b4a50c90056baef222d4  schema/agentlock-v1.5.json
+9fa8d8cf937fdc8722a99951c3809838d6f2882843b1b4a50c90056baef222d4  q1-regen.json
+```
+
+The generator's output on the built tree also differs from the committed v1.5 file
+at `d27b5fb` by exactly the twelve lines of the new field and nothing else, which is
+what makes the regeneration mechanical rather than a hand edit:
+
+```
+$ diff head-v1.5.json regen-v1.5.json
+734a735,746
+>         },
+>         "recipient_parameter": {
+>           "anyOf": [
+>             {
+>               "type": "string"
+>             },
+>             {
+>               "type": "null"
+>             }
+>           ],
+>           "default": null,
+>           "title": "Recipient Parameter"
+```
+
+### Q4, verbatim
+
+```
+call 1: no recipient argument, parameters={'to': 'attacker@evil.com'}
+  decision=deny  allowed=False  denial={'status': 'denied', 'reason': 'recipient_not_allowed', 'detail': "Recipient is not in the session's known contacts; rejected under recipient policy 'known_contacts_only'.", 'required_role': '', 'current_role': 'user', 'suggestion': 'Send only to an address configured as a known contact for this session.'}
+call 2: recipient='attacker@evil.com' passed explicitly
+  decision=deny  allowed=False  denial={'status': 'denied', 'reason': 'recipient_not_allowed', 'detail': "Recipient is not in the session's known contacts; rejected under recipient policy 'known_contacts_only'.", 'required_role': '', 'current_role': 'user', 'suggestion': 'Send only to an address configured as a known contact for this session.'}
+```
+
+Call 1 is the seam M5 measured as ALLOW at `e6631f4`. It now denies, on the same
+tool, the same session and the same address as call 2, with the caller passing only
+the parameter an adapter actually sends. The pre-existing explicit path is unchanged.
+
+### Q5, verbatim
+
+```
+$ git diff --stat
+ CHANGELOG.md               |  4 +++
+ agentlock/gate.py          | 42 ++++++++++++++++++++++
+ agentlock/policy.py        | 89 +++++++++++++++++++++++++++++++++++++++++-----
+ agentlock/schema.py        |  3 ++
+ schema/agentlock-v1.5.json | 12 +++++++
+ 5 files changed, 141 insertions(+), 9 deletions(-)
+$ git status --short
+ M CHANGELOG.md
+ M agentlock/gate.py
+ M agentlock/policy.py
+ M agentlock/schema.py
+ M schema/agentlock-v1.5.json
+?? tests/test_v18_recipient_parameter.py
+```
+
+AMENDMENT 3 added no path to this list. `recipient_fault` is a field on
+`RequestContext` in `agentlock/policy.py` and a local set in `agentlock/gate.py`,
+and Q5 already named both files.
+
+### Q6, verbatim
+
+```
+agentlock/gate.py:785:            request_metadata["parameters"] = parameters
+agentlock/gate.py:803:            request_metadata["lineage"] = self._context_tracker.lineage_summary(
+agentlock/gate.py:822:                    request_metadata["param_lineage"] = _match
+agentlock/gate.py:836:                    request_metadata["novel_lineage"] = _novel
+```
+
+Four writes, the same four, no fifth. Each line number is one higher than at
+`e6631f4` because the gate's import of `_normalize_recipient` added one line above
+them. Q6 anticipates the shift and constrains the set, not the positions.
+
+### Q7, verbatim
+
+```
+$ ruff check agentlock/ tests/
+All checks passed!
+$ echo $?
+0
+$ grep -ri agentshield agentlock tests schema | wc -l
+0
+```
+
+### One deviation from the build instruction, recorded
+
+The `recipient_parameter` comment in `ScopeConfig` was specified as a one-line
+comment. Its text is 118 characters and `pyproject.toml:96` sets ruff's line length
+to 100, so a single physical line would have failed the Q7 stop condition. The
+comment is therefore wrapped across two physical lines, in the style of the
+`recipient_allowlist` comment two lines above it. The text is unchanged.
+
+### What increment 2 does and does not yet cover
+
+The four in-repo integrations under `agentlock/integrations/` (`mcp.py`,
+`autogen.py`, `flask.py`, `fastapi.py`) contain six `authorize()` call sites
+(`mcp.py:167`, `autogen.py:119`, `flask.py:163`, `flask.py:271`, `fastapi.py:197`,
+`fastapi.py:290`) and zero occurrences of `recipient`, as M2 measured and as this
+increment leaves them: not one of those files is in the Q5 list and not one was
+touched. They are nonetheless now covered by this mechanism, without any adapter
+change, for every tool whose permission block declares `recipient_parameter`,
+because each of the six already forwards the caller's parameter dict to
+`authorize()` and the gate reads the declared key out of that dict itself. That is
+the point of putting the extraction in the gate rather than in the adapters: the
+trusted permission block, not the adapter, decides which parameter carries the
+recipient, and an adapter that never heard of recipients cannot get it wrong. What
+increment 2 does not do is measure that end to end. Nothing here exercises an
+adapter, and the claim that a declared block reaches Step 8 through `mcp.py:167` or
+`fastapi.py:197` is at present an inference from the shape of those call sites
+rather than a measurement of them. Increment 3 measures it.
