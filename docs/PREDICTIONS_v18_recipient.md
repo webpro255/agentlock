@@ -3135,3 +3135,179 @@ references:
 Any MISMATCH in T1 through T10, any test failure, any `twine check` failure, or any
 path in the release commit outside the T10 list: do not commit, report the raw output,
 stop. The release commit is produced only if the table is all MATCH.
+
+---
+
+## AMENDMENT 8 (2026-09-09): release predictions restated before commit B
+
+Written on `v1.8-recipient-enforcement` at `5373d12 docs: freeze v1.8.0 release
+predictions`, after the release was built and T1 through T10 were measured against the
+frozen wording, and before any release commit exists. This section appends to this
+document and edits nothing above it.
+
+The measurement pass against the frozen wording returned two MISMATCH verdicts, T5 and
+T9. Neither was a build failure. Both were defects in the frozen predictions
+themselves, and both were reported with raw output before any release commit was made.
+This amendment records the defects, restates the four predictions they touch, and
+fixes the scope of the release commit accordingly. The restated wording is what commit
+B is scored against. The original frozen wording is retained above, unaltered.
+
+One prediction that did not miss is restated here as well, T10, because the T5 fix
+adds a file to it.
+
+---
+
+### T1 restated: the pin carries an environment marker
+
+**The defect.** T1 as frozen selected the bare pin `pyautogen>=0.2,<0.10` for both the
+`autogen` extra and the `all` extra. Measured, that makes `pip install "agentlock[all]"`
+fail outright on CPython 3.14, because every `pyautogen` release in the pinned range
+caps `Requires-Python` at `<3.14` or lower and pip therefore finds no satisfying
+version:
+
+```
+$ /tmp/al18-extras/bin/pip install -e "${REPO}[dev,all]"
+ERROR: Could not find a version that satisfies the requirement pyautogen<0.10,>=0.2; extra == "all" (from agentlock[all,dev]) (from versions: 0.0.1, 0.1.0, 0.1.1rc1, 0.1.1, 0.1.2, 0.1.3, 0.1.4, 0.1.5, 0.1.6, 0.1.7, 0.1.8, 0.1.9, 0.1.10, 0.1.11, 0.1.12, 0.1.13, 0.1.14, 0.2.0b1, 0.2.0b2, 0.10.0)
+ERROR: No matching distribution found for pyautogen<0.10,>=0.2; extra == "all"
+```
+
+`pyproject.toml` declares `requires-python = ">=3.10"` with no upper bound, so the
+package claims to support 3.14 while one of its published extras cannot be installed
+there. That is a packaging regression introduced by the release, not a property of the
+test environment, and it would reach every user of `agentlock[all]` on 3.14.
+
+**Restated.** The `autogen` extra and the `all` extra carry
+
+```
+"pyautogen>=0.2,<0.10; python_version < '3.14'"
+```
+
+The marker keeps the pinned range on the interpreters where it resolves and drops the
+requirement on the ones where it cannot, so `agentlock[all]` installs on every
+interpreter the package claims to support. The reason for the upper bound is unchanged
+from T1 as frozen: `pyautogen` 0.10.0 is a proxy distribution for `autogen-agentchat`
+that ships one file and provides no top-level `autogen` module, so the guard at
+`agentlock/integrations/autogen.py:42` fails with it installed.
+
+The CHANGELOG states the marker, states that autogen support resolves only below
+Python 3.14, and states that on 3.14 the `autogen` extra resolves to nothing and the
+integration test skips, which is the behavior every measurement in AMENDMENT 6
+recorded.
+
+---
+
+### T5 restated: v1.3 carries the same drift, and the grep is scoped
+
+**The defect, in two parts.**
+
+Part one is scope. AMENDMENT 2 recorded the description drift in
+`schema/agentlock-v1.4.json` only, and T5 inherited that scope.
+`schema/agentlock-v1.3.json:418` carries the identical drift in its
+`LineagePolicyConfig` description, measured now:
+
+```
+$ grep -rn "u2014" --exclude-dir=.git .
+schema/agentlock-v1.3.json:418:      "description": "Governs provenance-lineage gating of ...
+docs/PREDICTIONS_v18_recipient.md:3030:`schema/agentlock-v1.4.json`: the two `\u2014` sequ...
+docs/PREDICTIONS_v18_recipient.md:3033:shows exactly two changed lines, and a grep for `\u...
+```
+
+Part two is the grep itself. T5 as frozen required a repo-wide zero, which is
+unreachable by construction: this document names the sequence in order to specify
+removing it, at line 900 as the literal byte and at lines 3030 and 3033 as the escape
+text, and the document is append-only with deletions 0. A prediction that can only be
+satisfied by deleting committed text from the document that states it is a defective
+prediction, not a failed one.
+
+**Restated.** `schema/agentlock-v1.3.json:418` receives the same fix as
+`schema/agentlock-v1.4.json`: the description value is replaced so that it matches the
+current docstring in `agentlock/schema.py`, exactly one line changes in that file, and
+`json.load` succeeds afterward.
+
+The zero-hit grep is scoped to the release surface:
+
+```
+agentlock/ schema/ README.md CHANGELOG.md CITATION.cff
+```
+
+Both forms are checked, the `\u2014` escape sequence and the literal em dash byte, and
+both return zero over that scope. `docs/` is out of scope for the reason above, and it
+is the only path excluded.
+
+**Count correction to AMENDMENT 2, recorded.** AMENDMENT 2 stated the two v1.4
+descriptions contain the em dash "at three positions each". Measured, it is
+**6 positions in `ActionClassConfig` and 2 in `LineagePolicyConfig`, 8 in total across
+2 lines**. The `LineagePolicyConfig` value in `schema/agentlock-v1.3.json` carries the
+same 2, for 10 across 3 lines repo-wide. The AMENDMENT 2 figure was wrong. The finding
+it supported, that the committed schema files no longer reproduce from their own
+source, was correct.
+
+---
+
+### T9 restated: both interpreters, and both figures in the CHANGELOG
+
+**The defect.** T9 as frozen fixed the verification environment to `/tmp/al18-extras`
+before STEP 0a had decided T1, then attached a conditional clause ("plus 1 more passed
+and 1 fewer skipped if T1's pin branch was taken") whose condition can never hold in
+that environment. `/tmp/al18-extras` is CPython 3.14.6 and the pinned range does not
+resolve there at any version. Under the bare pin the venv could not be reinstalled at
+all; under the marker it installs and the autogen test skips, because the extra
+resolves to nothing on 3.14. Either way the conditional clause is unsatisfiable in the
+venv T9 named. The figure it predicts is real, and it is reached on 3.13.
+
+**Restated.** Two runs, both recorded, each with its interpreter version:
+
+| Environment | Interpreter | Install line | Predicted |
+|---|---|---|---|
+| `/tmp/al18-extras` | CPython 3.14.6 | `pip install -e "${REPO}[dev,all]"` | 1495 passed, 8 skipped |
+| `/tmp/al18-probe313` | CPython 3.13.14 | `pip install -e "${REPO}[dev,all]"` | 1496 passed, 7 skipped |
+
+Under the marker, `[dev,all]` installs in both. On 3.14 the `autogen` requirement drops
+out, `import autogen` fails, and the AutoGen integration test skips, giving 8 skips: 7
+crosshop engine-state baselines plus that one. On 3.13 the requirement holds, resolves
+to `pyautogen 0.9.0`, and the test runs, giving 7 skips and one more pass.
+
+Both figures go in the CHANGELOG, each attributed to its interpreter version, rather
+than one figure presented as the suite result.
+
+`ruff check agentlock/ tests/` returns `All checks passed!` with exit 0, unchanged.
+
+---
+
+### T10 restated: eight files
+
+The T5 fix adds `schema/agentlock-v1.3.json` to the release commit. Files in commit B,
+and nothing else:
+
+```
+pyproject.toml
+agentlock/__init__.py
+CHANGELOG.md
+README.md
+CITATION.cff
+.github/workflows/ci.yml
+schema/agentlock-v1.4.json
+schema/agentlock-v1.3.json
+```
+
+Eight paths. The seventh and eighth are the two schema files; the other six are
+unchanged from T10 as frozen.
+
+---
+
+### What is unchanged
+
+T2, T3, T4, T6, T7 and T8 stand exactly as frozen and are re-scored against that
+wording, not against anything here. T8's own fallback clause was exercised during the
+first measurement pass: hatchling 1.32.0 emitted `Metadata-Version: 2.5`, so hatchling
+is pinned and the pin is recorded in AMENDMENT 9 with the version boundary that was
+measured to justify it.
+
+T3 gains no new requirement from this amendment beyond the sentences T1 and T9
+restated call for: the marker and its consequence on 3.14, and both suite figures with
+their interpreter versions.
+
+The stop condition is unchanged and now applies to the restated wording: any MISMATCH
+in T1 through T10 as restated, any test failure, any `twine check` failure, or any path
+in the release commit outside the eight above means no commit and a report of the raw
+output.
