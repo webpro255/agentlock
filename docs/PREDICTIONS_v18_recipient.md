@@ -1508,3 +1508,77 @@ Line numbers may shift. The set of writes may not grow.
 (`.github/workflows/ci.yml:32-33`), returns `All checks passed!` with exit 0.
 `grep -ri agentshield agentlock tests schema` returns 0 hits, as it does at
 `e6631f4`.
+
+---
+
+## AMENDMENT 3 (2026-09-09): D21 extended before increment 2 build
+
+Found at build time, before any increment 2 mechanism code was written, and fixed
+by amendment before code. Recorded here so the extension is on the record ahead of
+the build it governs, not read back out of the build afterwards.
+
+### The defect in D21 as frozen
+
+D19 defines the malformed-parameter outcome and D20 defines the
+assertion-disagreement outcome. Both are faults discovered by the gate during D18
+extraction, at `agentlock/gate.py:845`, well before the `RequestContext` exists.
+D21 as frozen gives the gate two channels to Step 8 and only two:
+`recipient: str` and the new `recipients: tuple[str, ...]`. Neither can carry a
+fault. A malformed parameter value produces no recipient string to place in either
+field, and an assertion disagreement is a relation between two values rather than a
+value, so it survives in neither.
+
+That leaves the gate with no way to reach Step 8 with a fault, and the only
+alternative would be for the gate to return a denial directly at the extraction
+point. A gate-side direct return is refused on two counts. It would bypass pipeline
+order, which D13 fixes at first-denial-in-pipeline-order-wins, by denying at a
+position above Step 6 and Step 7 for a fault that belongs at position 8. And it
+would bypass the signed policy-denial path, which A5 establishes reaches
+`_sign_result` only through `agentlock/gate.py:1581`, so the receipt guarantee D6
+makes for recipient denials would not hold for exactly the two outcomes D19 and D20
+introduce.
+
+### D21, extended
+
+> `RequestContext` additionally gains `recipient_fault: str = ""`, with exactly
+> three permitted values: `""`, `"malformed_parameter"`, and
+> `"assertion_disagrees"`. The gate sets it during D18 extraction and never
+> elsewhere. Step 8, when live (a nonempty `recipient`, or a nonempty `recipients`,
+> or a nonempty `recipient_fault`, at permission version 1.5 or later), checks
+> `recipient_fault` first and returns DENY `RECIPIENT_NOT_ALLOWED` with a detail
+> naming the fault kind and carrying no recipient values, before any membership
+> check runs.
+
+### Consequences that follow from the extension
+
+The Step 8 liveness guard widens by one disjunct. Under D21 as frozen the guard
+reads "a nonempty `recipients`, else a nonempty `recipient`, else skip"; a fault
+carries neither, so without the third disjunct a malformed parameter would be
+indistinguishable from no recipient at all and would ALLOW. That is the failure the
+extension removes.
+
+A fault denies under every member of `RecipientPolicy`, `ANY` included. This is the
+one place a fault departs from the frozen shape of Step 8, which returns `None`
+under `ANY` before any evaluation. The reason it departs: a malformed declared
+parameter and a disagreeing caller assertion are defects in the request itself, not
+verdicts about where the request is addressed, and an unrestricted recipient policy
+is a statement about destinations rather than a waiver on well-formedness. A tool
+that accepts any recipient still does not accept an integer where an address was
+declared, nor a caller asserting one address while the parameter carries another.
+
+The detail string obeys D20 for both fault kinds: it names which fault occurred and
+includes no recipient value, neither the declared one nor the asserted one.
+
+### What this does not change
+
+Q5's file list is unchanged. The new field lands on `RequestContext` in
+`agentlock/policy.py`, which Q5 already names, and it is set in
+`agentlock/gate.py`, which Q5 already names. No path is added.
+
+Q6 is unaffected. `recipient_fault` is a local in the gate and then a
+`RequestContext` field. It is never written into `request_metadata`, so the set of
+`request_metadata` writes does not grow.
+
+D13 is preserved rather than weakened. The fault denies at pipeline position 8, the
+position D13 assigns it, and reaches the signer through
+`agentlock/gate.py:1581` like every other policy denial, which is what D6 requires.
