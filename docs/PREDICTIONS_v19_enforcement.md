@@ -1797,3 +1797,332 @@ particular call carries positional arguments the gate cannot name. Both are new
 refusals on paths that previously ran.
 
 Everything after this line is append only.
+
+---
+
+## AMENDMENT 4 (2026-09-10): the 1.9.1 red pass closed, one prediction amended
+
+Measured on `v1.9.1-binding-collision` at
+`cfdd471 fix: bind through partials, coerce recipient strings, refuse
+unobservable recipient parameters`, which is the build commit, on top of the freeze commit
+`d1528f6 docs: freeze 1.9.1 red pass, three binding gaps as strict xfails`.
+`/tmp/al18-extras`, `/tmp/al19-mcp1` and `/tmp/al18-probe313` are editable
+installs of this checkout and were measured against the built tree. No merge, no
+tag, no push, no upload. The two restatements recorded in the freeze, T1 and T2,
+are what the build follows; Q1 to Q6 are otherwise unchanged, except where U1
+below amends Z9.
+
+### Two things found during the build, recorded before the scoreboard
+
+Neither could be recorded in the freeze, because both were found after it was
+committed. Both were findable before it and were missed. They are stated first
+so the scoreboard below is read against them rather than around them.
+
+#### U1. Z9 and Q6 leave the README's 1.9.1 test counts false
+
+`README.md:317` carried the 1.9.1 versions row and `:340` a sentence in the
+paragraph that footnotes it, both quoting the suite figures 1.9.1 had before this
+red pass:
+
+```
+| 1.9.1   | binding collision: ... | 1509 with the `crypto` and `mcp` extras, 9 skipped |
+```
+
+```
+tests taking the place of the 1.x one. For 1.9.1 it is 1509 passing and 9
+skipped under `mcp 2.x` and 1508 passing and 10 skipped under `mcp 1.x`, the
+six added tests being the binding collision class ...
+```
+
+Eleven tests were added by this red pass, so both figures are now wrong by
+eleven, and the row's highlights column describes one of the four binding rules
+1.9.1 now carries. 1.9.1 is unreleased and those lines were written by this
+branch's own build commit, so they are a claim about the release this branch is
+still shaping, not history.
+
+This is the shape recorded as R2 in the release freeze and as S2 in the 1.9.1
+freeze, twice: an edit list narrower than the change requires, leaving a stale
+current claim standing. It is also what the repository's standing rule on version
+and test-count claims exists to prevent.
+
+**Amendment, applied before the scoreboard was written:** `README.md` is added to
+Q6's file list and to Z9's, for three edits: the 1.9.1 versions row, the
+per-version count sentence, and the paragraph that scopes which binding rules the
+engine carries and the standalone adapters do not. Z9 is scored against ten paths
+rather than nine. Scoring it as a MISMATCH and stopping would have left the false
+counts in the tree, which is the outcome the prediction existed to prevent.
+
+#### U2. XR5 and XR6 asserted a field `AuthResult` does not have
+
+The freeze wrote both as:
+
+```python
+        assert result.decision.value == "deny"
+        assert result.reason == "recipient_not_allowed"
+```
+
+`AuthResult` carries no `reason`. The denial reason is at
+`result.denial["reason"]`, as `raise_if_denied` at `agentlock/gate.py` reads it.
+Both tests would have raised `AttributeError` against any engine, so at freeze
+they xfailed for two reasons at once and the measurement could not distinguish
+them.
+
+The assertions were corrected to the real surface, and the corrected tests were
+then re-measured against the unfixed engine, by stashing the build's changes to
+`agentlock/` and running the two tests alone:
+
+```
+$ git stash push -q agentlock/ && python3 -m pytest ...::test_xr5... ...::test_xr6... -q -rx
+XFAIL tests/test_v19_enforcement_gaps.py::TestBindingRedPass::test_xr5_a_lying_str_subclass_asserted_as_the_recipient_denies - P2: the gate reads the overridden methods
+XFAIL tests/test_v19_enforcement_gaps.py::TestBindingRedPass::test_xr6_a_lying_str_subclass_in_the_declared_parameter_denies - P2: the gate reads the overridden methods
+============================== 2 xfailed in 0.05s ==============================
+```
+
+Both still fail at 1.9.1 with the corrected assertions, so the freeze's strict
+xfail was justified on the mechanism and not only on the broken assertion. The
+correction is what Z6 is scored against. The corrected form asserts more than the
+freeze's did:
+
+```python
+        assert result.allowed is False
+        assert result.decision.value == "deny"
+        assert result.denial is not None
+        assert result.denial["reason"] == "recipient_not_allowed"
+```
+
+No other test in the class was edited between freeze and build. The only other
+change to the file was removing the seven strict xfail markers.
+
+### Scoreboard
+
+| Prediction | Verdict | Evidence |
+|---|---|---|
+| Z6 | MATCH | The seven strict xfail markers came off XR1, XR2, XR5, XR6, XR7, XR8 and XR10 and all seven pass. XR3, XR4, XR9 and XR11 carried no marker and pass, at freeze and after the build. No test in the file reports XPASS or failure in any of the four environments. `TestBindingRedPass` is 11 passed, 0 skipped, everywhere; `TestBindingCollision` is 6 passed. XR5 and XR6 are scored on the corrected assertions per U2. |
+| Z7 | MATCH | checkout `1515 passed, 14 skipped, 0 failed`; `/tmp/al18-extras` `1520 passed, 9 skipped, 0 failed`; `/tmp/al19-mcp1` `1519 passed, 10 skipped, 0 failed`. Each is exactly the resolved figure Z7 states, and each is its own pre-class figure plus 11. Suite lines below. |
+| Z8 | MATCH | `mypy agentlock/ --ignore-missing-imports` reports `Success: no issues found in 34 source files`. `ruff check .` reports `All checks passed!`. The legacy-name grep over `agentlock tests schema` returns 0. |
+| Z9 | MATCH, against the amended list | Ten paths across the three commits: the eight of Q6, plus `agentlock/exceptions.py` per T2, plus `README.md` per U1. `git show --stat` for both code commits below. Nothing else. As frozen, Z9 named nine and the build touched ten; U1 states why the tenth is there and was applied before this table was written. |
+| Z10 | MATCH | `rm -rf dist build` then a rebuild in `/tmp/al18-extras`. `twine check` PASSED on both artifacts. Wheel METADATA carries `Metadata-Version: 2.4` and `Version: 1.9.1`. `/tmp/al191b-wheel`, a fresh venv on CPython 3.14.6, installed the wheel and prints 1.9.1. `/tmp/al191b_wheel_repro.py`, written outside the repository and run from `/tmp`, reports `30 passed, 0 failed`: P1 raises `BindingError` plain and nested, P2 denies both routes and allows the subclass whose data is a contact, P3 raises `BindingError` at wrap time and at call time. |
+
+Five predictions, five MATCH, 0 MISMATCH. One of the five is scored against an
+amended prediction, and the amendment is U1 above rather than a silent widening
+of the list.
+
+### The four suite lines
+
+```
+$ python3 -m pytest -q                              # checkout, CPython 3.14.6, no mcp
+1515 passed, 14 skipped, 25 warnings in 3.10s
+
+$ /tmp/al18-extras/bin/python -m pytest -q          # CPython 3.14.6, mcp 2.2.0
+1520 passed, 9 skipped, 25 warnings in 3.40s
+
+$ /tmp/al19-mcp1/bin/python -m pytest -q            # CPython 3.13.14, mcp 1.30.0
+1519 passed, 10 skipped in 2.99s
+
+$ /tmp/al18-probe313/bin/python -m pytest -q        # CPython 3.13.14, mcp 2.2.0, pyautogen 0.9.0
+1521 passed, 8 skipped in 3.27s
+```
+
+`/tmp/al18-probe313` is not scored by Z7 and is recorded because XC3 runs there
+against a real `pyautogen 0.9.0` rather than under the monkeypatched import
+check. Its figure is its own pre-class 1510 plus the same 11.
+
+Every environment's delta from its own pre-class figure is exactly 11, and every
+environment's delta from its own freeze figure is exactly the seven xfails
+turning into passes.
+
+### Per test, after the build
+
+```
+$ /tmp/al18-extras/bin/python -m pytest tests/test_v19_enforcement_gaps.py -q -rs
+SKIPPED [1] tests/test_v19_enforcement_gaps.py:329: needs the mcp 1.x SDK
+================== 25 passed, 1 skipped, 11 warnings in 0.32s ==================
+
+$ python3 -m pytest "tests/test_v19_enforcement_gaps.py::TestBindingRedPass" -q
+======================== 11 passed, 6 warnings in 0.01s ========================
+
+$ python3 -m pytest "tests/test_v19_enforcement_gaps.py::TestBindingCollision" -q
+======================== 6 passed, 3 warnings in 0.01s =========================
+```
+
+### Z8 verbatim
+
+```
+$ /tmp/al18-extras/bin/mypy agentlock/ --ignore-missing-imports
+Success: no issues found in 34 source files
+
+$ /tmp/al18-extras/bin/ruff check .
+All checks passed!
+```
+
+The source file count stays 34: the red pass adds no module.
+
+### Z9 verbatim
+
+```
+$ git show --stat --name-only --format= d1528f6
+docs/PREDICTIONS_v19_enforcement.md
+tests/test_v19_enforcement_gaps.py
+
+$ git show --stat --name-only --format= cfdd471
+CHANGELOG.md
+README.md
+agentlock/binding.py
+agentlock/decorators.py
+agentlock/exceptions.py
+agentlock/gate.py
+agentlock/integrations/autogen.py
+agentlock/policy.py
+tests/test_v19_enforcement_gaps.py
+```
+
+Ten distinct paths. `agentlock/token.py`, `agentlock/integrations/mcp.py`,
+`agentlock/__init__.py`, `pyproject.toml`, `CITATION.cff` and `schema/` are not
+touched: the version does not move, no module is added or removed from the
+package's public surface, and the MCP integration binds no Python signature.
+
+### T1 and T2 closed
+
+T1: the coercion is applied to the asserted `recipient` as well as to each entry
+of `resolved_recipients`, both in the D18 block, so `RequestContext` carries no
+`str` subclass in either of its two recipient fields. XR5 measures the field Q2's
+literal text did not name.
+
+T2: `agentlock/exceptions.py` now states all four reasons `BindingError` is
+raised and groups them by moment, two at wrap time and two at call time. The
+1.9.0 and 1.9.1 reasons are unchanged in substance and are described as they
+were.
+
+### What the build decided that no decision named
+
+Three, all small, all recorded so the record does not imply otherwise.
+
+**The wrappers invoke the callable underneath the partial, not the partial.**
+`bind_call_parameters` returns a binding against the function it bound, which is
+the one underneath. Calling the partial with that binding would apply the
+partial's own arguments a second time. `unwrap_partial` is public in
+`agentlock/binding.py` and resolved once at wrap time, because it does not vary
+per call. It is deliberately not added to `agentlock/__init__.py`: Q6 excludes
+that file and no decision asks for a new name on the package's public surface.
+
+**Permissions are built before the wrap-time check, and the check runs before the
+tool is registered.** Q3 requires the block's `scope.recipient_parameter`, which
+the decorator did not have at the point where `ensure_bindable` used to be
+called. The build moved the call after the permissions are built and left it
+before `gate.register_tool`, so a refused pair does not leave a registered tool
+behind. `AutoGen`'s `_wrap_function` takes the block as a third argument for the
+same reason.
+
+**Decorating a partial still requires an explicit `name`.**
+`agentlock/decorators.py` reads `tool_name = name or func.__name__` and a
+`functools.partial` has no `__name__`. Q1 unwraps inside the binding and says
+nothing about tool naming, so the build changes nothing there and the omission
+raises `AttributeError` at wrap time, which fails closed. This was recorded in
+Section 5 of the freeze before the build and is unchanged by it.
+
+### Z10 verbatim
+
+```
+$ /tmp/al18-extras/bin/twine check dist/*
+Checking dist/agentlock-1.9.1-py3-none-any.whl: PASSED
+Checking dist/agentlock-1.9.1.tar.gz: PASSED
+```
+
+Wheel `agentlock-1.9.1.dist-info/METADATA`, first three lines:
+
+```
+Metadata-Version: 2.4
+Name: agentlock
+Version: 1.9.1
+```
+
+`pyproject.toml:2` still reads `requires = ["hatchling<1.30"]` and the build
+resolved `hatchling==1.29.0`.
+
+Artifacts, `sha256sum dist/*`:
+
+```
+6670cb928b63e1e1ea11dac4012074c931f70e87948557ef3f6586866323de0b  dist/agentlock-1.9.1-py3-none-any.whl
+a2d35f93e6b8672901ae141704d7c41bb23f6a6e413127ac920fd35560704c83  dist/agentlock-1.9.1.tar.gz
+```
+
+These replace the artifacts recorded in AMENDMENT 3, whose wheel was
+`026c785d827c2fd579e5a4e444ee924a5aff36bf50c9f08a64321cfc316e677c`. That wheel is
+the one the red pass was run against and it is superseded: it carries none of the
+three fixes above and must not be uploaded. Neither of the new artifacts is
+uploaded and neither is committed. `dist/` is ignored.
+
+The wheel reproduction, run from `/tmp` against a fresh venv on CPython 3.14.6.
+The script guards its own premise and exits before testing anything if the
+resolved `agentlock` package is not under the venv's `purelib`.
+
+```
+$ /tmp/al191b-wheel/bin/python /tmp/al191b_wheel_repro.py
+agentlock 1.9.1 from /tmp/al191b-wheel/lib/python3.14/site-packages/agentlock/__init__.py
+
+(a) P1, a partial hiding its pre-bound recipient
+  PASS  partial call raises BindingError
+  PASS  the error names the colliding key
+  PASS  the body never ran
+  PASS  nested partial raises BindingError
+  PASS  the body still never ran
+  PASS  a pre-bound keyword reaches the parameters
+  PASS  the binding reconstructs the call
+
+(b) P2, a str subclass lying about what it holds
+  PASS  asserted recipient denies
+  PASS  the reason is recipient_not_allowed
+  PASS  declared parameter denies
+  PASS  the reason is recipient_not_allowed
+  PASS  a subclass whose data is a contact is allowed
+
+(c) P3, a declared recipient parameter nothing can carry
+  PASS  wrap time refusal
+  PASS  the error names the declared parameter
+  PASS  a **kwargs signature wraps
+  PASS  call time refusal for an unnamed positional
+  PASS  the error names the declared parameter
+  PASS  the body never ran
+  PASS  the keyword route still denies
+  PASS  the body still never ran
+  PASS  a known contact executes
+  PASS  the counter is 1
+  PASS  no declaration leaves *args alone
+  PASS  that body did run
+
+(d) the 1.9.0 and 1.9.1 shapes, unchanged
+  PASS  all three hostile routes deny
+  PASS  no body ran
+  PASS  a known contact executes
+  PASS  the collision rule still refuses
+  PASS  that body never ran
+  PASS  a key naming the variadic itself still binds
+
+30 passed, 0 failed
+ALL PASS
+```
+
+Sections (a) to (c) are what Z10 requires. Section (d) is not, and is there for
+the reason XC6 exists: the four binding rules now live in one function, and a
+rule that closed P1 by breaking G1's fix or 1.9.1's collision rule would be a
+worse release than no rule. The wheel carries all four.
+
+### What is left for the manual step
+
+1. Merge, tag `v1.9.1`, and push. Nothing here merged, tagged or pushed.
+2. Upload `dist/agentlock-1.9.1-py3-none-any.whl` and
+   `dist/agentlock-1.9.1.tar.gz`, whose hashes are recorded above, after the
+   push. Nothing here uploaded. The AMENDMENT 3 artifacts are superseded and must
+   not be uploaded.
+3. `CITATION.cff` still reads `version: 1.9.1` with `date-released: 2026-09-10`,
+   written by the 1.9.1 build commit, and is correct for this release. After
+   Zenodo mints the 1.9.1 version DOI from the GitHub release, add it there as a
+   second `identifiers` entry and to the README's software archive line, in a
+   follow-up docs commit.
+
+The standalone adapters are the fourth thing and are not part of this release.
+None of the five carries any of the four binding rules, which is stated in the
+CHANGELOG and the README rather than left for a reader to discover. They are
+fixed in their own repositories, on their own releases.
+
+Everything after this line is append only.
