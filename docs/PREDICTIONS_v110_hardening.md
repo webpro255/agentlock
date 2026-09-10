@@ -2798,3 +2798,362 @@ it is not merged to `main`. `tests/test_modify.py` was not edited, which U2.1
 predicted and W4 confirmed. `dist/` holds the two artifacts digested above and
 is left in place for the maintainer; publishing them, and removing them
 afterwards, is a manual step this session does not take.
+
+# 1.10.1 RED PASS FREEZE (2026-09-10)
+
+Appended after AMENDMENT 5 and before any code that closes the finding below.
+Everything above, sections 1 through 5, AMENDMENT 1, the RED PASS FREEZE,
+AMENDMENT 2, the RED PASS 2 FREEZE, AMENDMENT 3, the RELEASE FREEZE,
+AMENDMENT 4, the 1.10.1 FREEZE and AMENDMENT 5, is left exactly as it was
+written.
+
+Date: 2026-09-10
+Branch: `v1.10.1-recheck`, at `cb583ac`.
+Working tree at measurement time: clean.
+
+A red pass was run against the branch wheel, the one AMENDMENT 5 section A5.5
+recorded building, and it found one route through `restrict_domain` that the
+1.10.1 fix does not close, plus two MCP payloads the walker does not descend
+into. 1.10.1 is unreleased, so this folds into it: no version bump, no new
+denial reason, no schema change. No push, merge, tag, or upload.
+
+Nothing in this document describes code that has been written for the finding.
+Every reproduction below is a measurement of the engine as it stands at
+`cb583ac`, against the wheel built from it.
+
+## X1. The finding and the two limits, reproduced
+
+The wheel the red pass ran against is the one in `dist/`:
+
+```
+ae2318771d538f2c10e0d1b072ba8b987791de8781befeba39e254422adc6107  dist/agentlock-1.10.1-py3-none-any.whl
+be23c622df4ebb90177a612c56d78e28882d282327baef484734460bd2b15be1  dist/agentlock-1.10.1.tar.gz
+```
+
+The first digest is the `ae231877` the red pass names, and it equals the figure
+A5.5 recorded. Every reproduction in this section was run from
+`/tmp/al1101-wheel`, the venv holding only that wheel, exercised from a
+directory outside the checkout so it cannot resolve the source tree.
+
+### G4. An address the ASCII pattern cannot read is treated as no address
+
+`agentlock/modify.py::_action_restrict_domain` decides whether a value IS a
+recipient list by asking `_EMAIL_PATTERN` whether it finds an address in it.
+1.10.1 made that question exhaustive over the pieces of the value, which is
+what closed G3, but left the question itself unchanged: if the pattern finds
+nothing anywhere, the value carries no address, and a value carrying no address
+is returned unchanged. That scope was written down deliberately in U2.1 and it
+is correct for the case it was written for, a field holding something that is
+not a recipient at all. It is wrong for a field holding a recipient the pattern
+cannot read.
+
+`_EMAIL_PATTERN` is ASCII only and requires a dotted domain, so an address
+whose domain is spelled with a non ASCII letter and an address literal in
+brackets both fail it. Both are deliverable. Measured against the wheel with
+`allowed_domains=["company.test"]`:
+
+```
+cyrillic-a-domain      PASSED THROUGH in='bob@compаny.test' out='bob@compаny.test'
+bracketed-ip           PASSED THROUGH in='bob@[10.0.0.1]' out='bob@[10.0.0.1]'
+double-at              PASSED THROUGH in='bob@company.test@evil.test' out='bob@company.test@evil.test'
+```
+
+The first two are the forms the red pass named. The third was found while
+reproducing them and is recorded here rather than left out: the pattern reads
+`bob@company.test` out of it, stops at the second at sign, judges the value on
+`company.test` and allows, and what a mail system does with the rest is not
+something the allowlist decided. It is the same defect, so it is closed by the
+same fix and pinned by the same case.
+
+The controls, measured in the same run and unchanged by any of this:
+
+```
+control-allowed        PASSED THROUGH in='bob@company.test'
+control-blocked        BLOCKED        in='eve@outside.test'
+control-no-at          PASSED THROUGH in='not-an-email'
+control-display        PASSED THROUGH in='Bob <bob@company.test>'
+control-uppercase      PASSED THROUGH in='bob@COMPANY.TEST'
+idna-xn                BLOCKED        in='bob@xn--compny-4of.test'
+mixed-unparseable      BLOCKED        in='bob@company.test, not-an-address'
+quoted-comma-display   BLOCKED        in='"Doe, Bob" <bob@company.test>'
+whitespace-separated   BLOCKED        in='bob@company.test eve@outside.test'
+```
+
+The last three matter to what follows. They block TODAY, they are pinned by
+existing cases, and a fix for G4 that stops blocking them is a regression
+wearing a fix's clothes. `idna-xn` blocks today for the right reason: the
+encoded spelling is ASCII, it parses, and the domain it parses to is not on the
+allowlist.
+
+### The two limits: MCP payloads the walker does not descend into
+
+Not defects and not fixed. Both are places the walker was never pointed at, and
+the red pass is right that neither is written down. Reproduced against the same
+wheel with real SDK models under `mcp 2.2.0`, one result carrying a resource
+link, a text block and metadata, with a redacting transformation declared:
+
+```
+link uri  : https://x.test/123-45-6789
+link name : report-123-45-6789
+text      : body [REDACTED]
+meta after: {'note': '123-45-6789'}
+```
+
+The text block is transformed and the other three are not. `ResourceLink`
+reaches `_rewrite_leaf`'s third case, which hands it to
+`apply_output_modifier`, which returns a custom object unchanged by its own
+stated contract, so both its `uri` and its `name` come back as the handler
+wrote them. The docstring already says a link is passed through and gives the
+reason; it does not say the `name` travels with it, and a reader can be
+forgiven for reading "carries a URI and no content at all" as covering one
+field. `CallToolResult` metadata, which the Python model spells `meta` and
+serializes as `_meta`, is not reached at all: `_walk_payload` covers `content`
+and the structured payload and nothing else.
+
+## X2. Decisions of record
+
+**R6. The at sign decides, not the pattern.** In `restrict_domain` the strict
+path triggers on the presence of `@` anywhere in the value rather than on a
+regex match. Every piece that contains an `@` must parse as a single ASCII
+address whose domain is in `allowed_domains` after casefold, and any piece
+containing an `@` that fails to parse blocks the value. A value with no `@`
+anywhere is returned unchanged, so
+`tests/test_modify.py::TestRestrictDomain::test_no_email_in_field` holds
+untouched. Display name forms are handled as today. See X2.1, which narrows one
+clause of this before any code is written.
+
+**R7. The two limits are written down.** The MCP walker's docstring and the
+CHANGELOG state that `ResourceLink`'s `uri` and `name`, and a tool result's
+`_meta`, are passed through unchanged, and why.
+
+**R8. Files.** `agentlock/modify.py`, `agentlock/integrations/mcp.py`
+(docstring only), `CHANGELOG.md` (the 1.10.1 entry extended, not a new entry),
+`README.md` where counts change, `tests/test_v110_hardening.py`, and this
+document, append only. Nothing else. In particular no version bump, because
+1.10.1 is unreleased, and therefore no `agentlock/__init__.py`, no
+`pyproject.toml` and no `CITATION.cff`.
+
+### X2.1 R6 narrowed before the build: what "every piece" is a piece of
+
+R6 says to split on comma, semicolon and whitespace, and to hold every piece
+that contains an `@` to a strict parse. Read literally, with whitespace as a
+peer separator and pieces without an `@` simply skipped, that rule allows two
+values the engine blocks today:
+
+* `"bob@company.test, not-an-address"`. The second piece carries no `@`, so it
+  is skipped, and the value passes. Today it blocks. U2.1 chose that block
+  deliberately: once a value has been established as a recipient list, a piece
+  the parser cannot read is not evidence of innocence. It is pinned by
+  `TestRecheck::test_a_disallowed_or_unparseable_piece_blocks_the_value`.
+* `'"Doe, Bob" <bob@company.test>'`. Splitting on whitespace leaves `"Doe`,
+  `Bob"` and `<bob@company.test>`; the first two carry no `@` and are skipped,
+  and the value passes. Today it blocks, and U2.1 stated that conservative
+  failure as a limit rather than an accident. It is pinned by
+  `TestRecheck::test_a_quoted_display_name_with_a_comma_blocks`.
+
+Both are LOOSENINGS, in a change whose whole purpose is to stop a value from
+passing that should not. And closing G4 the literal way would mean editing two
+existing cases to assert the weaker behavior, which is the shape of edit that
+should never be made to satisfy a fix. The instruction predicts zero existing
+test edits, and that prediction is right.
+
+The two separators are therefore given different jobs, which is what they
+already are: a comma or a semicolon separates RECIPIENTS, and whitespace
+separates the parts of one recipient, which is how `Bob <bob@company.test>` is
+written. So:
+
+1. If the value contains no `@` anywhere, return it unchanged.
+2. Otherwise split on comma and semicolon, strip each piece, and discard pieces
+   that are empty after stripping, exactly as 1.10.1 does.
+3. Every remaining piece must contain at least one whitespace separated token
+   carrying an `@`. A piece with none of those is unparseable and blocks the
+   value. This is 1.10.1's rule 3 with the pattern's opinion taken out of it.
+4. Every token carrying an `@`, in every piece, must parse as exactly one ASCII
+   address, and its domain must be on the allowlist after casefold. A token
+   that does not parse blocks the value. Angle brackets around the address are
+   stripped first, which is what makes the display name form work.
+
+This is strictly stronger than 1.10.1 at every point. Rule 1 replaces "the
+pattern found an address" with "there is an at sign", which is a weaker
+condition to enter the strict path and therefore a stronger rule. Rules 3 and 4
+replace `finditer`, which asks whether SOME substring of a piece is an address,
+with a full match over each token, which asks whether the token IS one.
+Nothing that blocks at `cb583ac` can start passing, and that is a prediction
+below rather than an assertion here.
+
+The limits U2.1 stated are unchanged and stay stated: a display name containing
+a comma blocks, and a bare local name with no domain is not covered because
+there is no domain in it to compare against the allowlist.
+
+## X3. STEP 0 measurements
+
+### X3.1 (0a) State at HEAD
+
+```
+commit    cb583ac
+branch    v1.10.1-recheck
+tree      clean
+wheel     ae2318771d538f2c10e0d1b072ba8b987791de8781befeba39e254422adc6107
+sdist     be23c622df4ebb90177a612c56d78e28882d282327baef484734460bd2b15be1
+```
+
+The wheel digest is the one the red pass names and the one A5.5 recorded, so
+the artifact under review and the artifact this branch builds are the same
+file.
+
+### X3.2 (0b) The suite before the new cases
+
+```
+/tmp/al18-extras   1675 passed, 9 skipped, 44 warnings in 3.48s
+checkout venv      1641 passed, 43 skipped, 43 warnings in 3.37s
+oracle alone       65 passed, 13 warnings in 0.44s
+mypy               Success: no issues found in 34 source files
+ruff               All checks passed!
+```
+
+All five reconcile with AMENDMENT 5 section A5.5 exactly.
+
+### X3.3 (0c) The new cases, and the suite with them
+
+`tests/test_v110_hardening.py` gains one class, `TestBranchWheelRedPass`, of 13
+cases. Three of them are G4 and are committed as `xfail(strict=True)` ahead of
+the code that satisfies them, which is the form this arc has used since the
+first red pass: the before state goes into the history, and because a strict
+xfail that starts passing is a failure, neither the marker nor the fix can be
+left half applied. The other ten pass at `cb583ac` and are guards: they say
+what the fix must not break.
+
+```
+tests/test_v110_hardening.py xxx..........
+10 passed, 90 deselected, 3 xfailed in 0.39s
+```
+
+The three xfails are the G4 forms of X1, parametrized on one case. The ten
+guards are the three no at sign values, the four benign display name and
+uppercase forms, the IDNA encoded domain outside the allowlist, and the two
+pass through pins for the resource link and the result metadata.
+
+Whole suite with the class added, which is the state commit A leaves:
+
+```
+/tmp/al18-extras   1685 passed, 9 skipped, 3 xfailed, 44 warnings in 3.53s
+checkout venv      1649 passed, 45 skipped, 3 xfailed, 43 warnings in 3.42s
+```
+
+1675 plus 10 is 1685 and 1641 plus 8 is 1649; the two extra skips in the second
+environment are the two pass through pins, which are guarded on `mcp`.
+
+### X3.4 Existing tests that assert the old behavior
+
+Predicted at zero, and the scan finds zero, which is a consequence of X2.1
+rather than a coincidence. The four use sites:
+
+* `tests/test_modify.py::TestRestrictDomain`, four cases. Three carry one
+  address each and one carries none. The no address case is `not-an-email`,
+  which has no at sign and is returned unchanged by rule 1.
+* `tests/test_gate_v12.py` registers a tool with the transformation and never
+  invokes it with a `to` parameter.
+* `tests/test_v110_system_review.py`, five parametrized cases, all of them
+  ordinary addresses in comma and semicolon lists. The reviewer's file is not
+  edited and is not reformatted.
+* `tests/test_v110_hardening.py::TestRecheck`, seventeen cases across four
+  tests. The two that X2.1 exists for are in this set. Every one of the
+  seventeen was measured against the four rules by hand before this freeze was
+  written, and the measurement below is the machine check of the same thing.
+
+### X3.5 Lint, types, style at the freeze
+
+```
+mypy agentlock/ --ignore-missing-imports   Success: no issues found in 34 source files
+ruff check .                               All checks passed!
+corpus grep over the diff                  0
+em dashes on added lines                   0
+ASCII double hyphens on added lines        1 in the test file; this document
+                                           then quotes it and the mypy flag
+```
+
+Measured over `tests/test_v110_hardening.py`, which is the only code this
+commit touches, there is one. This document quotes it back, and quotes the
+`--ignore-missing-imports` flag in the measurements above and in Y3, so the
+commit's own diff carries both spellings on added lines and both are declared
+here rather than counted as new prose.
+
+The one in the test file is the IDNA prefix in the test data for
+`test_an_idna_encoded_domain_outside_the_allowlist_is_blocked`. It is a
+protocol literal inside a string, not prose, and writing it any other way, by
+concatenating two fragments to keep a scan quiet, would make the case harder to
+read than the rule is worth. It is declared here on the same terms A2.5
+declared the `--ignore-missing-imports` flag, and the rule for the fix commit
+is stated in Y3 below.
+
+The corpus grep is the standing case insensitive scan of the diff for external
+evaluation suite names, run from a pattern held outside the repository so the
+names are not written into it.
+
+## X4. Frozen predictions
+
+**Y1.** The three G4 cases pass with their `xfail` markers removed, and no
+other case in `TestBranchWheelRedPass` changes outcome. Whole suite,
+0 failed and 0 xfailed in both environments:
+
+* `/tmp/al18-extras`: **1688 passed, 9 skipped**.
+* checkout venv: **1652 passed, 45 skipped**.
+
+**Y2.** Nothing that blocks at `cb583ac` passes after the fix. Measured as a
+machine check over every recipient value named anywhere in this document and in
+the four test files, comparing the wheel's answer against the fixed engine's:
+**every value the wheel blocks is blocked, and the three G4 forms move from
+allowed to blocked. No value moves from blocked to allowed.**
+
+**Y3.** `mypy agentlock/ --ignore-missing-imports` reports **0 errors** and
+`ruff check .` is **clean, with no new `per-file-ignores` entry**. The corpus
+grep over the diff returns **0**. Added lines carry **0** em dashes, and the
+only ASCII double hyphens on added lines are the two declared ones: the IDNA
+prefix in the test data of X3.5, and the `--ignore-missing-imports` flag inside
+backticks if the CHANGELOG sentence reporting the type check is rewritten,
+which A2.5 declared for exactly that phrase in exactly that file.
+
+**Y4.** Files touched are **exactly R8, or a proper subset of it**. Specifically
+predicted: **no existing test is edited**, so `tests/test_modify.py`,
+`tests/test_v110_system_review.py` and the `TestRecheck` class are untouched;
+`agentlock/gate.py` is untouched; no schema field is added or altered; and
+there is **no version bump**, so `agentlock/__init__.py`, `pyproject.toml` and
+`CITATION.cff` are untouched. The only change to
+`agentlock/integrations/mcp.py` is docstring text.
+
+**Y5.** The named controls hold, each for the reason X2.1 gives and not
+incidentally: `Bob <bob@company.test>` and `Bob <bob@COMPANY.TEST>` still send,
+`bob@company.test, not-an-address` and `"Doe, Bob" <bob@company.test>` still
+block, `bob@company.test eve@outside.test` still blocks, both orderings of the
+mixed pair still block, and `not-an-email` is still returned unchanged at both
+the unit and the gate level.
+
+**Y6.** The two limits still hold and are now written down: the resource link's
+`uri` and `name` and the result's `_meta` come back untouched in a result whose
+text block IS transformed, their two cases pass, and both the walker docstring
+and the CHANGELOG say so in those words.
+
+**Y7.** `CHANGELOG.md` gains its text inside the existing `[1.10.1]` entry and
+no new version heading appears. `README.md` changes exactly the four count
+figures that move: the Versions row's 1675 to 1688, and in the environments
+paragraph 1675 to 1688, 59 added tests to 72, and 1641 passing with 43 skipped
+of which 17 are new to 1652 passing with 45 skipped of which 19 are new.
+
+**Y8.** Rebuild in `/tmp/al18-extras` after `rm -rf dist build`: `twine check
+dist/*` **PASSED** for both artifacts and the wheel METADATA reports **Version
+1.10.1**, unchanged, with **both digests different** from the X3.1 pair because
+the code changed under the same version. The rebuilt wheel installed into a
+fresh `/tmp/al1101-wheel` and exercised from outside the checkout **blocks all
+three G4 forms** and reproduces the X1 control table otherwise.
+
+## X5. Commit plan
+
+* **A**: `docs: freeze 1.10.1 red pass, at-sign strict mode for restrict_domain`.
+  Carries this section and `TestBranchWheelRedPass` with its three strict
+  xfails.
+* **B**: `fix: restrict_domain treats any at-sign as an address to validate`.
+  The engine change, the two docstrings, the CHANGELOG and README text, and the
+  removal of the three xfail markers.
+* **C**: AMENDMENT 6, the measured results against X4.
+
+No merge, no tag, no push, no upload.

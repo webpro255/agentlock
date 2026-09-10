@@ -1553,3 +1553,216 @@ class TestRecheck:
         happened.
         """
         assert self._send('"Doe, Bob" <bob@company.test>') is None
+
+
+class TestBranchWheelRedPass:
+    """The red pass against the 1.10.1 branch wheel, sha256 ``ae231877``.
+
+    1.10.1 closed G3 by parsing the whole recipient value instead of its first
+    address.  A red pass against the wheel built from that fix found that the
+    parse still decides whether a value IS a recipient list by asking the ASCII
+    address pattern, and a value the pattern cannot read was therefore treated
+    as carrying no address at all and returned unchanged.  That is G4, and the
+    forms it lets through are deliverable addresses rather than curiosities.
+
+    The G4 cases were committed as ``xfail(strict=True)`` before the code that
+    satisfies them, so the before state is in the history, and the markers came
+    off in the commit that closed the finding.  A strict xfail that starts
+    passing is a failure, so neither the marker nor the fix could be left half
+    applied.
+
+    The same pass reported two MCP payloads the walker does not descend into.
+    Both are STATED rather than closed, and their cases assert the pass
+    through: a limit that is pinned is a limit that cannot drift.
+    """
+
+    # G4: an address the ASCII pattern cannot read is not "no address"
+
+    @staticmethod
+    def _domain_gate() -> AuthorizationGate:
+        gate = AuthorizationGate()
+        gate.register_tool("task", _perms(modify_policy=ModifyPolicyConfig(
+            enabled=True,
+            apply_when_hardening_active=False,
+            transformations=[TransformationConfig(
+                field="to",
+                action="restrict_domain",
+                config={"allowed_domains": ["company.test"]},
+            )],
+        )))
+        return gate
+
+    def _send(self, value):
+        """Return the recipients the tool was invoked with, or None if the
+        value was blocked."""
+        gate = self._domain_gate()
+        seen = []
+
+        def send(to):
+            seen.append(to)
+            return "simulated sent"
+
+        try:
+            gate.call(
+                "task", send, parameters={"to": value},
+                user_id="alice", role="user",
+            )
+        except DeniedError:
+            return None
+        return seen[0]
+
+    @pytest.mark.xfail(strict=True, reason="G4, closed by the at sign rule")
+    @pytest.mark.parametrize("value", [
+        "bob@compаny.test",
+        "bob@[10.0.0.1]",
+        "bob@company.test@evil.test",
+    ])
+    def test_an_address_the_pattern_cannot_read_is_blocked(self, value):
+        """G4.  Through 1.10.1 the exhaustive parse asked the ASCII pattern
+        whether the value held an address, and a value the pattern could not
+        read was judged to hold none, which returned it unchanged.
+
+        The first case spells its domain with a Cyrillic letter, the second is
+        an address literal, and the third carries a second at sign after an
+        allowed domain, so the pattern reads the allowed part and stops before
+        the rest.  All three are deliverable, and all three passed a domain
+        allowlist that exists to decide exactly this.
+
+        What decides now is the at sign, which is the character that makes a
+        string an address, and not the pattern, which is one opinion about
+        which addresses are well formed.  A piece carrying an at sign that does
+        not parse as a single ASCII address blocks the value, so an address the
+        engine cannot read is refused rather than waved through.
+        """
+        assert self._send(value) is None
+
+    @pytest.mark.parametrize("value", ["not-an-email", "Bob Smith", ""])
+    def test_a_value_with_no_at_sign_is_untouched(self, value):
+        """The scope of the at sign rule, pinned rather than implied.
+
+        A field with no at sign anywhere in it is not a recipient list, and an
+        allowlist over domains can only govern things that have a domain.  This
+        is the behavior the engine has always had and
+        ``TestRestrictDomain::test_no_email_in_field`` pins the unit half of
+        it.  A bare local name a mail system may still know how to route is not
+        covered, for the same reason: there is no domain in it to compare.
+        """
+        assert self._send(value) == value
+
+    @pytest.mark.parametrize("value", [
+        "Bob <bob@company.test>",
+        "bob@COMPANY.TEST",
+        "Bob <bob@COMPANY.TEST>",
+        "Bob <bob@company.test>, Carol <carol@company.test>",
+    ])
+    def test_the_benign_forms_the_at_sign_rule_must_not_break(self, value):
+        """The controls.  A rule that blocked every value it could not parse
+        exactly would close G4 by refusing ordinary recipients, and these are
+        the ordinary recipients.
+
+        A display name is accepted, as it was before, because the address
+        inside the angle brackets is what the piece is about.  Domains compare
+        after casefolding, so a value differing from the allowlist only in case
+        is the same value.  Neither of those is a loosening: each of these
+        pieces still has to parse as one address whose domain is allowed.
+        """
+        assert self._send(value) == value
+
+    def test_an_idna_encoded_domain_outside_the_allowlist_is_blocked(self):
+        """The lookalike domain in its encoded spelling.
+
+        A domain that is not ASCII reaches the wire encoded, and the encoded
+        form is ASCII, parses, and is a different domain from the one on the
+        allowlist.  It blocks on the domain comparison rather than on the
+        parse, which is the right reason: the engine compares the domain it was
+        handed against the domains it was given and does not decode, fold or
+        otherwise guess at what a domain resembles.
+        """
+        assert self._send("bob@xn--compny-4of.test") is None
+
+    # Two MCP payloads the walker does not descend into (STATED)
+
+    def test_a_resource_link_is_passed_through(self):
+        """The stated limit.  A resource link carries a URI and a name and no
+        content, so it reaches the general walk and comes back untouched, both
+        fields included.
+
+        A link is a reference to data rather than the data, and following one
+        to redact what it points at would mean fetching it, which is not
+        something an authorization decision does.  The name travels with the
+        link, so a host that puts sensitive material in either field is
+        publishing it and has to redact it at the source.
+        """
+        pytest.importorskip("mcp")
+        from agentlock.integrations.mcp import AgentLockMCPServer
+
+        class Link:
+            """A ``ResourceLink``: a uri and a name, no text and no resource."""
+
+            def __init__(self, uri, name):
+                self.uri = uri
+                self.name = name
+
+        class Text:
+            def __init__(self, text):
+                self.text = text
+
+        class Result:
+            def __init__(self, content):
+                self.content = content
+
+        link = Link("https://files.test/" + SSN, "report-" + SSN)
+        gate, perms = _gate(modify_policy=_redact("output"))
+        server = FakeServer()
+        AgentLockMCPServer(server, gate, {"task": perms})
+
+        @server.call_tool()
+        async def handler(name: str, arguments: dict):
+            return Result([link, Text(SECRET)])
+
+        result = asyncio.run(server.handler("task", {
+            "_agentlock_user_id": "alice", "_agentlock_role": "user",
+        }))
+        assert result.content[0].uri == "https://files.test/" + SSN
+        assert result.content[0].name == "report-" + SSN
+        assert SSN not in result.content[1].text
+
+    def test_a_result_meta_is_passed_through(self):
+        """The stated limit.  A tool result's metadata field is not walked,
+        under either of the spellings the two SDK majors use for it.
+
+        The walker covers the two payloads a client reads as the answer, which
+        are the content blocks and the structured content.  Metadata is the
+        transport's own channel, carrying things like a progress token and a
+        cursor, and rewriting values there would change how a client routes a
+        result rather than what it reads out of one.  A handler that puts
+        sensitive material in metadata is putting it outside the payload this
+        engine claims to cover.
+        """
+        pytest.importorskip("mcp")
+        from agentlock.integrations.mcp import AgentLockMCPServer
+
+        class Text:
+            def __init__(self, text):
+                self.text = text
+
+        class Result:
+            def __init__(self, content, meta):
+                self.content = content
+                self.meta = meta
+                self._meta = meta
+
+        gate, perms = _gate(modify_policy=_redact("output"))
+        server = FakeServer()
+        AgentLockMCPServer(server, gate, {"task": perms})
+
+        @server.call_tool()
+        async def handler(name: str, arguments: dict):
+            return Result([Text(SECRET)], {"note": SSN})
+
+        result = asyncio.run(server.handler("task", {
+            "_agentlock_user_id": "alice", "_agentlock_role": "user",
+        }))
+        assert result.meta == {"note": SSN}
+        assert result._meta == {"note": SSN}
+        assert SSN not in result.content[0].text
