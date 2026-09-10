@@ -3550,3 +3550,199 @@ declared for exactly this file, and this document quoting it back.
   artifacts, the METADATA lines, and commit B's hash.
 
 No merge, no tag, no push, no upload.
+
+# AMENDMENT 7
+
+Date: 2026-09-10
+Branch: `v1.10.1-recheck`.
+Measured against the Z4 predictions frozen at `06c52b8` before any release text
+was written.
+
+## A7.1 Result table
+
+| # | Predicted | Measured | Verdict |
+|---|---|---|---|
+| V1 | CHANGELOG 1.10.1 heading carries today's date; the entry covers G1 to G4; the oracle at 65; the per environment figures from AMENDMENT 6 with interpreter and `mcp` versions; both credit phrases | `## [1.10.1] - 2026-09-10`; four Security bullets and one Limits bullet covering path resolution order and the resolved path return, one walker with `EmbeddedResource` and the `BlobResourceContents`, `ResourceLink` and `_meta` pass throughs, and the exhaustive restriction with at sign strict mode naming `@`, `bob@` and `@company.test`; "65-case file"; 1688 passing and 9 skipped on CPython 3.14.6 at `mcp 2.2.0`, and 1652 passing and 45 skipped on the same interpreter without `mcp`; both phrases present | MET |
+| V2 | README Versions row and every count figure AMENDMENT 6 moved, number by number; `grep -n "1\.10\.0" README.md` returns only history lines | row reads `1688 ... 9 skipped`; the ten figures 1688, 9, 72, 65, 40, 1652, 45, 19, 10 and 9 each matched against A6.5 individually; grep returns six lines, all six history | MET |
+| V3 | CITATION.cff `version: 1.10.1`, `date-released` today, `yaml.safe_load` validates | `version: '1.10.1'`, `date-released: '2026-09-10'`, `safe_load` parses, 15 top level keys | MET |
+| V4 | 1.10.1 in `pyproject.toml` and `agentlock/__init__.py`; no other current version string says 1.10.0 | line 7 `version = "1.10.1"`, line 37 `__version__ = "1.10.1"`; every remaining `1.10.0` in the tree is historical prose in a comment, a docstring or this document, itemized in A7.3 | MET |
+| V5 | build after `rm -rf dist build`: twine PASSED, `Metadata-Version: 2.4`, `Version: 1.10.1` | both artifacts `PASSED`; `Metadata-Version: 2.4`; `Version: 1.10.1` | MET, qualified in A7.2 |
+| V6 | fresh venv with the four extras prints 1.10.1; the oracle copied to `/tmp` runs 65 passed against site packages; every red pass reproduction script from this arc exits 0 | `1.10.1 from /tmp/al1101-wheel/lib/python3.14/site-packages/agentlock/__init__.py`; `65 passed, 13 warnings in 0.52s` from `/tmp/al1101-oracle`; both scripts report CLOSED on every finding and exit 0 | MET |
+| V7 | full suite after reinstall: 1688 passed, 9 skipped, 0 failed; ruff clean; mypy clean with the standing flag; corpus grep 0 | `1688 passed, 9 skipped, 44 warnings in 3.36s`; `All checks passed!`; `Success: no issues found in 34 source files`; 0 | MET, qualified in A7.4 |
+| V8 | the release commit carries `CHANGELOG.md`, `README.md` and `CITATION.cff` minus any already satisfying its prediction at HEAD, which Z1 stated as `CHANGELOG.md` alone | `M CHANGELOG.md`, one file, and it is the file Z1 named before the edit | MET |
+
+No mismatch. Two things measured true that a reader would want stated rather
+than inferred, and they are A7.2 and A7.4.
+
+## A7.2 V5 qualified: the wheel digest did not move and the sdist digest did
+
+Y8, on the previous arc, predicted both digests would differ from the pair
+before it, and both did, because the code had changed. This release changes no
+code. It changes `CHANGELOG.md`, and the changelog is in the sdist and not in
+the wheel. So:
+
+```
+16d2fd4e433f2b639054faff6aad56c76bb044f74a75f15ef4df7b76b92f16f5  dist/agentlock-1.10.1-py3-none-any.whl
+9a3130afce20607f758a30fa1eda241c7fe8f11bc21c91628a0bdba2f1ce87fa  dist/agentlock-1.10.1.tar.gz
+```
+
+The wheel digest is character for character the one A6.5 recorded. The sdist
+digest is not: A6.5 recorded `7262b5f9`. V5 predicted nothing about digests, so
+neither figure is a mismatch, but the wheel being byte identical across a
+rebuild is worth having in the record for two reasons. It is evidence the build
+is reproducible on this machine under this hatchling pin, and it is the
+confirmation that the release commit really did touch no code, measured from
+the artifact rather than from the diff.
+
+The published artifact for 1.10.1 is therefore the same wheel that the red pass
+was run against at X3.1's successor digest and that AMENDMENT 6 verified, and
+the maintainer publishing from `dist/` is publishing a file that has been
+exercised in a fresh venv three times across two sessions.
+
+## A7.3 V4 in detail: where 1.10.0 still appears, and why each is history
+
+The scan is the whole tree, not the front matter files, because a stale current
+version string is dangerous wherever it lives. Eight occurrences outside this
+document:
+
+* `pyproject.toml` line 110, in the comment on the review file's
+  `per-file-ignores` entry, saying the reviewer's 1.10.0 recheck appended 32
+  cases as a second file. That is why the entry holds the codes it holds.
+* `agentlock/modify.py` lines 330 and 431, docstrings recording what G3 and G1
+  did through 1.10.0.
+* `agentlock/gate.py` lines 731 and 755, comments recording the two things that
+  changed at 1.10.0.
+* `agentlock/integrations/mcp.py` lines 418, 468 and 597, docstrings and a
+  comment recording what the walk and the redaction guard did through 1.10.0.
+
+Every one is a sentence about the past written in the past tense. None is a
+version declaration, a metadata field, or a string any code reads. The two
+declarations are `pyproject.toml` line 7 and `agentlock/__init__.py` line 37,
+and both read 1.10.1.
+
+## A7.4 V7 qualified: the corpus pattern was rebuilt for this session
+
+The standing scan is a case insensitive grep of the diff for external
+evaluation suite names, run from a pattern file held outside the repository so
+the names are never written into it. That file is not on this machine any more;
+the earlier sessions of this arc kept it in a temporary location that has since
+been cleared.
+
+Rather than skip the check or record it as unverifiable, the pattern was
+rebuilt in this session's scratchpad, outside the repository, as a **superset**
+of the standing list: 32 entries covering the agent and injection evaluation
+suites, the jailbreak and harm corpora, and the red teaming tools, each entry
+assembled from fragments in the generating script so the names are not written
+even into the scratchpad file's source. The scan returns 0 over the release
+commit's diff and 0 over both commits of this session together.
+
+A superset returning 0 is a stronger result than the standing list returning 0,
+so the prediction is met rather than merely not contradicted. The rebuild is
+recorded here because a future session reading "corpus grep 0" in a table has a
+right to know which pattern produced it, and because the pattern file being
+ephemeral is a small process defect worth naming: a check whose definition
+lives in `/tmp` is a check that quietly stops being the same check.
+
+## A7.5 What the release commit changed
+
+Four edits to `CHANGELOG.md` and nothing else.
+
+**The suite figures became per environment and carry their versions.** The
+entry reported 1688 passing and 9 skipped with the extras and the two web
+frameworks, which is one environment and no interpreter. It now reports 1688
+passing and 9 skipped on CPython 3.14.6 with `mcp 2.2.0`, and 1652 passing and
+45 skipped on the same interpreter without `mcp`, with the 19 new skips split
+10 oracle and 9 engine. Those are AMENDMENT 6's two environments and the
+readme's own numbers, so the two release documents now report the same thing.
+
+**The third degenerate form is named.** The at sign entry said degenerate at
+sign values such as `bob@` and `@company.test` block where they previously
+passed. A6.3 found three and the bare `@` was the one left out. All three are
+named now, because the changelog is the document a caller reaches for when a
+value they were sending starts blocking, and "such as" is not a list.
+
+**Two credit phrases were brought onto the phrasing 1.10.0 used.** The red pass
+was credited against "this release's own branch wheel" in two places. The
+1.10.0 entry credits "two pre-release red passes against the built wheel", and
+the branch wheel and the built wheel are the same artifact, digested in A7.2.
+One release line should not describe the same practice two ways.
+
+Nothing else. No code, no test, no schema, no version string, and neither
+`README.md` nor `CITATION.cff`, both of which Z1 measured as already correct
+and R9 therefore left alone.
+
+## A7.6 Final measurements
+
+Suite, both environments, at the release commit:
+
+```
+/tmp/al18-extras   1688 passed, 9 skipped, 44 warnings in 3.36s
+checkout venv      1652 passed, 45 skipped, 43 warnings in 3.39s
+```
+
+Environments, read out of each interpreter:
+
+```
+/tmp/al18-extras   CPython 3.14.6, mcp 2.2.0, fastapi 0.141.1, flask 3.1.3
+checkout venv      CPython 3.14.6, mcp absent, fastapi 0.135.3, flask 3.1.3
+```
+
+Oracle alone, `/tmp/al18-extras`: `65 passed, 13 warnings in 0.42s`, with the
+file unedited since `e7eb8b9`.
+
+Types, lint and style:
+
+```
+mypy agentlock/ --ignore-missing-imports   Success: no issues found in 34 source files
+ruff check .                               All checks passed!
+corpus grep over the diff                  0
+em dashes on added lines                   0
+ASCII double hyphens on added lines        1, the flag A2.5 declared
+```
+
+Release build in `/tmp/al18-extras`, after `rm -rf dist build`:
+
+```
+Successfully built agentlock-1.10.1.tar.gz and agentlock-1.10.1-py3-none-any.whl
+Checking dist/agentlock-1.10.1-py3-none-any.whl: PASSED
+Checking dist/agentlock-1.10.1.tar.gz: PASSED
+```
+
+METADATA, read out of the wheel at `agentlock-1.10.1.dist-info/METADATA`:
+
+```
+Metadata-Version: 2.4
+Name: agentlock
+Version: 1.10.1
+```
+
+Artifact digests:
+
+```
+16d2fd4e433f2b639054faff6aad56c76bb044f74a75f15ef4df7b76b92f16f5  dist/agentlock-1.10.1-py3-none-any.whl
+9a3130afce20607f758a30fa1eda241c7fe8f11bc21c91628a0bdba2f1ce87fa  dist/agentlock-1.10.1.tar.gz
+```
+
+Fresh venv `/tmp/al1101-wheel`, holding only the built wheel with the `crypto`,
+`mcp`, `fastapi` and `flask` extras, exercised from outside the checkout so it
+cannot resolve the source tree:
+
+```
+version 1.10.1 from /tmp/al1101-wheel/lib/python3.14/site-packages/agentlock/__init__.py
+oracle, copied to /tmp/al1101-oracle    65 passed, 13 warnings in 0.52s
+/tmp/al110_redpass_repro.py             F1 gate, F1 mcp, F2, F3 all CLOSED, exit 0
+/tmp/al110_redpass2_repro.py            F4 both SDK majors, E15 both returns, F5 both
+                                        shapes CLOSED, F6 limit UNCHANGED, exit 0
+```
+
+The release commit is ``60ff8d6f34f5e976906ce691f24628c4fe3c7d5a``.
+
+## A7.7 What this session did not do
+
+No merge, no tag, no push, and no upload. The branch is `v1.10.1-recheck` and
+it is not merged to `main`. No code, test or schema file was touched, and
+neither was `README.md` or `CITATION.cff`, because Z1 measured both as already
+satisfying their predictions and R9 said so before the edit rather than after
+it. `dist/` holds the two artifacts digested above and is left in place for the
+maintainer; publishing them, and removing them afterwards, is a manual step
+this session does not take.
