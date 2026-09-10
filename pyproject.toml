@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentlock"
-version = "1.9.1"
+version = "1.10.0"
 description = "Authorization framework for AI agent tool calls. Your AI agent needs a login screen. AgentLock is that login screen."
 readme = "README.md"
 license = "AGPL-3.0-or-later"
@@ -101,6 +101,13 @@ ignore = ["SIM108", "SIM114"]
 
 [tool.ruff.lint.per-file-ignores]
 "examples/*" = ["B008"]
+# Held verbatim.  tests/test_v110_system_review.py is an external review's own
+# test file, saved exactly as received and edited only to add the four
+# pytest.importorskip guards that let it be collected where a framework is
+# absent.  It is the contract for the 1.10 hardening arc, so it is not
+# reformatted to this project's style: rewriting the artifact that defines
+# done would make it a restatement rather than an independent check.
+"tests/test_v110_system_review.py" = ["E501", "E701", "I001", "SIM105"]
 
 [tool.coverage.run]
 source = ["agentlock"]

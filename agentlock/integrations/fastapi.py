@@ -120,10 +120,28 @@ class AgentLockMiddleware:
     If authorization fails, a 403 JSON response is returned before the
     endpoint handler runs.
 
-    The tool name is determined from:
-    1. The ``X-AgentLock-Tool`` header, if present.
-    2. The ``tool_name_from_path`` callback, if provided.
-    3. Skipped (the request passes through without authorization).
+    Tool selection (E5).  The SERVER's route mapping wins:
+
+    1. When ``tool_name_from_path`` is configured, whatever it returns is the
+       tool.  A request carrying an ``X-AgentLock-Tool`` header naming a
+       DIFFERENT tool is refused with 403 and reason
+       ``tool_selection_conflict``, because a caller that can pick which
+       permission block its request is judged against has no permission block.
+       A path the mapping declines (returns ``None`` for) passes through with
+       the header ignored.
+    2. Only when no mapping is configured is ``X-AgentLock-Tool`` honored.
+       That trusts the caller to name its own tool, which is appropriate for a
+       gateway in front of tools it does not route itself, and for nothing
+       else.
+
+    Through 1.9.1 the order was the reverse of this, so a caller reaching an
+    admin route could name a low-risk tool in the header and be judged against
+    that tool's block while the admin handler ran.
+
+    Identity (E5).  When the request carries a bearer JWT whose payload
+    supplies a subject, its claims are authoritative and the
+    ``X-AgentLock-User-Id`` / ``X-AgentLock-Role`` headers are ignored.  A
+    caller cannot present a token and then override the identity in it.
 
     If a request does not map to a tool, it passes through unmodified.
 
@@ -164,34 +182,65 @@ class AgentLockMiddleware:
             await self.app(scope, receive, send)
             return
 
-        # Resolve tool name
-        tool_name = request.headers.get(HEADER_TOOL.lower()) or request.headers.get(HEADER_TOOL)
-        if not tool_name and self.tool_name_from_path:
+        # Resolve tool name (E5): the route mapping is authoritative.
+        header_tool = (
+            request.headers.get(HEADER_TOOL.lower())
+            or request.headers.get(HEADER_TOOL)
+            or ""
+        )
+        if self.tool_name_from_path is not None:
             tool_name = self.tool_name_from_path(request.method, path)
+            if tool_name and header_tool and header_tool != tool_name:
+                response = json_response_cls(
+                    status_code=403,
+                    content={
+                        "error": "agentlock_denied",
+                        "detail": {
+                            "status": "denied",
+                            "reason": "tool_selection_conflict",
+                            "detail": (
+                                f"This route is mapped to tool "
+                                f"{tool_name!r}; the request asked to be "
+                                f"authorized as {header_tool!r}. The route "
+                                f"mapping decides which permission block "
+                                f"applies."
+                            ),
+                            "suggestion": (
+                                f"Remove the {HEADER_TOOL} header, or send it "
+                                f"with the value {tool_name!r}."
+                            ),
+                        },
+                        "audit_id": "",
+                    },
+                )
+                await response(scope, receive, send)
+                return
+        else:
+            tool_name = header_tool
 
         if not tool_name:
             # No tool identified -- pass through
             await self.app(scope, receive, send)
             return
 
-        # Extract identity
-        user_id = (
-            request.headers.get(HEADER_USER_ID.lower())
-            or request.headers.get(HEADER_USER_ID)
-            or ""
-        )
-        role = (
-            request.headers.get(HEADER_ROLE.lower())
-            or request.headers.get(HEADER_ROLE)
-            or ""
-        )
-
-        # Fall back to JWT claims
-        if not user_id:
-            auth_header = request.headers.get("authorization", "")
-            claims = _extract_jwt_claims(auth_header)
-            user_id = user_id or claims.get("sub", "")
-            role = role or claims.get("role", "")
+        # Extract identity (E5): a bearer JWT that names a subject is
+        # authoritative, and the identity headers are then ignored entirely
+        # rather than merged with it.
+        claims = _extract_jwt_claims(request.headers.get("authorization", ""))
+        if claims.get("sub"):
+            user_id = claims.get("sub", "")
+            role = claims.get("role", "")
+        else:
+            user_id = (
+                request.headers.get(HEADER_USER_ID.lower())
+                or request.headers.get(HEADER_USER_ID)
+                or ""
+            )
+            role = (
+                request.headers.get(HEADER_ROLE.lower())
+                or request.headers.get(HEADER_ROLE)
+                or ""
+            )
 
         # Authorize
         auth = self.gate.authorize(
@@ -270,22 +319,27 @@ def require_agentlock(
                 detail="AgentLock dependency requires a Request object.",
             )
 
-        user_id = (
-            request.headers.get(user_id_header.lower())
-            or request.headers.get(user_id_header)
-            or ""
+        # E5, as in the middleware: a bearer JWT naming a subject is
+        # authoritative and the identity headers are ignored.
+        claims = (
+            _extract_jwt_claims(request.headers.get("authorization", ""))
+            if use_jwt
+            else {}
         )
-        role = (
-            request.headers.get(role_header.lower())
-            or request.headers.get(role_header)
-            or ""
-        )
-
-        if not user_id and use_jwt:
-            auth_header = request.headers.get("authorization", "")
-            claims = _extract_jwt_claims(auth_header)
-            user_id = user_id or claims.get("sub", "")
-            role = role or claims.get("role", "")
+        if claims.get("sub"):
+            user_id = claims.get("sub", "")
+            role = claims.get("role", "")
+        else:
+            user_id = (
+                request.headers.get(user_id_header.lower())
+                or request.headers.get(user_id_header)
+                or ""
+            )
+            role = (
+                request.headers.get(role_header.lower())
+                or request.headers.get(role_header)
+                or ""
+            )
 
         auth = gate.authorize(
             tool_name,

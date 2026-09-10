@@ -33,6 +33,7 @@ from collections.abc import Callable
 from typing import Any
 
 from agentlock.binding import (
+    apply_effective_parameters,
     bind_call_parameters,
     ensure_bindable,
     unwrap_partial,
@@ -161,7 +162,11 @@ class AgentLockFunctionMap:
             auth.raise_if_denied()
             assert auth.token is not None
 
-            def _exec(**_p: Any) -> Any:
+            # E1: the gate hands the effective parameters to the callable,
+            # so the binding the function is invoked from is rebuilt from
+            # them, and the output modifier travels with the execution.
+            def _exec(**effective: Any) -> Any:
+                apply_effective_parameters(bound, effective)
                 return target(*bound.args, **bound.kwargs)
 
             return gate.execute(
@@ -169,6 +174,8 @@ class AgentLockFunctionMap:
                 _exec,
                 token=auth.token,
                 parameters=params,
+                effective_parameters=auth.effective_parameters,
+                modify_output_fn=auth.modify_output_fn,
             )
 
         return guarded

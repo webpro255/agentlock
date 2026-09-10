@@ -31,11 +31,13 @@ from collections.abc import Callable
 from typing import Any, TypeVar
 
 from agentlock.binding import (
+    apply_effective_parameters,
     bind_call_parameters,
     ensure_bindable,
     unwrap_partial,
 )
 from agentlock.gate import AuthorizationGate
+from agentlock.modify import apply_output_modifier
 from agentlock.schema import AgentLockPermissions
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -161,10 +163,25 @@ def agentlock(
                 auth_result.raise_if_denied()
                 assert auth_result.token is not None
 
-                # Execute: await the async function directly, then run
-                # through the gate's redaction/audit via execute()
-                # We wrap in a sync callable for gate.execute() compatibility
-                #
+                # E1: the call is rebuilt from what the gate authorized, not
+                # from what the caller submitted.  When nothing transformed a
+                # parameter the two are the same dict and this is a no-op.
+                effective = (
+                    auth_result.effective_parameters
+                    if auth_result.effective_parameters is not None
+                    else params
+                )
+                apply_effective_parameters(bound, effective)
+
+                # E2: consume BEFORE the call, the ordering the sync path
+                # already had through ``gate.execute``.  Consuming afterwards
+                # left the token ACTIVE on every path that raised, so a
+                # single-use grant survived the failure of the call it was
+                # issued for and stayed replayable for the rest of its TTL.
+                gate.token_store.validate_and_consume(
+                    auth_result.token.token_id, tool_name, effective,
+                )
+
                 # E7: this wrapper owns execution (it awaits the coroutine
                 # itself), so the gate sees the grant and never the act unless
                 # we report it.  The attempt goes out BEFORE the await, so a
@@ -173,7 +190,7 @@ def agentlock(
                 attempt = gate.begin_execution(
                     tool_name,
                     token_id=auth_result.token.token_id,
-                    parameters=params,
+                    parameters=effective,
                 )
                 started = time.time()
                 try:
@@ -185,7 +202,7 @@ def agentlock(
                         tool_name,
                         status="failed",
                         token_id=auth_result.token.token_id,
-                        parameters=params,
+                        parameters=effective,
                         duration_ms=(time.time() - started) * 1000,
                         error_type=type(exc).__name__,
                         attempt_audit_id=(attempt.audit_id if attempt else ""),
@@ -195,25 +212,27 @@ def agentlock(
                     tool_name,
                     status="succeeded",
                     token_id=auth_result.token.token_id,
-                    parameters=params,
+                    parameters=effective,
                     duration_ms=(time.time() - started) * 1000,
                     attempt_audit_id=(attempt.audit_id if attempt else ""),
                 )
+
+                # E1: the output modifier, in the same position
+                # ``gate.execute`` applies it: after the call, before
+                # redaction.  E11: through the walk, so the shape of the
+                # return does not decide whether a declared transformation
+                # runs.
+                if auth_result.modify_output_fn is not None:
+                    captured_result = apply_output_modifier(
+                        captured_result, auth_result.modify_output_fn
+                    )
 
                 # Apply redaction if configured
                 redacted = gate.redact_output(tool_name, captured_result) \
                     if isinstance(captured_result, str) else None
                 if redacted and redacted.was_redacted:
-                    # Consume token and return redacted output
-                    gate.token_store.validate_and_consume(
-                        auth_result.token.token_id, tool_name, params,
-                    )
                     return redacted.redacted
 
-                # Consume token for audit trail
-                gate.token_store.validate_and_consume(
-                    auth_result.token.token_id, tool_name, params,
-                )
                 return captured_result
 
             async_wrapper._agentlock_tool_name = tool_name  # type: ignore[attr-defined]
@@ -236,9 +255,18 @@ def agentlock(
                     func, args, kwargs, must_observe=must_observe
                 )
 
+                # E1: ``gate.call`` hands the effective parameters to the
+                # callable, and the callable is this one, so the binding the
+                # function is invoked from is rebuilt from them first.  The
+                # output modifier is applied by ``gate.execute`` on the way
+                # back out.
+                def _run(**effective: Any) -> Any:
+                    apply_effective_parameters(bound, effective)
+                    return target(*bound.args, **bound.kwargs)
+
                 return gate.call(
                     tool_name,
-                    lambda **_p: target(*bound.args, **bound.kwargs),
+                    _run,
                     user_id=user_id,
                     role=role,
                     parameters=params,

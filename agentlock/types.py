@@ -205,6 +205,11 @@ class DenialReason(str, Enum):
     DEFERRED_COMMIT_DENIED = "deferred_commit_denied"
     # v1.4: target token traces to NEITHER authoritative nor untrusted context
     NOVEL_LINEAGE = "novel_lineage"
+    # v1.10 (E10): the caller claimed a role the authenticated session
+    # contradicts.  Distinct from INSUFFICIENT_ROLE, which is a role the tool
+    # does not allow.  This one is a claim that lost to an authenticated fact,
+    # and an auditor should not have to guess which of the two happened.
+    ROLE_MISMATCH = "role_mismatch"
 
 
 class TokenStatus(str, Enum):

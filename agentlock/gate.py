@@ -63,7 +63,7 @@ from agentlock.hardening import (
     HardeningSignal,
 )
 from agentlock.memory_gate import MemoryDecision, MemoryGate, MemoryStore
-from agentlock.modify import ModifyEngine
+from agentlock.modify import ModifyEngine, apply_output_modifier
 from agentlock.policy import (
     ActionFlags,
     PolicyEngine,
@@ -108,6 +108,12 @@ class AuthResult:
         audit_id: Audit record ID for this decision.
         hardening: Hardening directive for the session.
         modify_output_fn: Callable to transform tool output (MODIFY only).
+        effective_parameters: What the tool will actually be invoked with,
+            after any declared parameter transformation.  Equal to the
+            parameters the caller submitted when nothing transformed them,
+            which is the common case.  The token is bound to THESE, so an
+            execution path that runs the callable with anything else is
+            running something the gate did not authorize.
         transformations_applied: List of transformations applied (MODIFY only).
         needs_approval: The call is blocked pending out-of-band human
             approval rather than hard-denied.  ``allowed`` is still False.
@@ -122,6 +128,7 @@ class AuthResult:
     audit_id: str = ""
     hardening: HardeningDirective | None = None
     modify_output_fn: Callable[[str], str] | None = None
+    effective_parameters: dict[str, Any] | None = None
     transformations_applied: list[str] = field(default_factory=list)
     needs_approval: bool = False
     approval_channel: str = ""
@@ -665,7 +672,15 @@ class AuthorizationGate:
         Args:
             tool_name: The tool being invoked.
             user_id: Authenticated caller identity.
-            role: Caller's role.  Auto-resolved from session if omitted.
+            role: Caller's role.  The AUTHENTICATED SESSION IS AUTHORITATIVE
+                (E10): if a session exists for ``user_id`` and this differs
+                from ``session.role``, the call is denied with
+                ``DenialReason.ROLE_MISMATCH`` before any policy step runs.
+                Omit it and the session's role is used.  With NO session there
+                is nothing to contradict, so the value is trusted as given,
+                which trusts the HOST to have authenticated the caller before
+                calling; a host that has not must not pass a role it did not
+                establish itself.
             parameters: Tool call parameters (for token binding).
             record_count: Number of records requested.
             recipient: Target recipient for outbound tools.
@@ -712,9 +727,12 @@ class AuthorizationGate:
             so the key is omitted from the record entirely."""
             return {"asserted_classes": list(_asserted)} if _asserted else None
 
-        # Resolve session ID for hardening signal tracking
-        _session = self._session_store.get_by_user(user_id) if user_id else None
-        hardening_session_id = _session.session_id if _session else (
+        # Resolve the session once.  E10: two lookups for the same caller ran
+        # here through 1.10.0, one for hardening and one for role resolution,
+        # and a rule about the session that lived at only one of them would be
+        # a rule with a hole in it.
+        session = self._session_store.get_by_user(user_id) if user_id else None
+        hardening_session_id = session.session_id if session else (
             metadata.get("session_id", "") if metadata else ""
         )
 
@@ -731,6 +749,56 @@ class AuthorizationGate:
             )
             for sig in combo_signals:
                 self._hardening_engine.record_signal(hardening_session_id, sig)
+
+        # E10: the session's role is authoritative over the caller's claim.
+        #
+        # Through 1.10.0 the session's role was consulted only when the caller
+        # supplied none, so a caller that supplied one was simply believed.
+        # The gate held two facts about the same principal, one authenticated
+        # out of band and one asserted in the request, and preferred the
+        # asserted one.  A client that could name alice could run an
+        # admin-only tool over her user session.
+        #
+        # This runs before the tool-existence guard as well as before every
+        # policy step: the contradiction is about the caller and is knowable
+        # without looking the tool up, and answering "no such tool" to a
+        # caller whose claimed identity has already failed would tell them
+        # something about the registry that they have not earned.  The
+        # velocity and combo signals above are telemetry, not a policy step,
+        # and still see the attempt.
+        if session is not None and role and role != session.role:
+            record = self._audit.log(
+                tool_name=tool_name,
+                user_id=user_id,
+                role=session.role,
+                action="denied",
+                reason=DenialReason.ROLE_MISMATCH.value,
+                risk_level=(
+                    permissions.risk_level.value if permissions else "unknown"
+                ),
+                metadata=_class_meta(),
+            )
+            return AuthResult(
+                allowed=False,
+                decision=DecisionType.DENY,
+                denial={
+                    "status": "denied",
+                    "reason": DenialReason.ROLE_MISMATCH.value,
+                    "detail": (
+                        f"The claimed role {role!r} does not match the "
+                        f"authenticated session for {user_id!r}, which holds "
+                        f"role {session.role!r}. The session decides."
+                    ),
+                    "required_role": session.role,
+                    "current_role": role,
+                    "suggestion": (
+                        "Omit the role and let the gate resolve it from the "
+                        "session, or send the role the session holds. A role "
+                        "change requires a new authenticated session."
+                    ),
+                },
+                audit_id=record.audit_id,
+            )
 
         # No permissions registered = denied (deny by default)
         if permissions is None:
@@ -754,8 +822,9 @@ class AuthorizationGate:
                 audit_id=record.audit_id,
             )
 
-        # Resolve session
-        session = self._session_store.get_by_user(user_id) if user_id else None
+        # Resolve the role and the boundary from the session.  E10 has already
+        # denied any claimed role that contradicts it, so by here the caller
+        # either supplied nothing or supplied what the session holds.
         if session and not role:
             role = session.role
         if session and data_boundary is None:
@@ -1437,34 +1506,17 @@ class AuthorizationGate:
             self._stepup_manager.record_denial(hardening_session_id, tool_name)
 
         if decision.allowed:
-            # Issue execution token
-            token = self._token_store.issue(
-                tool_name=tool_name,
-                user_id=user_id,
-                role=role,
-                parameters=parameters,
-                scope={
-                    "data_boundary": ctx.data_boundary.value,
-                    "max_records": permissions.scope.max_records,
-                },
-                ttl=self._token_ttl,
-            )
-
-            # Build v1.1 audit metadata
-            audit_kwargs: dict[str, Any] = {}
-            if context_state:
-                audit_kwargs["trust_ceiling"] = context_state.trust_ceiling.value
-                audit_kwargs["is_trust_degraded"] = context_state.is_degraded
-                if context_state.active_effects:
-                    audit_kwargs["degradation_effects"] = [
-                        e.value for e in context_state.active_effects
-                    ]
-
-            # MODIFY evaluation (v1.2): when modify_policy is configured
-            # and hardening signals are active, build an output modifier
+            # MODIFY evaluation (v1.2), moved AHEAD of token issuance (E1).
+            # This block decides what the tool will actually be invoked with,
+            # and a token is a grant to run one specific call, so the
+            # transformation has to be settled before there is a grant rather
+            # than after one has already been bound to something else.
             modify_output_fn = None
             modify_decision = DecisionType.ALLOW
             transformations_applied: list[str] = []
+            # Equal to what the caller submitted unless a transformation
+            # rewrites it, which is the common case.
+            effective_parameters: dict[str, Any] = dict(parameters or {})
             mp = permissions.modify_policy
             if mp and mp.enabled and mp.transformations:
                 should_modify = not mp.apply_when_hardening_active or (
@@ -1483,6 +1535,15 @@ class AuthorizationGate:
                             transformations_applied.extend(
                                 param_result.transformations_applied
                             )
+
+                        # E1: what the transformation produced is what the
+                        # tool runs with.  Through 1.9.1 this dict was
+                        # computed here and then dropped, so a declared
+                        # parameter transformation changed the audit record
+                        # and nothing else: every execution path invoked the
+                        # callable with the untransformed value.
+                        if param_result.modified_params is not None:
+                            effective_parameters = param_result.modified_params
 
                         # deny_on_block: if a whitelist transform blocked a
                         # parameter, escalate MODIFY → DENY.  The tool
@@ -1534,6 +1595,32 @@ class AuthorizationGate:
                     if modify_output_fn or transformations_applied:
                         modify_decision = DecisionType.MODIFY
 
+            # Issue execution token, bound to the EFFECTIVE parameters: the
+            # grant names the call that may run, not the call that was asked
+            # for.
+            token = self._token_store.issue(
+                tool_name=tool_name,
+                user_id=user_id,
+                role=role,
+                parameters=effective_parameters,
+                scope={
+                    "data_boundary": ctx.data_boundary.value,
+                    "max_records": permissions.scope.max_records,
+                },
+                ttl=self._token_ttl,
+                requested_parameters=parameters,
+            )
+
+            # Build v1.1 audit metadata
+            audit_kwargs: dict[str, Any] = {}
+            if context_state:
+                audit_kwargs["trust_ceiling"] = context_state.trust_ceiling.value
+                audit_kwargs["is_trust_degraded"] = context_state.is_degraded
+                if context_state.active_effects:
+                    audit_kwargs["degradation_effects"] = [
+                        e.value for e in context_state.active_effects
+                    ]
+
             # E10: a grant records the basis it was granted on, not merely the
             # fact that nothing denied it.  Built from what the gate and the
             # policy engine already computed, after the decision, and never read
@@ -1580,6 +1667,7 @@ class AuthorizationGate:
                 audit_id=record.audit_id,
                 hardening=directive,
                 modify_output_fn=modify_output_fn,
+                effective_parameters=effective_parameters,
                 transformations_applied=transformations_applied,
                 session_gate_shadow=session_gate_shadow,
             )
@@ -1650,6 +1738,7 @@ class AuthorizationGate:
         *,
         token: ExecutionToken,
         parameters: dict[str, Any] | None = None,
+        effective_parameters: dict[str, Any] | None = None,
         modify_output_fn: Callable[[str], str] | None = None,
     ) -> Any:
         """Execute a tool via its token (Layer 3).
@@ -1658,11 +1747,23 @@ class AuthorizationGate:
         MODIFY transformations and redaction if configured, and returns
         the result.
 
+        E1, one execution contract: the token is bound to the EFFECTIVE
+        parameters, so those are what is validated against it and what the
+        callable is invoked with.  A caller that hands this method the
+        pre-transformation parameters is not penalized for it: the grant
+        carries what it was issued for, and that is used.  A caller that
+        supplies ``effective_parameters`` explicitly, which
+        :meth:`call` and the integrations do, is authoritative over both.
+
         Args:
             tool_name: Tool to execute.
             func: The callable to invoke.
             token: Execution token from authorize().
-            parameters: Keyword arguments for the function.
+            parameters: Keyword arguments for the function, as the caller
+                submitted them.  Used only when neither this call nor the
+                token names the effective parameters.
+            effective_parameters: What the gate authorized this call to run
+                with, from ``AuthResult.effective_parameters``.
             modify_output_fn: Optional output transformer from
                 ``AuthResult.modify_output_fn`` (v1.2 MODIFY).
 
@@ -1674,11 +1775,31 @@ class AuthorizationGate:
             "failed") and then re-raised unchanged: the evidence path observes,
             it never alters.
         """
+        # Which call runs.  In order: what the caller states the gate
+        # authorized; then, when the caller presents the parameters it ASKED
+        # with, the call the gate actually granted for that request; then the
+        # caller's own parameters, which the token binding then judges.  The
+        # last branch is the one that rejects a substituted call: presenting
+        # neither the requested nor the effective parameters fails
+        # ``validate_and_consume`` exactly as it did before E1.
+        if effective_parameters is not None:
+            params = dict(effective_parameters)
+        elif parameters is None:
+            params = dict(token.effective_parameters or {})
+        elif (
+            token.effective_parameters is not None
+            and ExecutionToken.hash_parameters(dict(parameters))
+            == token.requested_parameters_hash
+        ):
+            params = dict(token.effective_parameters)
+        else:
+            params = dict(parameters)
+
         # Validate and consume token (single-use).  A rejected token means
         # nothing was attempted, so no attempt record is written: absence here
         # is correct and means exactly what it says.
         self._token_store.validate_and_consume(
-            token.token_id, tool_name, parameters
+            token.token_id, tool_name, params
         )
 
         permissions = self._tools.get(tool_name)
@@ -1693,7 +1814,7 @@ class AuthorizationGate:
             role=token.role,
             risk_level=(permissions.risk_level.value if permissions else "unknown"),
             token_id=token.token_id,
-            parameters=parameters,
+            parameters=params,
             log_level=(
                 permissions.audit.log_level if permissions else AuditLogLevel.STANDARD
             ),
@@ -1704,7 +1825,6 @@ class AuthorizationGate:
         )
 
         # Execute
-        params = parameters or {}
         started = time.time()
         try:
             result = func(**params)
@@ -1749,9 +1869,11 @@ class AuthorizationGate:
             reported_by="gate",
         )
 
-        # Apply MODIFY output transformation (v1.2) -- runs before redaction
-        if modify_output_fn and isinstance(result, str):
-            modified = modify_output_fn(result)
+        # Apply MODIFY output transformation (v1.2), before redaction.
+        # E11: the walk, not an ``isinstance(result, str)`` guard, so a tool
+        # that returns a mapping or a sequence is transformed too.
+        if modify_output_fn:
+            modified = apply_output_modifier(result, modify_output_fn)
             if modified != result:
                 self._audit.log(
                     tool_name=tool_name,
@@ -2106,8 +2228,17 @@ class AuthorizationGate:
         )
         result.raise_if_denied()
         assert result.token is not None
+        # E1: both halves of the decision travel with the execution.  Through
+        # 1.9.1 this call forwarded neither, so a tool with a declared output
+        # transformation returned its raw output to every caller who used the
+        # one-step path.
         return self.execute(
-            tool_name, func, token=result.token, parameters=parameters
+            tool_name,
+            func,
+            token=result.token,
+            parameters=parameters,
+            effective_parameters=result.effective_parameters,
+            modify_output_fn=result.modify_output_fn,
         )
 
     # -- Redaction (standalone) ---------------------------------------------
@@ -2375,20 +2506,51 @@ class AuthorizationGate:
         taint_at_commit = {**summary, "gated_on": key}
 
         def _should_deny(record: DeferralRecord) -> bool:
-            # No taint at commit -> nothing to gate on; commit, as before.
+            record.denial_reason = None
+            permissions = self._tools.get(record.tool_name)
+            lineage_policy = (
+                active_lineage_policy(permissions)
+                if permissions is not None
+                else None
+            )
+
+            # E6, FIRST: the per-parameter lineage checks, re-run against the
+            # COMPLETE episode context.  These are independent of the session
+            # taint flag and of the action classes, exactly as they are at
+            # call time, so they are asked before either.  Without them a
+            # queued action whose target provably came from content that
+            # arrived after it was queued committed anyway, while a fresh
+            # authorize() of the identical call at the identical moment
+            # denied it.  The two enforcement points have to agree.
+            if permissions is not None and lineage_policy is not None:
+                reason = self._commit_lineage_reason(
+                    record, permissions, lineage_policy, session_id
+                )
+                if reason:
+                    record.denial_reason = reason
+                    return True
+
+            # No taint at commit -> nothing left to gate on; commit, as before.
             if not tainted:
                 return False
-            permissions = self._tools.get(record.tool_name)
             if permissions is None:
-                return True  # fail closed: unregistered at commit time
-            lineage_policy = active_lineage_policy(permissions)
+                # fail closed: unregistered at commit time
+                record.denial_reason = "unregistered_at_commit"
+                return True
             if lineage_policy is None:
-                return True  # fail closed: no live policy to consult
+                # fail closed: no live policy to consult
+                record.denial_reason = "no_lineage_policy"
+                return True
             if record.action_flags is None:
-                return True  # fail closed: caller recorded no classes
-            return lineage_gated_action(
+                # fail closed: caller recorded no classes
+                record.denial_reason = "no_action_flags"
+                return True
+            if lineage_gated_action(
                 lineage_policy, permissions, record.action_flags
-            )
+            ):
+                record.denial_reason = DenialReason.UNTRUSTED_LINEAGE.value
+                return True
+            return False
 
         resolved = self._deferral_manager.resolve_commit_queue(
             session_id, deny=_should_deny, taint_at_commit=taint_at_commit,
@@ -2417,6 +2579,60 @@ class AuthorizationGate:
                 },
             )
         return resolved
+
+    def _commit_lineage_reason(
+        self,
+        record: DeferralRecord,
+        permissions: AgentLockPermissions,
+        lineage_policy: Any,
+        session_id: str,
+    ) -> str:
+        """Re-run the per-parameter lineage checks at commit time (E6).
+
+        The same two gate-owned reads ``authorize()`` performs, over the same
+        immutable queued parameters, against the context as it stands at the
+        end of the turn rather than as it stood when the action was queued.
+        That difference is the entire point of a deferred commit: content that
+        arrived after the call is exactly what the deferral exists to catch,
+        and until now the commit path could only see it as an undifferentiated
+        session taint flag, which the action-class disjunct was then free to
+        wave through.
+
+        An action set to ``"log"`` is observe-only at call time and stays
+        observe-only here; it never denies.  A tool below v1.3 has no lineage
+        semantics to re-check.  A record with no parameters has nothing to
+        trace.  All three return no reason, and the taint path below decides.
+
+        Returns the denial reason, or an empty string for no finding.
+        """
+        if not version_at_least(permissions.version, (1, 3)):
+            return ""
+        parameters = record.parameters
+        if not parameters:
+            return ""
+        sid = record.session_id or session_id
+        if not sid:
+            return ""
+
+        if (
+            lineage_policy.param_lineage_enabled
+            and lineage_policy.param_lineage_action != "log"
+            and self._context_tracker.parameter_lineage_check(
+                sid, parameters, min_len=lineage_policy.param_lineage_min_len
+            )
+            is not None
+        ):
+            return str(DenialReason.PARAM_LINEAGE.value)
+
+        if (
+            lineage_policy.novel_lineage_enabled
+            and lineage_policy.novel_lineage_action != "log"
+            and self._context_tracker.novel_lineage_check(sid, parameters)
+            is not None
+        ):
+            return str(DenialReason.NOVEL_LINEAGE.value)
+
+        return ""
 
     def _audit_commit_resolution(
         self, record: DeferralRecord, session_id: str
@@ -2484,6 +2700,9 @@ class AuthorizationGate:
                 "deferral_id": record.deferral_id,
                 "resolution": record.resolution,
                 "resolved_by": record.resolved_by,
+                # E6: a denial that cannot name what denied it is not
+                # evidence.  Absent on a commit, by construction.
+                "denial_reason": record.denial_reason,
                 # Both snapshots, so the resolution states WHY it went the way
                 # it did: taint that was absent at call time and present at
                 # commit is the whole point of the deferred-commit mechanism.
