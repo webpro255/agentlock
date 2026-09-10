@@ -7,13 +7,13 @@ authors:
   - family-names: Grice
     given-names: David
     orcid: "https://orcid.org/0009-0005-5388-123X"
-version: 1.9.0
+version: 1.9.1
 doi: 10.5281/zenodo.22681594
 identifiers:
   - type: doi
     value: 10.5281/zenodo.22681594
     description: "Concept DOI, resolves to the latest version"
-date-released: 2026-09-09
+date-released: 2026-09-10
 license: AGPL-3.0
 repository-code: "https://github.com/webpro255/agentlock"
 url: "https://agentlock.dev"

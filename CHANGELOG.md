@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.1] - 2026-09-10
+
+A patch release closing one class of gap in `agentlock/binding.py`, found by the same external review that found the three 1.9.0 gaps. No other change: no new feature, no new denial reason, no schema change, and no change to any file outside the binding, its exception, the version and the documentation.
+
+Suite: **1504 passed, 14 skipped on CPython 3.14.6 with no optional extras**, **1509 passed, 9 skipped on CPython 3.14.6 with `mcp 2.2.0`**, **1508 passed, 10 skipped on CPython 3.13.14 with `mcp 1.30.0`**, and **1510 passed, 8 skipped on CPython 3.13.14 with `mcp 2.2.0` and `pyautogen 0.9.0`**. 0 failed in every environment. `mypy agentlock/ --ignore-missing-imports` reports 0 errors.
+
+### Security
+
+- **A `**kwargs` key that names another parameter is refused instead of flattened over it.** `bind_call_parameters` flattened a `VAR_KEYWORD` mapping onto the top-level parameters dict with `parameters.update(value)`. A key in that mapping equal to the name of another bound parameter overwrote the bound value, and the gate was then shown a value the function does not receive. Two shapes carried it. With `def send(to, /, **extras)`, the call `send("attacker@evil.test", to="bob@company.com")` bound `to` to the attacker positionally, put `to="bob@company.com"` in `extras` because `to` is positional only, and flattened the contact over the attacker: the gate authorized a known contact and the function ran with the attacker. With `def f(*args, **kw)`, the call `f(1, 2, args="spoof")` showed the gate `args="spoof"` while the function received `args=(1, 2)`. The sync wrapper, the async wrapper and the AutoGen `protect_functions` map all reached the same binding and all three carried it. Before flattening, the binding now computes the set of names of every other parameter in the signature and raises `BindingError` if any key of the mapping is in it, naming the colliding key and the function. Credited to the same external review.
+- **This is a call-time refusal and it reaches the caller.** The error is raised from inside the binding, before `authorize()` is called, so the call is never authorized and the function never runs. No wrapper catches it: it propagates like `TokenInvalidError` does. A deployment calling a function whose signature genuinely has both a parameter and a `**kwargs` key of the same name will see `BindingError` where it previously saw execution.
+- **A key equal to the `**kwargs` parameter's own name is not a collision and stays allowed.** With `def g(**kw)`, the call `g(kw="spoof")` has no parameter named `kw` for the key to shadow: `kw` is the variadic itself, and the gate and the function see the same mapping. Nothing is hidden, so nothing is refused, and this call binds exactly as it did at 1.9.0.
+
+### Changed
+
+- **`BindingError`'s documentation now states both reasons it is raised and where each is raised from.** Through 1.9.0 the class docstring read "Raised at wrap time, never at call time", which the collision rule makes false. The unreadable-signature case is still a wrap-time refusal and is unchanged.
+
 ## [1.9.0] - 2026-09-09
 
 The enforcement completeness release. An external review of the published 1.8.0 wheel found three places where the engine did not enforce what its own documentation said it enforced. All three are fixed. This release adds no detection feature, no new denial reason and no schema change.

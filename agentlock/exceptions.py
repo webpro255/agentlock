@@ -258,12 +258,22 @@ class ConfigurationError(AgentLockError):
 
 
 class BindingError(AgentLockError):
-    """A callable's signature cannot be read, so its calls cannot be gated.
+    """A call's arguments cannot be bound to parameter names, so it cannot be
+    gated.
 
-    Raised at wrap time, never at call time.  A wrapper that cannot bind a
-    call's arguments to parameter names cannot show the gate what the call
+    Two reasons, raised at two different moments.
+
+    The callable's signature cannot be read.  Raised at wrap time: a wrapper
+    that cannot bind a call's arguments cannot show the gate what the call
     carries, so it refuses to be built rather than gating a subset of the
     arguments and letting the rest through.
+
+    Or the call's ``**kwargs`` mapping carries a key that names another
+    parameter of the same callable.  Raised at call time, from inside the
+    binding and before the gate is asked anything: flattening such a key over
+    the parameter it names would show the gate one value while the function
+    ran with the other, so the call is refused instead.  A key equal to the
+    ``**kwargs`` parameter's own name shadows nothing and is bound normally.
     """
 
 

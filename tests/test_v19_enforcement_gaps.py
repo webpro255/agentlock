@@ -516,11 +516,12 @@ class TestBindingCollision:
     and not another parameter it could shadow.
 
     XC1 to XC4 were marked ``xfail(strict=True)`` at freeze and measured
-    failing against 1.9.0. XC5 and XC6 carry no marker: they are the
-    regression guards that the collision rule must not break.
+    failing against 1.9.0. The markers came off when the collision rule
+    landed; the tests are unchanged otherwise and are now the regression guard
+    for it. XC5 and XC6 never carried a marker: they are the guards that the
+    collision rule itself must not break.
     """
 
-    @pytest.mark.xfail(strict=True, reason="C1, unfixed at 1.9.0")
     def test_xc1_sync_decorator_rejects_a_variadic_key_shadowing_a_parameter(self):
         """C1 through the sync ``@agentlock`` wrapper.
 
@@ -545,7 +546,6 @@ class TestBindingCollision:
         assert "send_email" in str(exc.value)
         assert calls["n"] == 0
 
-    @pytest.mark.xfail(strict=True, reason="C1 async, unfixed at 1.9.0")
     def test_xc2_async_decorator_rejects_a_variadic_key_shadowing_a_parameter(self):
         """C1 through the async wrapper. Same shape, same refusal."""
         from agentlock.decorators import agentlock as agentlock_decorator
@@ -567,7 +567,6 @@ class TestBindingCollision:
         assert "send_email" in str(exc.value)
         assert calls["n"] == 0
 
-    @pytest.mark.xfail(strict=True, reason="C1 autogen, unfixed at 1.9.0")
     def test_xc3_autogen_guarded_rejects_a_variadic_key_shadowing_a_parameter(
         self, monkeypatch
     ):
@@ -604,7 +603,6 @@ class TestBindingCollision:
         assert "send_email" in str(exc.value)
         assert calls["n"] == 0
 
-    @pytest.mark.xfail(strict=True, reason="C2, unfixed at 1.9.0")
     def test_xc4_variadic_key_shadowing_var_positional_is_rejected(self):
         """C2, measured on the binding function directly.
 
