@@ -89,17 +89,47 @@ HEADER_SESSION_ID = "X-AgentLock-Session-Id"
 #
 # Verification is now opt in, and a bearer token carries no identity at all
 # unless the deployment configured a key to check it against.
+#
+# 1.10.2 as first written left one door in that rule.  A token was verified
+# when the request presented one in the recognized form, and ANY other request
+# fell through to the identity headers: an absent Authorization header, a
+# scheme spelled some other way, a scheme that was not bearer at all.  So the
+# check ran only on clients that chose to submit to it.  A configured key now
+# means the verified token is the ONLY identity, and a request that presents
+# nothing to verify is refused rather than identified some other way.
 
 #: Used when the caller configured a key but named no algorithms.
 _DEFAULT_JWT_ALGORITHMS = ("HS256",)
 
 
-class _JwtInvalidError(Exception):
-    """A bearer token was presented under a configured key and did not verify.
+class _JwtIdentityError(Exception):
+    """A configured key could not take an identity from this request.
 
     Carries no claims by construction: there is nothing trustworthy in a token
-    that failed verification, including the reason it names for itself.
+    that failed verification, including the reason it names for itself, and
+    there is nothing at all in a request that presented none.
     """
+
+    #: The denial reason the 401 body reports.
+    reason = "jwt_invalid"
+
+
+class _JwtInvalidError(_JwtIdentityError):
+    """A bearer token was presented under a configured key and did not verify."""
+
+    reason = "jwt_invalid"
+
+
+class _JwtRequiredError(_JwtIdentityError):
+    """No bearer credential was presented under a configured key.
+
+    An absent ``Authorization`` header, or one carrying some other scheme, is
+    not "nothing to check" but "no identity at all".  With a key configured the
+    verified token is the only identity this integration accepts, and the
+    identity headers are never consulted to make up the difference.
+    """
+
+    reason = "jwt_required"
 
 
 def _import_jose() -> Any:
@@ -145,22 +175,39 @@ def _verify_jwt_claims(
     authorization: str,
     jwt_key: str | bytes,
     jwt_algorithms: Sequence[str] | None,
-) -> dict[str, Any] | None:
+) -> dict[str, Any]:
     """Verify a bearer token and return its claims.
 
-    Returns ``None`` when the request carries no bearer token, which is not a
-    failure: a deployment may authorize some routes by token and others by
-    trusted-upstream header.
+    Called only when a key is configured, and it either returns verified claims
+    or raises.  There is no third answer, because a third answer is what the
+    identity headers used to be reached through.
 
-    Raises :class:`_JwtInvalidError` when a bearer token IS present and does not
-    verify: bad signature, disallowed or unsecured algorithm, expired, or
-    malformed.  The caller must refuse the request rather than fall back to
-    the identity headers, because falling back on a bad token hands a forger
-    the identity the token was there to gate.
+    Raises :class:`_JwtRequiredError` when the request carries no bearer
+    credential: an absent ``Authorization`` header, an empty one, or one whose
+    scheme is something else.  Through 1.10.2 this returned ``None`` and the
+    caller read the identity headers instead, so the verification a deployment
+    had switched on applied only to clients that chose to present a token.
+
+    Raises :class:`_JwtInvalidError` when a bearer credential IS present and
+    does not verify: bad signature, disallowed or unsecured algorithm, expired,
+    malformed, or empty.  The caller must refuse the request rather than fall
+    back to the identity headers, because falling back on a bad token hands a
+    forger the identity the token was there to gate.
+
+    The scheme is matched case insensitively, as RFC 7235 defines it: a
+    lowercase ``bearer`` IS a bearer credential.  Matching it exactly, as this
+    did through 1.10.2, did not reject such a request; it failed to see the
+    token, so a forged one reached the identity headers and a genuine one was
+    thrown away for its spelling.
     """
-    if not authorization.startswith("Bearer "):
-        return None
-    token = authorization[7:].strip()
+    scheme, _, token = authorization.partition(" ")
+    if scheme.casefold() != "bearer":
+        raise _JwtRequiredError(
+            "no bearer token was presented"
+            if not authorization.strip()
+            else f"the Authorization scheme is {scheme!r}, not Bearer"
+        )
+    token = token.strip()
     if not token:
         raise _JwtInvalidError("empty bearer token")
 
@@ -180,22 +227,37 @@ def _verify_jwt_claims(
     return claims
 
 
-def _jwt_denial(detail: str) -> dict[str, Any]:
-    """The 401 body for a bearer token that did not verify."""
+def _jwt_denial(reason: str, detail: str) -> dict[str, Any]:
+    """The 401 body for a request a configured key could not identify."""
+    if reason == "jwt_required":
+        explanation = (
+            f"This integration is configured to verify bearer tokens, so a "
+            f"verified token is the only identity it accepts: {detail}. The "
+            f"{HEADER_USER_ID} and {HEADER_ROLE} headers are not consulted "
+            f"while jwt_key is configured."
+        )
+        suggestion = (
+            "Send an Authorization header of the form 'Bearer <token>' "
+            "carrying a token signed with the configured key. The scheme is "
+            "matched case insensitively."
+        )
+    else:
+        explanation = (
+            f"The bearer token did not verify against the configured "
+            f"jwt_key: {detail}. The identity headers are not consulted "
+            f"as a fallback for a token that failed verification."
+        )
+        suggestion = (
+            "Present a token signed with the configured key and a "
+            "permitted algorithm."
+        )
     return {
         "error": "agentlock_denied",
         "detail": {
             "status": "denied",
-            "reason": "jwt_invalid",
-            "detail": (
-                f"The bearer token did not verify against the configured "
-                f"jwt_key: {detail}. The identity headers are not consulted "
-                f"as a fallback for a token that failed verification."
-            ),
-            "suggestion": (
-                "Present a token signed with the configured key and a "
-                "permitted algorithm, or send no bearer token at all."
-            ),
+            "reason": reason,
+            "detail": explanation,
+            "suggestion": suggestion,
         },
         "audit_id": "",
     }
@@ -234,15 +296,18 @@ class AgentLockMiddleware:
     Identity.  Verification is opt in, and what a bearer token means depends
     entirely on whether this middleware was given a key to check it against:
 
-    * **``jwt_key`` set.** A bearer token is VERIFIED, with expiry enforced
-      and ``"none"`` refused as an algorithm however ``jwt_algorithms`` is
-      written.  A token that verifies is authoritative: its ``sub`` and
-      ``role`` claims are the identity and the ``X-AgentLock-User-Id`` /
-      ``X-AgentLock-Role`` headers are ignored, so a caller cannot present a
-      token and then override the identity inside it.  A token that does NOT
-      verify is **401** with reason ``jwt_invalid``, and the identity headers
-      are not consulted as a fallback, because falling back on a bad token
-      hands a forger the identity the token existed to gate.
+    * **``jwt_key`` set.** The verified bearer token is the ONLY identity and
+      the ``X-AgentLock-User-Id`` / ``X-AgentLock-Role`` headers are never
+      consulted.  A token is verified with expiry enforced and ``"none"``
+      refused as an algorithm however ``jwt_algorithms`` is written; the
+      scheme is matched case insensitively, so ``bearer`` and ``Bearer`` are
+      the same credential.  A token that verifies is authoritative: its
+      ``sub`` and ``role`` claims are the identity, so a caller cannot present
+      a token and then override the identity inside it.  A token that does NOT
+      verify is **401** with reason ``jwt_invalid``.  A request that presents
+      no bearer credential at all, whether the ``Authorization`` header is
+      absent or carries some other scheme, is **401** with reason
+      ``jwt_required``.
     * **``jwt_key`` unset, the default.** A bearer token is ignored for
       identity ENTIRELY, and the identity headers apply exactly as they did
       before 1.10.0.
@@ -254,11 +319,18 @@ class AgentLockMiddleware:
     change is not additive for a deployment that was relying on unverified
     claims being read.
 
-    The identity headers are TRUSTED-UPSTREAM inputs in either state.  They
-    carry no proof of anything, and a deployment that exposes this middleware
-    directly to untrusted clients has to strip client-supplied
-    ``X-AgentLock-*`` at its edge, or configure ``jwt_key`` and authenticate
-    by token instead.
+    1.10.2 as first written closed it only for clients that presented a token.
+    Verification ran on a recognized ``Bearer`` value and every other request
+    fell through to the identity headers, so omitting the header, or spelling
+    the scheme differently, reached the header path under a configured key.
+    That is why the ``jwt_required`` refusal exists: with a key configured
+    there is no request shape that the headers decide.
+
+    The identity headers are TRUSTED-UPSTREAM inputs, and they are the identity
+    input only in the unset state.  They carry no proof of anything, and a
+    deployment that exposes this middleware directly to untrusted clients has
+    to strip client-supplied ``X-AgentLock-*`` at its edge, or configure
+    ``jwt_key`` and authenticate by token instead.
 
     If a request does not map to a tool, it passes through unmodified.
 
@@ -269,7 +341,8 @@ class AgentLockMiddleware:
             to derive the tool name from the request path.
         exclude_paths: Paths to skip (e.g., ``["/health", "/docs"]``).
         jwt_key: Key or secret bearer tokens are verified against.  ``None``,
-            the default, means bearer tokens carry no identity.
+            the default, means bearer tokens carry no identity.  Setting it
+            also means the identity headers stop being read.
         jwt_algorithms: Permitted signing algorithms.  Defaults to
             ``["HS256"]``.  ``"none"`` is dropped if listed.
 
@@ -354,11 +427,13 @@ class AgentLockMiddleware:
             await self.app(scope, receive, send)
             return
 
-        # Extract identity.  A VERIFIED bearer token is authoritative and the
-        # identity headers are then ignored entirely rather than merged with
-        # it.  With no key configured there is nothing to verify against, so
-        # the token is not read for identity at all.
-        claims: dict[str, Any] | None = None
+        # Extract identity.  With a key configured the verified bearer token
+        # is the only identity: it either verifies, or the request is refused.
+        # The headers are not reached from this branch at all, including when
+        # a verified token carries no subject, because a window in which they
+        # are read is a window a caller can aim for.  With no key configured
+        # there is nothing to verify against, so the token is not read for
+        # identity at all and the headers are the input.
         if self.jwt_key is not None:
             try:
                 claims = _verify_jwt_claims(
@@ -366,14 +441,13 @@ class AgentLockMiddleware:
                     self.jwt_key,
                     self.jwt_algorithms,
                 )
-            except _JwtInvalidError as exc:
+            except _JwtIdentityError as exc:
                 response = json_response_cls(
-                    status_code=401, content=_jwt_denial(str(exc)),
+                    status_code=401,
+                    content=_jwt_denial(exc.reason, str(exc)),
                 )
                 await response(scope, receive, send)
                 return
-
-        if claims is not None and claims.get("sub"):
             user_id = claims.get("sub", "")
             role = claims.get("role", "")
         else:
@@ -449,32 +523,48 @@ def require_agentlock(
         tool_name: The tool to authorize.
         user_id_header: Header name for user identity.
         role_header: Header name for user role.
-        use_jwt: Whether the ``Authorization`` header is read at all.  Only
-            consulted when ``jwt_key`` is set; with no key there is no token
-            identity to suppress.
+        use_jwt: Whether the ``Authorization`` header is read at all.  It
+            cannot be ``False`` while ``jwt_key`` is set: the two say verify
+            tokens with this key and do not read tokens, and the only way to
+            honor both is to identify a request by header under a configured
+            key, which is what this integration no longer does.
         jwt_key: Key or secret bearer tokens are verified against.  ``None``,
             the default, means bearer tokens carry no identity and the
-            identity headers apply.
+            identity headers apply.  Setting it also means the identity
+            headers stop being read.
         jwt_algorithms: Permitted signing algorithms.  Defaults to
             ``["HS256"]``.  ``"none"`` is dropped if listed.
 
     Identity follows the same rule as :class:`AgentLockMiddleware`, and for
-    the same reason: a bearer token is authoritative only once it has been
-    VERIFIED against a configured key, a token that fails verification is
-    **401** with reason ``jwt_invalid`` and does NOT fall back to the identity
-    headers, and with no key configured the token is ignored for identity
-    entirely.  The identity headers are trusted-upstream inputs in either
-    state.  Through 1.10.1 this dependency read unverified claims and
-    preferred them over the headers.
+    the same reason.  With ``jwt_key`` set, the verified bearer token is the
+    only identity: the scheme is matched case insensitively, a token that
+    fails verification is **401** with reason ``jwt_invalid``, a request
+    carrying no bearer credential is **401** with reason ``jwt_required``, and
+    the identity headers are never consulted.  With no key configured the
+    token is ignored for identity entirely and the headers apply.  Through
+    1.10.1 this dependency read unverified claims and preferred them over the
+    headers, and through 1.10.2 it read the headers whenever a request
+    presented nothing it recognized as a token.
 
     Returns:
         A FastAPI dependency callable.
 
     Raises:
+        ValueError: if ``jwt_key`` is set and ``use_jwt`` is ``False``.
         IntegrationUnsupportedError: if ``jwt_key`` is set and python-jose is
             not installed.  Raised when the dependency is built, not when a
             request arrives.
     """
+    if jwt_key is not None and not use_jwt:
+        raise ValueError(
+            "require_agentlock was given a jwt_key and use_jwt=False. A "
+            "configured key means the verified bearer token is the only "
+            "identity, so a dependency that does not read the token has no "
+            "identity to authorize and would fall back to the "
+            f"{user_id_header} / {role_header} headers, which is what a "
+            "configured key exists to prevent. Drop use_jwt=False to verify "
+            "tokens, or drop jwt_key to identify by header."
+        )
     if jwt_key is not None:
         _import_jose()  # Fail here, not at the first request.
 
@@ -490,22 +580,22 @@ def require_agentlock(
                 detail="AgentLock dependency requires a Request object.",
             )
 
-        # As in the middleware: a VERIFIED bearer token is authoritative and
-        # the identity headers are ignored.  Unverified, it is not identity.
-        claims: dict[str, Any] | None = None
-        if use_jwt and jwt_key is not None:
+        # As in the middleware: with a key configured the verified bearer
+        # token is the only identity, and the headers are not reached from
+        # this branch.  ``use_jwt`` cannot be False here, because a key and
+        # use_jwt=False are refused when the dependency is built.
+        if jwt_key is not None:
             try:
                 claims = _verify_jwt_claims(
                     request.headers.get("authorization", ""),
                     jwt_key,
                     jwt_algorithms,
                 )
-            except _JwtInvalidError as exc:
+            except _JwtIdentityError as exc:
                 raise fastapi_mod.HTTPException(
-                    status_code=401, detail=_jwt_denial(str(exc)),
+                    status_code=401,
+                    detail=_jwt_denial(exc.reason, str(exc)),
                 ) from exc
-
-        if claims is not None and claims.get("sub"):
             user_id = claims.get("sub", "")
             role = claims.get("role", "")
         else:

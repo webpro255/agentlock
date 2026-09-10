@@ -2137,8 +2137,6 @@ class TestJwtAndAudit:
 
         return base64.b64encode(b"alice:not-a-password").decode()
 
-    @pytest.mark.xfail(
-        strict=True, reason="J3, closed when a configured key is the only identity")
     def test_fastapi_a_configured_key_refuses_a_request_carrying_no_token(self):
         """J3.  Verification is switched ON and the request presents nothing
         to verify.  Through 1.10.2 as released that reached the identity
@@ -2156,8 +2154,6 @@ class TestJwtAndAudit:
         assert response.json()["detail"]["reason"] == "jwt_required"
         assert ran == []
 
-    @pytest.mark.xfail(
-        strict=True, reason="J3, closed when a configured key is the only identity")
     def test_flask_a_configured_key_refuses_a_request_carrying_no_token(self):
         """The same on flask, through the extension hook."""
         pytest.importorskip("jose")
@@ -2167,8 +2163,6 @@ class TestJwtAndAudit:
         assert response.get_json()["detail"]["reason"] == "jwt_required"
         assert ran == []
 
-    @pytest.mark.xfail(
-        strict=True, reason="J3, closed when the scheme match is case insensitive")
     def test_fastapi_a_lowercase_bearer_scheme_is_verified(self):
         """RFC 7235 makes the auth scheme case insensitive, and 1.10.2 as
         released matched it with ``startswith("Bearer ")``.  A token spelled
@@ -2183,8 +2177,6 @@ class TestJwtAndAudit:
         assert response.status_code == 200
         assert ran == ["ADMIN_ACTION"]
 
-    @pytest.mark.xfail(
-        strict=True, reason="J3, closed when the scheme match is case insensitive")
     def test_flask_a_lowercase_bearer_scheme_is_verified(self):
         """The same on flask, through the extension hook."""
         pytest.importorskip("jose")
@@ -2193,8 +2185,6 @@ class TestJwtAndAudit:
         assert response.status_code == 200
         assert ran == ["ADMIN_ACTION"]
 
-    @pytest.mark.xfail(
-        strict=True, reason="J3, closed when the scheme match is case insensitive")
     def test_fastapi_a_lowercase_bearer_scheme_with_a_forged_token_is_refused(self):
         """The other half of the same rule, and the half that makes it a
         finding rather than an inconvenience.  A forged token under a
@@ -2211,8 +2201,6 @@ class TestJwtAndAudit:
         assert response.json()["detail"]["reason"] == "jwt_invalid"
         assert ran == []
 
-    @pytest.mark.xfail(
-        strict=True, reason="J3, closed when the scheme match is case insensitive")
     def test_flask_a_lowercase_bearer_scheme_with_a_forged_token_is_refused(self):
         """The same on flask, through the extension hook."""
         pytest.importorskip("jose")
@@ -2223,8 +2211,6 @@ class TestJwtAndAudit:
         assert response.get_json()["detail"]["reason"] == "jwt_invalid"
         assert ran == []
 
-    @pytest.mark.xfail(
-        strict=True, reason="J3, closed when a configured key is the only identity")
     def test_fastapi_a_basic_scheme_does_not_reach_the_identity_headers(self):
         """A scheme that is not bearer at all, which is the general form of
         the same door: any ``Authorization`` value the adapter declines to
@@ -2240,8 +2226,6 @@ class TestJwtAndAudit:
         assert response.json()["detail"]["reason"] == "jwt_required"
         assert ran == []
 
-    @pytest.mark.xfail(
-        strict=True, reason="J3, closed when a configured key is the only identity")
     def test_flask_a_basic_scheme_does_not_reach_the_identity_headers(self):
         """The same through the flask route decorator rather than the hook.
         Both entry points call the one identity function and both have to
@@ -2255,8 +2239,6 @@ class TestJwtAndAudit:
         assert response.get_json()["detail"]["reason"] == "jwt_required"
         assert ran == []
 
-    @pytest.mark.xfail(
-        strict=True, reason="J3, closed when a configured key is the only identity")
     def test_a_key_with_the_token_path_disabled_is_refused_at_build_time(self):
         """``require_agentlock`` takes ``use_jwt``, and with a key configured
         and ``use_jwt=False`` the two arguments contradict: verify tokens with
