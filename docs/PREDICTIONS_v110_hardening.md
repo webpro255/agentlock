@@ -4260,3 +4260,254 @@ red pass scripts of the 1.10 arc, `/tmp/al110_redpass_repro.py` and
 * **C**: AMENDMENT 8, the measured results against W4.
 
 No merge, no tag, no push, no upload.
+
+# AMENDMENT 8
+
+Date: 2026-09-10
+Branch: `v1.10.2-jwt-and-audit`.
+Measured against the W4 predictions frozen at `a0df2f7` before any engine code
+was written.
+
+Four of those predictions were defective. Sections A8.1 to A8.4 amend them,
+and they were written and dated BEFORE commit B was made, so that nothing
+below reports a prediction it had already quietly rewritten to match.
+
+## A8.1 P2 amended: 16 cases, not 14
+
+P2 predicted `TestJwtAndAudit` at "exactly 14 cases" and then enumerated what
+those cases would be. The enumeration was right and the count was wrong. The
+J1 half was described as "two for J1 with no framework: a timeout denial
+reported as executed, and a commit denial reported as executed, flagged
+`execution_after_denial` for `"deny"` and `"denied"` alike, with the metadata
+carrying the record's own string in each". That sentence names two DISTINCT
+assertions, the classification and the metadata, over two spellings. Written
+out honestly that is two parametrized functions over two spellings, which is
+four cases, not two.
+
+The two assertions are not merged to make the count come true. They fail for
+different reasons and a reader who sees one fail should not have to work out
+which. `test_an_execution_reported_after_a_denial_is_flagged` pins the action
+and the reason; `test_the_flagged_record_keeps_the_resolution_it_was_given`
+pins the metadata field that was a hardcoded `"denied"` through 1.10.1 and
+would have made a timeout denial unreadable as one even after the
+classification was fixed.
+
+**P2 as amended: exactly 16 cases**, four for J1 and twelve for J2, the J2
+enumeration unchanged and eight of the twelve guarded on `jose`. Measured: 16
+collected, 16 passed with the extras, 8 passed and 8 skipped without `jose`.
+
+## A8.2 P3 amended: 1735 and 1682, not 1733 and 1680
+
+P3's two totals are arithmetic over P2's case count and inherit its defect
+exactly, two short in each environment. Nothing else in P3 moves: the count of
+`jose` guarded cases was right at eight, so the skip figures 9 and 62 stand as
+frozen.
+
+**P3 as amended: `/tmp/al18-extras` 1735 passed, 9 skipped; checkout venv 1682
+passed, 62 skipped**, 0 failed in both. Both measured at those figures.
+
+That both skip counts survived a wrong case count is worth stating rather than
+passing over. The skip figures were predicted from which cases need `mcp` and
+which need `jose`, and that reasoning was independent of how many test
+functions the assertions were split across. The totals were predicted by
+addition from a number that was wrong. The parts of a prediction derived from
+the shape of the problem held; the part derived from my own count did not.
+
+## A8.3 P5 amended: three declared ASCII double hyphen forms, not two
+
+P5 declared two: the `--ignore-missing-imports` flag inside backticks, and
+this document quoting the unified diff header in a fence. Measured over the
+884 added lines there are three, and the third is the house comment rule:
+
+```
++    # -- J1: a denial is a denial in either spelling --------------------
++    # -- J2: a bearer token is identity only once verified ---------------
+```
+
+That form is this codebase's own section separator, not prose. `gate.py`
+carries 16 of them, and `audit.py`, `action_class_audit.py`, `modify.py` and
+`tests/test_v19_enforcement_gaps.py` all use it. The new test class is long
+enough to need its two halves marked and it marks them the way every other
+long file here does. Writing those two comments in some other shape to satisfy
+a prediction I wrote carelessly would make the file inconsistent with the
+codebase in order to make a document correct, which is the wrong way round.
+
+**P5 as amended:** added lines carry 0 em dashes, and the declared ASCII
+double hyphen forms are three: the `--ignore-missing-imports` flag inside
+backticks, the unified diff header this document quotes in a fence, and the
+house comment rule. Measured: 0 em dashes, and exactly those three forms.
+
+## A8.4 P6 amended: ten files in commit B, not eleven
+
+P6 predicted commit B at "exactly D5's eleven files" and listed them, the list
+including `tests/test_v1101_system_followup.py`. That contradicts W5 two
+sections later in the same freeze, which puts the reviewer's file in commit
+**A** along with the freeze itself, because its only change is the two
+`importorskip` guards and those had to exist before the file could be run at
+all in W3.2.
+
+Both statements were written in the same sitting and one of them is wrong.
+D5's list is the list of files this SESSION may touch, which is the right list
+for a session and the wrong list for a single commit, and P6 used it as though
+the two were the same thing.
+
+**P6 as amended: commit B is exactly ten files**, D5's list minus
+`tests/test_v1101_system_followup.py`, which commit A already carries and which
+commit B leaves untouched. The rest of P6 is unchanged and stands:
+`agentlock/exceptions.py` is not among them, and exactly one existing test is
+edited.
+
+## A8.5 Result table
+
+| # | Predicted | Measured | Verdict |
+|---|-----------|----------|---------|
+| P1 | both oracles pass in full, 65 and 31, 0 failed and 0 xfailed, the reviewer's file edited only by the two guards | `65 passed` and `31 passed` in `/tmp/al18-extras`; the guard diff is still the two lines of W3.1 and the reconstruction still hashes to `74e9242` | MET |
+| P2 | `TestJwtAndAudit` adds exactly 14 cases, 8 guarded on `jose` | 16 collected, per A8.1; the enumeration and the 8 `jose` guards as frozen | AMENDED, then MET |
+| P3 | 1733 passed / 9 skipped, and 1680 passed / 62 skipped | 1735 passed / 9 skipped, and 1682 passed / 62 skipped, per A8.2; 0 failed in both | AMENDED, then MET |
+| P4 | mypy 0 errors; ruff clean with exactly one new `per-file-ignores` entry listing `E501`, `E701`, `I001`, `SIM105`; no new ignore for engine or project-authored code | `Success: no issues found in 34 source files`; `All checks passed!`; the entry reads exactly those four codes | MET |
+| P5 | hygiene all zeros except the em dash at 1; 0 em dashes on added lines; declared double hyphens only | hygiene 0, 0, 1, 0 with the em dash still `docs/PREDICTIONS_v18_recipient.md:900`; 0 em dashes on 884 added lines; three declared forms per A8.3 | AMENDED, then MET |
+| P6 | commit B is exactly D5's eleven files, `exceptions.py` not among them, exactly one existing test edited | ten files and no others, per A8.4; `agentlock/exceptions.py` untouched; one existing test edited, the one D7 quotes | AMENDED, then MET |
+| P7 | 1.10.2 in both version files, no current 1.10.1 string; CITATION parses at 1.10.2 and 2026-09-10; CHANGELOG heading, both credit phrases, the not additive statement, per environment figures; README row, figures and identity paragraph | all present; both credit phrases appear twice each; every remaining `1.10.1` in the tree is history or narrative, listed in A8.6 | MET |
+| P8 | `twine check` PASSED for both artifacts, METADATA `Version: 1.10.2` | both PASSED; `Metadata-Version: 2.4`, `Version: 1.10.2` | MET |
+| P9 | fresh wheel venv prints 1.10.2; both oracles copied to `/tmp` give 96 passed; both J2 scripts report CLOSED and exit 0; both 1.10 red pass scripts still exit 0 | 1.10.2 from site packages; `96 passed`; both J2 scripts 0 OPEN, exit 0; both red pass scripts exit 0 | MET |
+
+## A8.6 Where 1.10.1 still appears, and why each is history
+
+P7 asks that no CURRENT version string say 1.10.1. Every remaining occurrence
+was read rather than counted. `README.md` has three: the 1.10.1 Versions row,
+the 1.10.1 environments sentence, and the new 1.10.2 environments sentence
+naming the recheck that produced this release. `CHANGELOG.md` has the 1.10.1
+entry and the 1.10.2 entry describing what 1.10.1 did. `pyproject.toml` has one,
+inside the comment on the new `per-file-ignores` entry, naming which recheck
+the file came from. The engine has six, all in docstrings or comments saying
+what the code did through 1.10.1 and no longer does. The tests have the rest,
+including the reviewer's own file docstring. None presents 1.10.1 as the
+current version. The version badge is a PyPI shield and carries no literal.
+
+## A8.7 What the fix actually changed, stated for the record
+
+**J1** is four lines in two files. `agentlock/defer.py` gains
+`is_denial_resolution`, exported through `agentlock/__init__.py`.
+`agentlock/gate.py` reads it at line 2141 in place of `== "denied"`, and the
+metadata field eight lines below it becomes the record's own string in place
+of a hardcoded `"denied"`. No assignment site moved, no string is deprecated,
+and `record.resolution` reads exactly as it always did, which is what the
+reviewer's own assertion required.
+
+`gate.py:2681` was measured and deliberately left alone. It compares against
+`"committed"` and falls through to `deferred_denied`, so it is already correct
+for both spellings and is not a comparison against a denial string. Changing
+it to use the new predicate would have been a change that reads like a fix and
+is not one.
+
+**J2** is the larger half. Both adapters lost their unverified decode helper
+and gained a verification path: `_import_jose`, `_permitted_algorithms`,
+`_verify_jwt_claims`, an internal `_JwtInvalidError` that carries no claims by
+construction, and a 401 body. `AgentLockMiddleware`, `require_agentlock`,
+`agentlock_required` and `AgentLockFlask` each take `jwt_key` and
+`jwt_algorithms` and each call `_import_jose` at construction when a key is
+set. The `flask` extra gained `python-jose[cryptography]`, per D8, because the
+flask adapter now has a verification path and could not otherwise install one.
+
+Two things in that list are load bearing and easy to miss. `_permitted_algorithms`
+drops `"none"` in any casing and falls back to `HS256` rather than to the
+library's default when nothing else is named, so asking for `["none"]` gets a
+real check rather than no check. And the no fallback rule is the reason the
+`jwt_invalid` cases assert **401** rather than merely "not 200": on those
+requests the identity headers name an unprivileged user who would produce a
+403, so a fallback to headers would still look like a denial while having
+silently consulted the input the token was there to replace.
+
+## A8.8 Final measurements
+
+Suite, both environments:
+
+```
+/tmp/al18-extras   1735 passed, 9 skipped, 47 warnings in 3.51s
+checkout venv      1682 passed, 62 skipped, 46 warnings in 3.32s
+```
+
+Environments, read out of each interpreter:
+
+```
+/tmp/al18-extras   CPython 3.14.6, mcp 2.2.0, fastapi 0.141.1, flask 3.1.3, python-jose 3.5.0
+checkout venv      CPython 3.14.6, mcp absent, fastapi 0.135.3, flask 3.1.3, python-jose absent
+```
+
+Oracles alone, `/tmp/al18-extras`:
+
+```
+tests/test_v110_system_review.py     65 passed, 13 warnings in 0.44s
+tests/test_v1101_system_followup.py  31 passed,  3 warnings in 0.31s
+```
+
+Types, lint and style:
+
+```
+mypy agentlock/ --ignore-missing-imports   Success: no issues found in 34 source files
+ruff check .                               All checks passed!
+corpus grep over the diff                  0
+em dashes on added lines                   0
+ASCII double hyphens on added lines        3 declared forms, per A8.3
+```
+
+Build in `/tmp/al18-extras`, after `rm -rf dist build`:
+
+```
+Successfully built agentlock-1.10.2.tar.gz and agentlock-1.10.2-py3-none-any.whl
+Checking dist/agentlock-1.10.2-py3-none-any.whl: PASSED
+Checking dist/agentlock-1.10.2.tar.gz: PASSED
+```
+
+METADATA, read out of the wheel at `agentlock-1.10.2.dist-info/METADATA`:
+
+```
+Metadata-Version: 2.4
+Name: agentlock
+Version: 1.10.2
+```
+
+Artifact digests:
+
+```
+ffee42aea5676a01140a6561347646b456cd144164d0ad086632d3b9599a4dac  dist/agentlock-1.10.2-py3-none-any.whl
+7b8427a05c39bceebd5fd9669593425c020fbfedd70052ffc3cf9484bf185298  dist/agentlock-1.10.2.tar.gz
+```
+
+Fresh venv `/tmp/al1102-wheel`, holding only the built wheel with the `crypto`,
+`mcp`, `fastapi` and `flask` extras, exercised from outside the checkout so it
+cannot resolve the source tree:
+
+```
+version 1.10.2 from /tmp/al1102-wheel/lib/python3.14/site-packages/agentlock/__init__.py
+both oracles, copied to /tmp/al1102-oracle   96 passed, 16 warnings in 0.52s
+/tmp/al1102_jwt_repro.py                     fastapi and flask CLOSED, 0 OPEN, exit 0
+/tmp/al1102_jwt_verified.py                  all 10 probes CLOSED, 0 OPEN, exit 0
+/tmp/al110_redpass_repro.py                  F1 gate, F1 mcp, F2, F3 CLOSED, exit 0
+/tmp/al110_redpass2_repro.py                 F4 both SDK majors, E15 both returns, F5 both
+                                             shapes CLOSED, F6 limit UNCHANGED, exit 0
+```
+
+That venv installed `python-jose` as a dependency of the `flask` extra, which
+is D8 working: before this release, `agentlock[flask]` could not have run the
+verification path the changelog tells a flask deployment to configure.
+
+The fix commit is ``9497b0ab6cf6f842fa84ba214b465ccdfb086a6e``.
+
+## A8.9 What this session did not do
+
+No merge, no tag, no push, and no upload. The branch is
+`v1.10.2-jwt-and-audit` and it is not merged to `main`. No schema field was
+added or altered and `agentlock/exceptions.py` was not touched, because
+`IntegrationUnsupportedError` already existed and `jwt_invalid` is a reason
+string in a JSON body rather than a `DenialReason` member. `dist/` holds the
+two artifacts digested above and is left in place for the maintainer;
+publishing them, and removing them afterwards, is a manual step this session
+does not take.
+
+The read side of the 1.10.2 fix is complete and the deployment side is not,
+and the difference belongs to the maintainer rather than to this branch. A
+deployment that was relying on unverified bearer claims is now failing closed,
+which is correct and is also an outage until it configures `jwt_key`. The
+changelog says so under a not additive heading. Whether that warrants anything
+louder than a changelog entry is a release decision.
