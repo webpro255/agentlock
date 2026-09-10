@@ -339,6 +339,20 @@ SDK major; under `mcp 1.x` it is 1502 passing and 10 skipped, the two 2.x
 tests taking the place of the 1.x one. Nothing fails in any of these
 environments.
 
+The 1.9.0 argument binding covers the engine's own decorators and in-repo
+integrations, which is the whole of what that release changes. The standalone
+adapters ship from their own repositories and are updated separately. At their
+current releases, `crewai-agentlock` 0.2.0 and `langchain-agentlock` 0.1.0
+authorize keyword arguments only, and of those two only `crewai-agentlock`
+carries positional arguments past the gate into the wrapped call;
+`mcp-agentlock` 0.2.1, `openai-agentlock` 0.1.0 and `openclaw-agentlock` 0.1.0
+hand the gate the same argument mapping they hand the tool and have no
+positional route. No standalone adapter applies the wrapped function's
+defaults, so a parameter the caller omits and the function defaults is not seen
+by the gate in any of them. The same release makes an execution token bind the
+empty call: the parameters passed to `execute()` must be the parameters passed
+to `authorize()`, and `None` and `{}` are the same call.
+
 Full feature history:
 [v1.1](docs/history.md#v11-memory--context-permissions),
 [v1.2](docs/history.md#v12-adaptive-hardening--new-decision-types),
@@ -368,7 +382,9 @@ matches the mechanism you rely on:
 > Where Recovery Is Sound.* Zenodo.
 > https://doi.org/10.5281/zenodo.21363120
 
-Software archive (all versions): https://doi.org/10.5281/zenodo.22681594. This release: https://doi.org/10.5281/zenodo.22681595.
+Software archive (all versions): https://doi.org/10.5281/zenodo.22681594.
+The version DOI for each release is minted at publication and added to
+`CITATION.cff` and to this line in a follow-up commit.
 
 ```bibtex
 @misc{grice2026agentlock,
