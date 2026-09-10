@@ -3348,3 +3348,205 @@ and this folds into it, so `agentlock/__init__.py`, `pyproject.toml` and
 `tests/test_v110_system_review.py`. `dist/` holds the two artifacts digested
 above and is left in place for the maintainer; publishing them, and removing
 them afterwards, is a manual step this session does not take.
+
+# 1.10.1 RELEASE FREEZE (2026-09-10)
+
+Appended after AMENDMENT 6. Everything above, sections 1 through 5,
+AMENDMENT 1, the RED PASS FREEZE, AMENDMENT 2, the RED PASS 2 FREEZE,
+AMENDMENT 3, the RELEASE FREEZE, AMENDMENT 4, the 1.10.1 FREEZE,
+AMENDMENT 5, the 1.10.1 RED PASS FREEZE and AMENDMENT 6, is left exactly as
+it was written.
+
+Date: 2026-09-10
+Branch: `v1.10.1-recheck`, at `9546d9b`.
+Working tree at measurement time: clean.
+
+This is the release session for 1.10.1. Four findings are closed, three from
+the external reviewer's 1.10.0 recheck and one from a pre-release red pass
+against the built wheel, and the branch has carried the fixes since `7fef87e`.
+What is left is the release front matter: the changelog, the readme, the
+citation file and the two version strings, each measured rather than assumed,
+and one build. One release commit and one amendment. No merge, tag, push, or
+upload.
+
+Nothing in this document describes text that has been written for the release.
+Every measurement below is of the tree as it stands at `9546d9b`.
+
+## Z1. State at HEAD, measured
+
+The point of this section is that most of the release front matter is already
+correct, because the two fix sessions wrote it as they went, and a release
+session that rewrites correct text to feel productive is how a correct file
+becomes a wrong one. So each of the four artifacts is measured against its
+prediction before anything is edited, and the ones that already pass are named
+and left alone.
+
+```
+commit    9546d9b
+branch    v1.10.1-recheck
+tree      clean
+wheel     16d2fd4e433f2b639054faff6aad56c76bb044f74a75f15ef4df7b76b92f16f5
+sdist     7262b5f9f77741674e69b527c7e1c416ebdad4818c1c31e92a9cce01ceb2eaa7
+```
+
+Those two digests are the pair AMENDMENT 6 section A6.5 recorded, so `dist/`
+still holds the artifacts that were measured there.
+
+**Versions, already correct.** `pyproject.toml` line 7 reads
+`version = "1.10.1"` and `agentlock/__init__.py` line 37 reads
+`__version__ = "1.10.1"`. Both were written in the 1.10.1 fix session and
+AMENDMENT 6 confirmed they were not touched by the red pass fix, because 1.10.1
+was unreleased and the red pass folded into it. Scanned for a stale current
+version string: `1.10.0` appears in neither file.
+
+**`CITATION.cff`, already correct.** `version: 1.10.1` and
+`date-released: 2026-09-10`. A5.5 recorded that only the version field needed
+writing, because `date-released` already read today's date from the 1.10.0
+release that morning. Both fields still read as recorded.
+
+**`README.md`, already correct.** The Versions row for 1.10.1 reads 1688 with
+the two extras plus the two web frameworks, 9 skipped. The environments
+paragraph reads 1688 passing and 9 skipped on CPython 3.14.6 with `mcp 2.2.0`,
+72 added tests, the oracle at 65, 40 engine tests, and without `mcp` 1652
+passing and 45 skipped of which 19 are new, split 10 oracle and 9 engine. Those
+are the seven figures A6.2 named, each one matched against A6.5 rather than
+read as a paragraph. `grep -n "1\.10\.0" README.md` returns six lines and all
+six are history: the 1.10.1 row naming the wheel the reviewer rechecked, the
+1.10.0 row itself, the 1.10.0 environments sentence, the 1.10.1 environments
+sentence naming the recheck, and two sentences of the 1.10.0 narrative section.
+No line presents 1.10.0 as the current version. The version badge is a PyPI
+shield and carries no literal.
+
+**`CHANGELOG.md`, incomplete.** The `[1.10.1] - 2026-09-10` heading carries
+today's date and the entry covers all four findings and the two limits, with
+the credit to the external reviewer's 1.10.0 recheck already in the opening
+paragraph. Two things are short of V1:
+
+* The suite figures in the front matter are one environment, without the
+  interpreter or the `mcp` version: `pytest` is reported as 1688 passing and 9
+  skipped with the extras and the two web frameworks. AMENDMENT 6 measured two
+  environments and the readme reports both. The changelog should report what
+  the readme reports.
+* The at sign entry names two of the three degenerate forms A6.3 found,
+  `bob@` and `@company.test`, and not the bare `@`. A6.3 recorded three and the
+  changelog is the document a reader reaches for when a value they were sending
+  starts blocking.
+
+The red pass credit reads "a pre-release red pass against this release's own
+branch wheel". The 1.10.0 entry credits "two pre-release red passes against the
+built wheel", and the built wheel and the branch wheel are the same artifact
+here, digested in X3.1. The house phrasing is the one 1.10.0 used and the
+release entry is brought onto it.
+
+## Z2. Decisions of record
+
+**R9. Only `CHANGELOG.md` is edited.** `README.md`, `CITATION.cff`,
+`pyproject.toml` and `agentlock/__init__.py` already satisfy their predictions
+at HEAD, as measured in Z1, and a release commit that touches a correct file to
+produce a diff is adding risk for the appearance of work. This is stated before
+any editing, which is what V8 asks for.
+
+**R10. The changelog's suite figures are the readme's.** Both environments,
+both with the interpreter version and the second with the absence of `mcp`
+named, because a bare pass count without an interpreter and an SDK version is a
+number a reader cannot reproduce. The figures are A6.5's, not re measured
+prose.
+
+**R11. The three degenerate forms are named.** `@`, `bob@` and
+`@company.test`, in the sentence that already says degenerate at sign values
+block where they previously passed.
+
+**R12. No code, no tests, no version change.** The engine is what `7fef87e`
+left. `agentlock/`, `tests/` and `schema/` are untouched by this session, and
+so is `pyproject.toml`.
+
+## Z3. Baselines at HEAD
+
+Suite, both environments, at `9546d9b`:
+
+```
+/tmp/al18-extras   1688 passed, 9 skipped, 44 warnings in 3.51s
+checkout venv      1652 passed, 45 skipped, 43 warnings in 3.39s
+oracle alone       65 passed, 13 warnings in 0.42s
+mypy               Success: no issues found in 34 source files
+ruff               All checks passed!
+```
+
+All five reconcile with AMENDMENT 6 section A6.5 exactly, which is the point:
+the release session starts from the state the fix session left and changes no
+number.
+
+Environments, read out of each interpreter rather than remembered:
+
+```
+/tmp/al18-extras   CPython 3.14.6, mcp 2.2.0, fastapi 0.141.1, flask 3.1.3
+checkout venv      CPython 3.14.6, mcp ABSENT, fastapi 0.135.3, flask 3.1.3
+```
+
+The red pass reproduction scripts this arc left in `/tmp`, both of which print
+CLOSED or OPEN per finding and exit nonzero if any is OPEN:
+
+```
+/tmp/al110_redpass_repro.py    the 1.10 red pass, findings F1 to F3
+/tmp/al110_redpass2_repro.py   red pass 2, findings F4 to F6
+```
+
+Both are run from outside the checkout against the venv holding only the built
+wheel, which is what they were written for.
+
+## Z4. Frozen predictions
+
+**V1.** The `CHANGELOG.md` 1.10.1 heading carries today's date, `2026-09-10`.
+The entry covers G1 through G4: path resolution order and the resolved path
+return; one MCP walker for both output policies, with the embedded resource and
+the documented pass throughs; and the exhaustive domain restriction with at
+sign strict mode and the three degenerate forms. It states the oracle growing
+to 65 cases, and it carries the per environment suite figures from AMENDMENT 6
+with the interpreter and `mcp` versions. Credits: **"the external reviewer's
+1.10.0 recheck"** and **"a pre-release red pass against the built wheel"**, both
+phrases present.
+
+**V2.** `README.md`: the Versions row and every count figure AMENDMENT 6 moved,
+checked number by number and not by paragraph. `grep -n "1\.10\.0" README.md`
+returns **only history lines**.
+
+**V3.** `CITATION.cff`: `version: 1.10.1`, `date-released: 2026-09-10`.
+`yaml.safe_load` parses the file without error.
+
+**V4.** Version `1.10.1` in `pyproject.toml` and `agentlock/__init__.py`, and
+**no other current version string says 1.10.0** anywhere in the tree.
+
+**V5.** Build in `/tmp/al18-extras` after `rm -rf dist build`: `twine check
+dist/*` **PASSED** for both artifacts, `Metadata-Version: 2.4`, `Version:
+1.10.1`.
+
+**V6.** A fresh venv holding only the built wheel with the `crypto`, `mcp`,
+`fastapi` and `flask` extras prints **1.10.1**; the oracle copied outside the
+checkout runs **65 passed** against site packages; and **both** red pass
+reproduction scripts named in Z3 **exit 0**.
+
+**V7.** Full suite in `/tmp/al18-extras` after reinstalling the tree:
+**1688 passed, 9 skipped, 0 failed**. `ruff check .` clean. `mypy agentlock/
+--ignore-missing-imports` clean. Corpus grep **0**.
+
+**V8.** Files in the release commit: `CHANGELOG.md`, `README.md` and
+`CITATION.cff`, minus any that already satisfy their prediction at HEAD. Z1
+measures README and CITATION as already satisfying theirs, so the predicted
+content of the release commit is **`CHANGELOG.md` alone**. That is stated here,
+before the edit, rather than discovered after it.
+
+Style, on the same terms the previous freezes set: added lines carry **0** em
+dashes, and the only ASCII double hyphens on added lines are the declared ones,
+which are the `--ignore-missing-imports` flag inside backticks that A2.5
+declared for exactly this file, and this document quoting it back.
+
+## Z5. Commit plan
+
+* **A**: `docs: freeze v1.10.1 release predictions`. This section, append only,
+  and nothing else.
+* **B**: `release: v1.10.1`. The changelog edits of R10 and R11, and whatever
+  else V1 through V8 measure as short.
+* **C**: AMENDMENT 7, the measured results against Z4, the sha256 of both
+  artifacts, the METADATA lines, and commit B's hash.
+
+No merge, no tag, no push, no upload.
