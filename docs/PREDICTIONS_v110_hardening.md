@@ -4804,3 +4804,235 @@ file, no test file and no schema field is touched.
   artifacts, the METADATA lines, and commit B's hash.
 
 No merge, no tag, no push, no upload.
+
+# AMENDMENT 9
+
+Date: 2026-09-10
+Branch: `v1.10.2-jwt-and-audit`.
+Measured against the N6 predictions frozen at `2056794` before `CHANGELOG.md`
+was touched.
+
+None of V1 to V8 was defective, which is the first time in this arc that a
+freeze's numbered predictions all held as written. Two things around them were.
+A9.1 amends an expectation in the baselines section and was written and dated
+BEFORE commit B was made, for the same reason A8.1 to A8.4 were: an expectation
+quietly rewritten to match what happened is not a measurement of anything. A9.2
+amends the style declaration and could not have been written earlier, because
+what it is wrong about is this amendment's own table; it is written before the
+commit that carries it, which is as early as it can be.
+
+## A9.1 N5's digest expectation was half wrong: the wheel did not move
+
+N5 said "the two digests are expected to MOVE" and then gave the reasoning that
+should have stopped it saying that. The sdist ships `CHANGELOG.md`, so its
+content genuinely changes. The wheel's long description is `README.md`, which
+this session did not touch. N5 got that far and then treated the wheel as an
+open question about build reproducibility rather than following its own
+sentence to the end.
+
+Measured after `rm -rf dist build` and a rebuild:
+
+```
+before  ffee42aea5676a01140a6561347646b456cd144164d0ad086632d3b9599a4dac  agentlock-1.10.2-py3-none-any.whl
+after   ffee42aea5676a01140a6561347646b456cd144164d0ad086632d3b9599a4dac  agentlock-1.10.2-py3-none-any.whl
+before  7b8427a05c39bceebd5fd9669593425c020fbfedd70052ffc3cf9484bf185298  agentlock-1.10.2.tar.gz
+after   92337b459764a404660b30fa4022392c7a40b13ba697d97de1f0fa518595e2a1  agentlock-1.10.2.tar.gz
+```
+
+The wheel is byte identical across a full rebuild from a cleaned `dist/` and
+`build/`, and the sdist is not. Read rather than assumed, the wheel contains
+neither `CHANGELOG.md` nor `README.md`, while the sdist contains both:
+
+```
+CHANGELOG in wheel: False
+README in wheel: False
+agentlock-1.10.2/CHANGELOG.md
+agentlock-1.10.2/README.md
+```
+
+So the two digests are answering two different questions. The sdist digest moved
+because the file this release commit edited is inside it. The wheel digest held
+because the only thing this session changed is not in the wheel at all, and
+because this build backend produces a reproducible wheel from unchanged inputs.
+That second half is the part A7.2 recorded from the other direction, when a
+wheel digest held across a release commit and an sdist digest did not, and it is
+now measured twice in the same arc rather than once.
+
+**N5 as amended: the sdist digest moves and the wheel digest does not.** The
+wheel digest of a release whose commit touches only `CHANGELOG.md` is expected
+to equal the wheel digest built before that commit, and if it ever fails to,
+that is a fact about the build and not about the release. V5 predicted neither
+digest and is unaffected; this amends the reasoning in the baselines section
+rather than a prediction, which is why it carries no verdict in the table below.
+
+## A9.2 N6's style declaration missed the table separator of the table that reports it
+
+N6, under V7, declared the ASCII double hyphens on added lines to be two forms
+of the `--ignore-missing-imports` flag and nothing else. Measured over this
+session's added lines that is right for the freeze and wrong for the amendment,
+because A9.3 below is a markdown table and its separator row is
+`|---|-----------|----------|---------|`.
+
+This is the third time the arc has hit the same edge and the first time it has
+been on an added line. A5.2 caught the separator under the README's Versions
+heading and correctly filed it as CONTEXT rather than as an addition, since the
+row above it was what changed. A8.3 declared three forms and did not include a
+separator either, while AMENDMENT 8 itself opened a table two sections later.
+The reason it keeps escaping is structural: the declaration is written in the
+freeze, over the freeze's own prose, and the table that reports the declaration
+does not exist until the amendment. A rule that a document writes about itself
+before its second half is written will keep missing its second half.
+
+**N6's style rule as amended, and this is the form it should take from here:**
+added lines carry **0** em dashes, and their ASCII double hyphens are only the
+declared non prose forms, which for this session are two and now three:
+the `--ignore-missing-imports` flag inside backticks, the same flag inside a
+fence quoting the command as it was run, and the markdown table separator row of
+a result table, including this section quoting such a row inside backticks in
+order to name it. The separator is table syntax in the same way the flag is a
+command's syntax and the unified diff header A8.3 declared is a diff's syntax.
+None of the three is prose and the prohibition is on prose.
+
+Measured over the 306 lines commit A and commit B added, before this amendment:
+0 em dashes, 3 ASCII double hyphens, all three the flag. Measured over this
+amendment's own added lines: 0 em dashes and 11 ASCII double hyphens, of which 3
+are the flag and 8 are the runs inside A9.3's separator row and the copy of it
+quoted above. Nothing is unaccounted for under the amended rule.
+
+## A9.3 Result table
+
+| # | Predicted | Measured | Verdict |
+|---|-----------|----------|---------|
+| V1 | CHANGELOG heading carries today's date; the entry's first subsection is `### Not additive` stating the unverified claims in both adapters, no identity without `jwt_key`, and the two options a proxy reliant deployment has; then Security for J2 and J1 as built; then a `### Limits` section with the no `exp` limit and the scheme spelling limit; both credit phrases; per environment figures with interpreter and `mcp` versions | `## [1.10.2] - 2026-09-10`; subsections in order `['Not additive', 'Security', 'Limits']`; Not additive states all three, the third as configure `jwt_key` or leave it unset and accept the headers as the identity input; 2 Security bullets unchanged, J2 then J1; 2 Limits bullets, the two of N3; each credit phrase present twice; the preamble figures 1735, 9, 1682, 62, CPython 3.14.6, `mcp` 2.2.0, `fastapi` 0.141.1, `flask` 3.1.3, `python-jose` 3.5.0 all unmoved | MET |
+| V2 | README already satisfied at HEAD, not edited, not in the release commit | ten figures and five versions checked against A8.8 one at a time in N2.1; identity paragraph states D2; `grep -n "1\.10\.1" README.md` gives lines 318, 366, 381, all history; file untouched | MET |
+| V3 | CITATION already satisfied at HEAD, the edit skipped and said so before editing | `version: 1.10.2` line 10, `date-released: 2026-09-10` line 16, `yaml.safe_load` returns `'1.10.2'` and `'2026-09-10'`; skip stated in N2.1 and N6 before any edit; file untouched | MET |
+| V4 | 1.10.2 in `pyproject.toml` and `agentlock/__init__.py`, no other current version string says 1.10.1 | `pyproject.toml:7` and `agentlock/__init__.py:37`; every remaining 1.10.1 read individually per N2.1, all history or narrative; nothing edited | MET |
+| V5 | rebuild after `rm -rf dist build`: `twine check` PASSED for both, METADATA `Metadata-Version: 2.4` and `Version: 1.10.2` | `Successfully built agentlock-1.10.2.tar.gz and agentlock-1.10.2-py3-none-any.whl`; both PASSED; `Metadata-Version: 2.4`, `Version: 1.10.2` | MET |
+| V6 | fresh venv on the built wheel with the four extras prints 1.10.2; both oracles copied to `/tmp` give 96 passed; all four arc scripts exit 0 | `version 1.10.2 from /tmp/al1102rel-wheel/lib/python3.14/site-packages/agentlock/__init__.py`; `96 passed, 16 warnings in 0.55s`; all four exit 0, 0 OPEN probes on both J2 scripts and every red pass probe CLOSED with F6 UNCHANGED | MET |
+| V7 | full suite after reinstall 1735 passed, 9 skipped, 0 failed; ruff clean; mypy clean with the standing flag; hygiene all zeros except the v18 em dash | `1735 passed, 9 skipped, 47 warnings in 3.56s`; `All checks passed!`; `Success: no issues found in 34 source files`; hygiene 0, 0, 1, 0 with the em dash still `docs/PREDICTIONS_v18_recipient.md`; 0 em dashes on 306 added lines and 3 ASCII double hyphens, all the standing flag; the separator row of this table is declared in A9.2 | MET |
+| V8 | the release commit is `CHANGELOG.md` alone | commit B is one file, 11 insertions and 1 deletion; no engine file, no test file, no schema field | MET |
+
+## A9.4 What the release commit changed
+
+Eleven lines added and one removed, in one file, and the one removed is the
+first line of the paragraph the first four added lines replace.
+
+The bold lead-in `**This release is not additive.**` became a real `### Not
+additive` subsection, which is what A8.9 had already claimed was there. Its body
+keeps everything the paragraph said and adds the branch the paragraph left out.
+The old text told a deployment relying on unverified claims that bearer tokens
+now carry no identity "until it configures `jwt_key`", which reads as one road
+with one exit. There are two, and the second is the default: leave `jwt_key`
+unset and the `X-AgentLock-*` headers are the identity input, trusted upstream
+and stripped at the edge, exactly as before 1.10.0. The proxy case is named
+explicitly and resolved rather than left implied. If the proxy genuinely
+verifies, it either forwards identity in the headers, in which case the default
+is correct and nothing needs configuring, or `jwt_key` is set here too and the
+signature is checked twice at the cost of one verification. What no longer
+exists is the third arrangement 1.10.0 and 1.10.1 shipped, where the engine
+treated a token as proof because something upstream was assumed to have looked
+at it.
+
+A `### Limits` section was added with the two limits of N3, both measured on
+both adapters before being written down. Neither is a change; both are
+descriptions of what the verification path does and does not undertake, and the
+1.10.1 entry set the precedent that this file states them rather than leaving
+them to be found.
+
+Nothing else moved. The Security bullets, the preamble, the credit phrases and
+every figure in the entry are byte identical to what commit `9497b0a` wrote.
+
+## A9.5 Final measurements
+
+Suite, `/tmp/al18-extras`, after reinstalling the built wheel over it:
+
+```
+1735 passed, 9 skipped, 47 warnings in 3.56s
+```
+
+The reinstall replaced a stale editable `dist-info` reading 1.10.1 with a
+1.10.2 one. The suite still imports the checkout, because pytest puts the
+repository root ahead of site packages, and that is the same import shape every
+figure in this arc was measured under. Read out rather than assumed:
+`1.10.2 /home/n1trolab/agentlock-v1.4/agentlock/__init__.py`.
+
+Types, lint and style:
+
+```
+mypy agentlock/ --ignore-missing-imports   Success: no issues found in 34 source files
+ruff check .                               All checks passed!
+hygiene, ~/agentlock-hygiene.sh            0, 0, 1, 0
+em dashes on 306 added lines               0
+ASCII double hyphens, commit A and B        3, all the standing flag
+ASCII double hyphens, this amendment       11: 3 the flag, 8 separator runs, per A9.2
+```
+
+Build in the checkout with the `/tmp/al18-extras` interpreter, after
+`rm -rf dist build`:
+
+```
+Successfully built agentlock-1.10.2.tar.gz and agentlock-1.10.2-py3-none-any.whl
+Checking dist/agentlock-1.10.2-py3-none-any.whl: PASSED
+Checking dist/agentlock-1.10.2.tar.gz: PASSED
+```
+
+METADATA, read out of the wheel at `agentlock-1.10.2.dist-info/METADATA`:
+
+```
+Metadata-Version: 2.4
+Name: agentlock
+Version: 1.10.2
+```
+
+Artifact digests, and these are the release artifacts:
+
+```
+ffee42aea5676a01140a6561347646b456cd144164d0ad086632d3b9599a4dac  dist/agentlock-1.10.2-py3-none-any.whl
+92337b459764a404660b30fa4022392c7a40b13ba697d97de1f0fa518595e2a1  dist/agentlock-1.10.2.tar.gz
+```
+
+The wheel digest is the one AMENDMENT 8 recorded, unchanged, and the sdist
+digest is not. A9.1 amends the expectation that both would move and states why
+only one did.
+
+Fresh venv `/tmp/al1102rel-wheel`, holding only the newly built wheel with the
+`crypto`, `mcp`, `fastapi` and `flask` extras, exercised from `/tmp` so it
+cannot resolve the source tree:
+
+```
+version 1.10.2 from /tmp/al1102rel-wheel/lib/python3.14/site-packages/agentlock/__init__.py
+both oracles, copied to /tmp/al1102rel-oracle   96 passed, 16 warnings in 0.55s
+/tmp/al1102_jwt_repro.py       fastapi and flask CLOSED, 0 OPEN, exit 0
+/tmp/al1102_jwt_verified.py    all 10 probes CLOSED, 0 OPEN, exit 0
+/tmp/al110_redpass_repro.py    F1 gate, F1 mcp, F2, F3 CLOSED, exit 0
+/tmp/al110_redpass2_repro.py   F4 both SDK majors, E15 both returns, F5 both
+                               shapes CLOSED, F6 limit UNCHANGED, exit 0
+```
+
+The release commit is ``7a5118b8e66b32506cf90b04d0270aadee443d7a``.
+
+## A9.6 What this session did not do
+
+No merge, no tag, no push, and no upload. The branch is
+`v1.10.2-jwt-and-audit` and it is not merged to `main`. No engine file, no test
+file and no schema field was touched: the only content change this session made
+is eleven lines of `CHANGELOG.md`, and the two limits it states were measured
+against code that was already written rather than being made true by writing
+them down.
+
+`README.md` and `CITATION.cff` were measured and left alone. Both already
+satisfied their predictions because the 1.10.2 fix commit carried the release
+front matter, which the 1.10.1 arc had kept in a separate release commit. That
+is worth noting for the next release rather than fixing here: a release session
+whose front matter has already been written has almost nothing to do, and the
+useful part of it is the measurement, not the edit. If the intent is for the
+release commit to be the thing that turns a version on, the front matter belongs
+in it and not in the fix.
+
+`dist/` holds the two artifacts digested above and is left in place for the
+maintainer. Publishing them, and removing them afterwards, is a manual step this
+session does not take. The read side of 1.10.2 is complete and the deployment
+side is not: a deployment that was relying on unverified bearer claims is
+failing closed as of this release, which is correct and is also an outage until
+it either configures `jwt_key` or accepts the headers as its identity input. The
+changelog now states both of those options under a heading that says so.
