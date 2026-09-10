@@ -342,19 +342,24 @@ tests taking the place of the 1.x one. For 1.9.1 it is 1520 passing and 9
 skipped under `mcp 2.x` and 1519 passing and 10 skipped under `mcp 1.x`, the
 seventeen added tests being the binding collision class and the binding red
 pass class, none of which is guarded by an extra; a bare install runs 1515
-passed and 14 skipped. For 1.10.0 it is 1616 passing and 9 skipped with
-`mcp 2.x`, `fastapi`, `flask` and PyNaCl present, the 96 added tests being
-the external review's 33-test oracle, the 30 engine tests covering what the
-oracle reaches from outside cannot, and the 33 of `TestRedPass` closing two
-pre-release red passes against the built wheel; a bare install runs 1595
-passed and 30 skipped, the 30 being the 14 above plus the sixteen review and
-engine tests guarded on `mcp`, `fastapi` or `flask`. Under `mcp 1.x` the
-engine suite is 1595 passing and 26 skipped with the review file's four
-`mcp` cases deselected, which construct the 2.x `Server` and cannot run
-against a 1.x SDK at all; the engine's 1.x hook is covered in every
-environment by `tests/test_v110_hardening.py`, `TestRedPass`'s own
-session-role and structured-content cases over that hook included. Nothing
-fails in any of these environments.
+passed and 14 skipped. For 1.10.0 it is 1616 passing and 9 skipped on
+CPython 3.14.6 with `mcp 2.2.0`, `fastapi`, `flask` and PyNaCl present, the
+96 added tests being the external review's 33-test oracle, the 30 engine
+tests covering what the oracle reaches from outside cannot, and the 33 of
+`TestRedPass` closing two pre-release red passes against the built wheel.
+That figure needs the two web frameworks as well as the two extras, which
+no earlier row did: four of `TestRedPass`'s cases drive the FastAPI and
+Flask route mapping. Without `mcp`, and with `fastapi`, `flask` and PyNaCl
+still present, it is 1595 passing and 30 skipped, the 30 being 22 guarded on
+`mcp`, 1 on `autogen`, and the 7 pre-increment-3 baselines; sixteen of the
+mcp-guarded ones are new in this release. Under `mcp 1.30.0`, on CPython
+3.13.14 with neither web framework, the engine suite is 1595 passing and 26
+skipped with the review file's four `mcp` cases deselected, which construct
+the 2.x `Server` and cannot run against a 1.x SDK at all; the engine's 1.x
+hook is covered in every environment by `tests/test_v110_hardening.py`,
+`TestRedPass`'s own session-role and structured-content cases over that hook
+included. On CPython 3.13.14 with all four present it is 1617 passing and 8
+skipped. Nothing fails in any of these environments.
 
 The 1.9.0 argument binding, and the 1.9.1 binding rules that refuse a
 `**kwargs` key naming another parameter, bind through a `functools.partial` to
@@ -386,6 +391,30 @@ MCP call runs under when the host configured one, and which tool an HTTP
 request is judged against when the route mapping names one. None of this
 reaches the standalone adapters, which ship separately and apply no declared
 transformation at all.
+
+The contract every wrapper now follows is one sentence long: `authorize()`
+returns the parameters the call will actually run with and the transformation
+its return value will pass through, and the wrapper does both.
+`AuthResult.effective_parameters` is the call after every declared parameter
+transformation, and it is what the execution token's `parameters_hash` is taken
+over, so the grant names the call rather than the request.
+`AuthResult.modify_output_fn` is the declared output transformation, and
+`agentlock.modify.apply_output_modifier` is the single applier that runs it over
+whatever shape the tool returned: a `str`, and recursively a `dict`, `list`,
+`tuple`, `set` or `frozenset` with the container type preserved, and `bytes`
+through a UTF-8 round trip. Every route does those same two things. `gate.execute()`
+validates the token against the effective parameters, calls the tool with them and
+applies the modifier to what comes back; `gate.call()` forwards both into it; the
+two decorators rebuild the call through `binding.apply_effective_parameters`, so
+that even a positional-only parameter can be transformed, and then apply the
+modifier; the AutoGen map goes through `gate.execute()`; and both MCP hooks pass
+the effective parameters to the handler and walk both payloads of the result.
+Because there is one applier and one binding inverse, adding an execution route
+means calling them rather than reimplementing them, and the shape of a tool's
+return no longer decides whether its declared policy runs. What the contract does
+not cover is listed under Limits in the changelog: the two HTTP adapters authorize
+a request without its body and so run none of the per-parameter checks, and
+anything past a `__wrapped__` boundary is the application's own code.
 
 Full feature history:
 [v1.1](docs/history.md#v11-memory--context-permissions),
