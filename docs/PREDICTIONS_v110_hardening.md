@@ -2582,3 +2582,219 @@ the two output policies are put behind one walker.
 * **C**: AMENDMENT 5, the measured results against U4.
 
 No merge, no tag, no push, no upload.
+
+# AMENDMENT 5
+
+Date: 2026-09-10
+Branch: `v1.10.1-recheck`.
+Measured against the U4 predictions frozen at `e7eb8b9` before any code was
+written.
+
+## A5.1 Result table
+
+| # | Predicted | Measured | Verdict |
+|---|---|---|---|
+| W1 | oracle: 65 passed in `/tmp/al18-extras`, no edits beyond the five guards | `65 passed, 13 warnings in 0.45s` | MET |
+| W2a | `/tmp/al18-extras`: 1583 plus 65 plus the new companions passed, 0 failed, 9 skipped | `1675 passed, 9 skipped, 0 failed`, which is 1583 plus 65 plus 27 | MET |
+| W2b | checkout venv: 1566 plus 55 plus the non skipped companions passed, 0 failed | `1641 passed, 43 skipped, 0 failed`, which is 1566 plus 55 plus 20; skips 26 plus 10 plus 7 | MET |
+| W3a | mypy 0 | `Success: no issues found in 34 source files` | MET |
+| W3b | ruff clean, no new `per-file-ignores` ENTRY | `All checks passed!`; the existing entry for the review file gained `E402`, `F811` and `E702`; no entry added | MET |
+| W3c | corpus grep 0; 0 em dashes; 0 ASCII double hyphens outside git's own header lines | 0; 0; and one ASCII double hyphen on an added line | **MISMATCH, prediction defect, amended in A5.2** |
+| W4 | files exactly R5 or a proper subset | 10 files, all in R5; `tests/test_modify.py` not touched | MET |
+| W5a | twine PASSED, Version 1.10.1 | both artifacts `PASSED`; wheel METADATA reports `Version: 1.10.1` | MET |
+| W5b | fresh wheel venv, oracle copied outside the checkout: 65 passed | `65 passed` from `/tmp/al1101-oracle` against `/tmp/al1101-wheel` | MET |
+| W6 | each of the 7 passes for the stated reason, with the named controls holding | all 13 named cases pass, listed in A5.3 | MET |
+
+The one mismatch is a defect in the prediction, not in the engine, and it is
+amended below rather than worked around.
+
+## A5.2 W3c amended: the standing flag, and a table separator it did not think of
+
+W3c was written as zero ASCII double hyphens outside git's own header lines.
+Measured over the diff there are two, and neither is new prose.
+
+The first is `--ignore-missing-imports`, inside backticks, in the sentence of
+the new CHANGELOG section that reports the type check. **A2.5 already declared
+exactly this exception**, for exactly this phrase, in exactly this file, and
+the 1.10.0 section three paragraphs below carries the same sentence. W3c should
+have carried that declaration forward and did not. This is the same class of
+defect as A2.3, which is a prediction written from memory of a rule rather than
+from the rule as recorded.
+
+The second is not on an added line at all. It is the markdown table separator
+`|---------|-----------|-------|` under the README's Versions heading, which
+appears in the diff as CONTEXT because the 1.10.1 row was inserted above it.
+A prediction about what a diff carries has to say whether it means the added
+lines or the whole hunk, and W3c did not.
+
+Amended, and this is the form the rule should take from here: **the diff's
+ADDED lines carry 0 em dashes and 0 ASCII double hyphens, except the
+`--ignore-missing-imports` flag inside backticks, which A2.5 declared.**
+Measured against that:
+
+```
+$ git diff | grep '^+' | grep -c $'\u2014'
+0
+$ git diff | grep '^+' | grep -- '--'
++Two of the three are the same mistake in two places: ... `mypy agentlock/
+ --ignore-missing-imports` reports 0 errors and `ruff check .` is clean.
+```
+
+One line, one occurrence, the declared flag. Three comment dividers in
+`tests/test_v110_hardening.py` were written with a pair of ASCII hyphens on the
+first draft and rewritten before the commit, which is the same thing R4.4
+records happening on the previous arc.
+
+## A5.3 W6 in detail: the controls, not only the seven
+
+A fix that turns seven red cases green by loosening or tightening something
+adjacent is not the fix. The paired controls are what separate the two, and
+each of the three findings has one.
+
+**G1.** `[link_then_parent_escape]` denies, and `[link_then_parent_inside]`
+still runs. The second composes a symlink with a parent traversal that lands
+back INSIDE the tree, so a change that simply refused any path containing a
+link or a `..` would pass the first case and fail this one. Both pass.
+
+**G3.** `[bob@company.test, eve@outside.test]` blocks, and
+`[eve@outside.test, bob@company.test]` still blocks. The second passed before
+the fix, for the wrong reason: `search` happened to find the disallowed address
+first. The pair is now order independent rather than accidentally agreeing, and
+that is the whole finding. `[bob@company.test]` still sends and
+`[eve@outside.test]` still blocks.
+
+**G2.** `[text-modify]` and `[structured-modify]` passed before the fix and
+still pass, so putting the two output policies behind one walker did not cost
+the 1.10.0 work that the declared transformation already had. The four that
+were failing pass.
+
+All thirteen, from the run at `0d687d5`:
+
+```
+test_resolved_path_matches_the_path_opened[link_then_parent_escape] PASSED
+test_resolved_path_matches_the_path_opened[link_then_parent_inside] PASSED
+test_domain_transform_checks_all_recipients[bob@company.test-True] PASSED
+test_domain_transform_checks_all_recipients[eve@outside.test-False] PASSED
+test_domain_transform_checks_all_recipients[bob@company.test, eve@outside.test-False] PASSED
+test_domain_transform_checks_all_recipients[eve@outside.test, bob@company.test-False] PASSED
+test_domain_transform_checks_all_recipients[bob@company.test;eve@outside.test-False] PASSED
+test_mcp_standard_text_payloads_are_redacted[text-modify] PASSED
+test_mcp_standard_text_payloads_are_redacted[text-data_policy] PASSED
+test_mcp_standard_text_payloads_are_redacted[structured-modify] PASSED
+test_mcp_standard_text_payloads_are_redacted[structured-data_policy] PASSED
+test_mcp_standard_text_payloads_are_redacted[embedded-modify] PASSED
+test_mcp_standard_text_payloads_are_redacted[embedded-data_policy] PASSED
+```
+
+The 27 engine companions were also run against the 1.10.0 engine, with the
+working tree's `agentlock/` changes stashed, to confirm they pin something
+rather than restate something:
+
+```
+14 failed, 13 passed, 63 deselected
+```
+
+The 14 are the G1 resolved path and symlink composition cases, the G2 embedded
+resource and the three data policy shapes, and the G3 disallowed and
+unparseable pieces. The 13 that pass before the fix are the ones declared as
+controls or as limits: the blob pass through, the undeclared tool left
+untouched, the benign recipient forms, the values carrying no address, and the
+relative path, which was blocked before only because the working directory
+happened to sit outside the prefix and is blocked structurally now.
+
+## A5.4 What the fix actually changed, stated for the record
+
+Three behaviors, and each one denies or transforms where 1.10.0 did not.
+
+**`whitelist_path` returns a different string on allow.** It returned the
+caller's value; it returns the resolved path. A host that compared the
+parameter it sent against the parameter its tool received will now see them
+differ whenever the path went through a symlink or a `..`. That difference IS
+the fix: through 1.10.0 the gate checked one path and the host opened another,
+and the gap between them was the finding. A path that is not absolute is also
+blocked outright now, rather than blocked incidentally because the working
+directory sat outside the prefix.
+
+**The MCP adapter redacts results it previously did not touch at all.** A tool
+declaring `prohibited_in_output` with `redaction="auto"` and no modify policy
+got no redaction over this adapter at all. It gets it now, over every shape the
+walker covers. A caller that had come to rely on reading unredacted values out
+of an MCP result while a data policy was declared on the tool was reading a
+leak.
+
+**A recipient field naming more than one address is judged on all of them.**
+Values that passed before now block. This is the one of the three most likely
+to show up as a support question, because a host that has been sending to a
+mixed recipient list has been doing so since the action existed.
+
+Nothing else changed. `agentlock/gate.py` is untouched, no schema field was
+added or altered, no denial reason was added, and the `posixpath` import
+dropped out of `agentlock/modify.py` because nothing uses it once the lexical
+normalization is gone.
+
+## A5.5 Final measurements
+
+Suite, both environments:
+
+```
+/tmp/al18-extras   1675 passed, 9 skipped, 44 warnings in 3.54s
+checkout venv      1641 passed, 43 skipped, 43 warnings in 3.46s
+```
+
+Oracle alone, `/tmp/al18-extras`: `65 passed, 13 warnings in 0.45s`.
+
+Types, lint and style:
+
+```
+mypy agentlock/ --ignore-missing-imports   Success: no issues found in 34 source files
+ruff check .                               All checks passed!
+corpus grep over the diff                  0
+em dashes on added lines                   0
+ASCII double hyphens on added lines        1, the flag A2.5 declared
+```
+
+Release build in `/tmp/al18-extras`, after `rm -rf dist build`:
+
+```
+Successfully built agentlock-1.10.1.tar.gz and agentlock-1.10.1-py3-none-any.whl
+Checking dist/agentlock-1.10.1-py3-none-any.whl: PASSED
+Checking dist/agentlock-1.10.1.tar.gz: PASSED
+```
+
+METADATA, read out of the wheel at `agentlock-1.10.1.dist-info/METADATA`:
+
+```
+Metadata-Version: 2.4
+Name: agentlock
+Version: 1.10.1
+```
+
+Artifact digests:
+
+```
+ae2318771d538f2c10e0d1b072ba8b987791de8781befeba39e254422adc6107  dist/agentlock-1.10.1-py3-none-any.whl
+be23c622df4ebb90177a612c56d78e28882d282327baef484734460bd2b15be1  dist/agentlock-1.10.1.tar.gz
+```
+
+Fresh venv `/tmp/al1101-wheel`, holding only the built wheel with the `crypto`,
+`mcp`, `fastapi` and `flask` extras, exercised from `/tmp/al1101-oracle` so it
+cannot resolve the source tree:
+
+```
+version 1.10.1 from /tmp/al1101-wheel/lib/python3.14/site-packages/agentlock/__init__.py
+oracle, copied to /tmp/al1101-oracle: 65 passed, 13 warnings in 0.52s
+```
+
+`CITATION.cff` needed only the version field: `date-released` already read
+`2026-09-10`, which is today, because 1.10.0 released this morning. That is
+recorded rather than silently accepted, on the same terms as A4.3.
+
+The fix commit is ``0d687d5edb432dcabbd6c9f56a486dc2ca45eddb``.
+
+## A5.6 What this session did not do
+
+No merge, no tag, no push, and no upload. The branch is `v1.10.1-recheck` and
+it is not merged to `main`. `tests/test_modify.py` was not edited, which U2.1
+predicted and W4 confirmed. `dist/` holds the two artifacts digested above and
+is left in place for the maintainer; publishing them, and removing them
+afterwards, is a manual step this session does not take.
