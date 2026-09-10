@@ -1798,3 +1798,124 @@ The rebuilt artifacts:
 d2afa56afaedfe1a67c374bdf58280310d80e37b502deacd81808cc2a1453417  dist/agentlock-1.10.0-py3-none-any.whl
 c754494d57b0573bb49bce2b3eb58068f57e74259d6c67a14dbed6f32195e1c5  dist/agentlock-1.10.0.tar.gz
 ```
+
+---
+
+# RELEASE FREEZE (2026-09-10)
+
+Appended after AMENDMENT 3 and before any release edit. Everything above,
+sections 1 through 5, AMENDMENT 1, the RED PASS FREEZE, AMENDMENT 2, the RED
+PASS 2 FREEZE and AMENDMENT 3, is left exactly as it was written.
+
+This is the release session for 1.10.0. It produces one release commit and one
+amendment. There is no merge, no tag, no push and no upload: those are the
+maintainer's manual steps and nothing here performs them.
+
+Three code passes have closed on this branch: the seven groups an external
+review of the 1.9.1 wheel found, the three findings of a pre-release red pass
+against the wheel built at `4bd3998`, and the three findings of a second red
+pass against the wheel built at `33d0386`. No further engine change is
+predicted. What remains is the release surface: CHANGELOG, README, CITATION.cff.
+
+Nothing in this section describes an edit that has been made. Every figure
+below labelled "at HEAD" is a measurement of `fadd292` before STEP 1 touches
+anything.
+
+## T1. State at HEAD, measured
+
+`git status` is clean at `fadd292`.
+
+Versions, already at the release value from the code passes:
+
+```
+pyproject.toml:7   version = "1.10.0"
+agentlock/__init__.py:37   __version__ = "1.10.0"
+```
+
+The only `1.9.x` strings anywhere in `agentlock/`, `pyproject.toml` or
+`CITATION.cff` are nine historical references inside docstrings and comments
+(`agentlock/gate.py:1540,2232`, `agentlock/defer.py:302`,
+`agentlock/modify.py:313`, `agentlock/integrations/mcp.py:124,318,418`,
+`agentlock/integrations/fastapi.py:137`,
+`agentlock/integrations/flask.py:213`), each of the form "through 1.9.1 this
+did X". None is a current-version string.
+
+`CITATION.cff` at HEAD already reads `version: 1.10.0`,
+`date-released: 2026-09-10`, `doi: 10.5281/zenodo.22681594` and a single
+identifier carrying that same concept DOI. V3 is therefore predicted to be
+satisfied by a file that needs no edit, and the prediction is stated anyway so
+that STEP 2 measures it rather than assumes it.
+
+`CHANGELOG.md:10` reads `## [1.10.0] - 2026-09-10`. The 1.10.0 entry carries
+the seven groups, the three first red pass findings and the three second red
+pass findings, both credit strings, and the suite figures. It carries **zero**
+occurrences of `__wrapped__` and **zero** occurrences of "body", so two of the
+four limits V1 requires are absent and are what STEP 1 adds. Its not-additive
+paragraph names the count of behavior changes but not the two caller shapes V1
+requires it to name.
+
+`README.md` carries the 1.10.0 versions row and the counts paragraph.
+`grep -n "1\.9\.1" README.md` returns five lines at HEAD (318, 341, 359, 373,
+377), all of them the versions table row or history prose; none claims 1.9.1 as
+current.
+
+The build artifacts from AMENDMENT 3 are still in `dist/` and are removed by
+V5's `rm -rf` before the release build. `build/` does not exist. The four
+environments and both red pass reproduction scripts
+(`/tmp/al110_redpass_repro.py`, `/tmp/al110_redpass2_repro.py`) are present
+from the earlier passes.
+
+## T2. Frozen predictions
+
+Stated before any release edit is made. A MISMATCH on any of these is a STOP:
+no commit, report, and amend the failed prediction in place, dated, before
+proceeding.
+
+**V1.** The CHANGELOG 1.10.0 heading carries today's date from `date +%F`. The
+entry states, in order: the seven review groups and what changed for each; the
+three red pass findings (session role authority, output walking, route
+mapping) and the two second pass findings (structured content, sets); the
+stated limits (dictionary keys, objects, the `__wrapped__` boundary, and HTTP
+adapters passing no body parameters); the not-additive statement for callers
+who relied on caller-supplied roles over a session or on unbound tokens; and
+the suite figures per environment with interpreter and mcp versions from
+AMENDMENT 3. Credits: "an external review of the 1.9.1 wheel" and "pre-release
+red passes against the built wheel".
+
+**V2.** README: a versions row for 1.10.0 with the `[crypto,mcp]` figure, the
+counts paragraph, and one paragraph under the execution contract describing
+effective parameters and output modification as the single contract every
+wrapper follows. `grep -n "1\.9\.1" README.md` returns only history lines.
+
+**V3.** CITATION.cff: version 1.10.0, `date-released` today, `doi` stays the
+concept DOI, `identifiers` concept only. `yaml.safe_load` validates.
+
+**V4.** Version is already 1.10.0 in `pyproject.toml` and
+`agentlock/__init__.py`, and a grep confirms no other current-version string
+says 1.9.x.
+
+**V5.** Build in `/tmp/al18-extras` after `rm -rf dist build`: `twine check`
+PASSED, `Metadata-Version: 2.4`, `Version: 1.10.0`, hatchling pin unchanged at
+`hatchling<1.30`.
+
+**V6.** Fresh venv `/tmp/al110-wheel` with the `[crypto,mcp,fastapi,flask]`
+extras: prints 1.10.0; `tests/test_v110_system_review.py` copied to `/tmp` runs
+**33 passed** against site-packages; the two red pass reproduction scripts
+already in `/tmp` from this arc exit 0 against the wheel.
+
+**V7.** Full suite in `/tmp/al18-extras` after reinstall: **1616 passed, 9
+skipped, 0 failed**; `ruff check .` clean; `mypy agentlock/` clean with the
+standing flag; corpus grep 0.
+
+**V8.** The files in the release commit are `CHANGELOG.md`, `README.md` and
+`CITATION.cff`. Nothing else.
+
+## T3. Commit plan
+
+* **Commit A**, this section only: `docs: freeze v1.10.0 release predictions`.
+  Append only, no other file.
+* **STEP 1** applies V1 to V3. **STEP 2** measures V1 to V8 and records the
+  table verbatim.
+* **Commit B**, the release surface: `release: v1.10.0`.
+* **Commit C**, AMENDMENT 4: the result table, the wheel and sdist sha256, the
+  METADATA lines, and commit B's hash. Append only.
