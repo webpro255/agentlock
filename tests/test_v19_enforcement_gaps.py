@@ -2,10 +2,10 @@
 
 An external review of the published 1.8.0 wheel found three places where the
 engine does not enforce what its own documentation says it enforces. This file
-reproduces all three before any fix exists. Every reproduction is marked
-``xfail(strict=True)`` at freeze time, so this file fails the moment a gap
-stops being real, in either direction: an xfail that starts passing is a strict
-XPASS failure, and a fix that regresses turns the plain tests red.
+reproduces all three before any fix exists. Every reproduction was marked
+``xfail(strict=True)`` at freeze time and measured failing at `d56122d`. The
+markers came off as each gap closed; the tests are unchanged otherwise, and are
+now the regression guard for the three fixes.
 
 G1. Argument binding. ``agentlock/decorators.py`` and
 ``agentlock/integrations/autogen.py`` build the gate's ``parameters`` dict out
@@ -26,7 +26,10 @@ nothing and every handler runs ungated. X5 measures that against the real SDK,
 X6 measures the 1.x path against the real SDK, X7 measures the fail closed rule.
 
 X8 covers the binding module's own fail closed rule: a callable whose signature
-cannot be read cannot be gated, so the wrapper must refuse to be built.
+cannot be read cannot be gated, so the wrapper must refuse to be built. X9 was
+added at build time and carried no xfail: it covers the mcp 2.x constructor
+route, recorded as defect D2 in
+``docs/PREDICTIONS_v19_enforcement.md`` before any code was written.
 
 Guards: X5, X6 and X7 need the real MCP SDK and are guarded by
 ``importorskip("mcp")``, the idiom ``tests/test_v15_integration_confirmation.py``
@@ -52,8 +55,6 @@ from agentlock.types import RecipientPolicy, RiskLevel
 KNOWN = ["bob@company.com"]
 CONTACT = "bob@company.com"
 HOSTILE = "attacker@evil.com"
-
-FIXED = "1.8.0 gap, fixed in 1.9.0"
 
 
 def _perms(policy: RecipientPolicy = RecipientPolicy.KNOWN_CONTACTS_ONLY):
@@ -90,7 +91,6 @@ def _mcp_major() -> int:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason=FIXED)
 def test_x1_sync_decorator_gates_positional_and_default_arguments():
     """G1 through the sync ``@agentlock`` wrapper.
 
@@ -129,7 +129,6 @@ def test_x1_sync_decorator_gates_positional_and_default_arguments():
     assert calls["n"] == 2
 
 
-@pytest.mark.xfail(strict=True, reason=FIXED)
 def test_x2_async_decorator_gates_positional_and_default_arguments():
     """G1 through the async ``@agentlock`` wrapper. Same three routes."""
     from agentlock.decorators import agentlock as agentlock_decorator
@@ -163,7 +162,6 @@ def test_x2_async_decorator_gates_positional_and_default_arguments():
     assert calls["n"] == 2
 
 
-@pytest.mark.xfail(strict=True, reason=FIXED)
 def test_x3_autogen_guarded_gates_positional_and_default_arguments(monkeypatch):
     """G1 through ``protect_functions``.
 
@@ -212,7 +210,6 @@ def test_x3_autogen_guarded_gates_positional_and_default_arguments(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason=FIXED)
 def test_x4_token_authorized_with_no_parameters_is_bound_to_the_empty_call():
     """G2. A token issued for a call carrying nothing must not execute a call
     carrying something. The two positive cases fix the rule in both directions:
@@ -270,7 +267,6 @@ def test_x4_token_authorized_with_no_parameters_is_bound_to_the_empty_call():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason=FIXED)
 @pytest.mark.skipif(_mcp_major() != 2, reason="needs the mcp 2.x SDK")
 def test_x5_mcp_2x_handler_is_gated():
     """G3 against the real mcp 2.x SDK.
@@ -387,7 +383,65 @@ def test_x6_mcp_1x_handler_is_gated():
     assert seen[0]["to"] == CONTACT
 
 
-@pytest.mark.xfail(strict=True, reason=FIXED)
+@pytest.mark.skipif(_mcp_major() != 2, reason="needs the mcp 2.x SDK")
+def test_x9_mcp_2x_constructor_registered_handler_is_gated():
+    """D2, recorded in the freeze document before the build.
+
+    mcp 2.x also accepts a ``tools/call`` handler on the ``Server``
+    constructor, which writes the handler registry directly and never reaches
+    ``add_request_handler``. Wrapping only the registration function would
+    leave that route ungated, which is G3's shape on a different path. The
+    hook wraps what is already registered as well.
+    """
+    pytest.importorskip("mcp")
+    import mcp.types as types
+    from mcp.server import Server
+
+    from agentlock.integrations.mcp import AgentLockMCPServer
+
+    seen: list[dict] = []
+
+    async def on_call_tool(ctx, params):
+        seen.append(dict(params.arguments or {}))
+        return types.CallToolResult(
+            content=[types.TextContent(type="text", text="sent")]
+        )
+
+    gate = _gate()
+    server = Server("v19-probe", on_call_tool=on_call_tool)
+
+    # Registered before the wrapper exists, and not through the function the
+    # wrapper patches.
+    assert server.get_request_handler("tools/call") is not None
+
+    AgentLockMCPServer(server, gate, {"send_email": _perms()})
+    entry = server.get_request_handler("tools/call")
+    assert entry is not None
+
+    def _call(to):
+        params = types.CallToolRequestParams(
+            name="send_email",
+            arguments={
+                "to": to,
+                "body": "x",
+                "_agentlock_user_id": "alice",
+                "_agentlock_role": "user",
+            },
+        )
+        return asyncio.run(entry.handler(None, params))
+
+    with pytest.raises(DeniedError) as exc:
+        _call(HOSTILE)
+    assert exc.value.reason == "recipient_not_allowed"
+    assert seen == []
+
+    result = _call(CONTACT)
+    assert isinstance(result, types.CallToolResult)
+    assert len(seen) == 1
+    assert "_agentlock_user_id" not in seen[0]
+    assert seen[0]["to"] == CONTACT
+
+
 def test_x7_unsupported_mcp_server_fails_closed():
     """G3's rule: a server the wrapper cannot hook must not construct."""
     pytest.importorskip("mcp")
@@ -406,7 +460,6 @@ def test_x7_unsupported_mcp_server_fails_closed():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason=FIXED)
 def test_x8_uninspectable_callable_refuses_to_wrap():
     """A callable whose signature cannot be read cannot be gated, so the
     wrapper must refuse at wrap time rather than at call time.

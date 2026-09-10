@@ -32,6 +32,7 @@ import functools
 from collections.abc import Callable
 from typing import Any
 
+from agentlock.binding import bind_call_parameters, ensure_bindable
 from agentlock.gate import AuthorizationGate
 from agentlock.schema import AgentLockPermissions
 
@@ -106,7 +107,15 @@ class AgentLockFunctionMap:
     def _wrap_function(
         self, func_name: str, func: Callable[..., Any]
     ) -> Callable[..., Any]:
-        """Create an authorization-guarded wrapper for a single function."""
+        """Create an authorization-guarded wrapper for a single function.
+
+        Raises:
+            BindingError: ``func``'s signature cannot be read, so its calls
+                cannot be bound and cannot be gated.  Raised here, at wrap
+                time, so the map refuses to be built.
+        """
+        ensure_bindable(func)
+
         gate = self._gate
         default_user = self._default_user_id
         default_role = self._default_role
@@ -116,23 +125,27 @@ class AgentLockFunctionMap:
             user_id = kwargs.pop("_agentlock_user_id", default_user)
             role = kwargs.pop("_agentlock_role", default_role)
 
+            # G1: bind after the reserved auth kwargs are removed, so the
+            # gate sees the whole call and nothing that is not part of it.
+            params, bound = bind_call_parameters(func, args, kwargs)
+
             auth = gate.authorize(
                 func_name,
                 user_id=user_id,
                 role=role,
-                parameters=kwargs or None,
+                parameters=params,
             )
             auth.raise_if_denied()
             assert auth.token is not None
 
-            def _exec(**params: Any) -> Any:
-                return func(*args, **params)
+            def _exec(**_p: Any) -> Any:
+                return func(*bound.args, **bound.kwargs)
 
             return gate.execute(
                 func_name,
                 _exec,
                 token=auth.token,
-                parameters=kwargs or None,
+                parameters=params,
             )
 
         return guarded

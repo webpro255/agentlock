@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-09-09
+
+The enforcement completeness release. An external review of the published 1.8.0 wheel found three places where the engine did not enforce what its own documentation said it enforced. All three are fixed. This release adds no detection feature, no new denial reason and no schema change.
+
+**This release is not additive.** Two of the three fixes change behavior on paths that were failing open, and code that relied on those paths will now be denied. That is the point of them. The Security section below says exactly which calls change.
+
+Suite: **1503 passed, 9 skipped on CPython 3.14.6 with `mcp 2.2.0`**, **1502 passed, 10 skipped on CPython 3.13.14 with `mcp 1.30.0`**, and **1504 passed, 8 skipped on CPython 3.13.14 with `mcp 2.2.0` and `pyautogen 0.9.0`**. 0 failed in every environment. `mypy agentlock/ --ignore-missing-imports` reports 0 errors, down from 4.
+
+### Security
+
+- **Every argument of a call now reaches the gate, not just the keyword ones.** The decorator wrappers and the AutoGen function map built the gate's `parameters` dict out of `kwargs` alone and then spliced the positional arguments back in at execution. A tool declaring `scope.recipient_parameter="to"` denied `send(to=hostile)` and executed `send(hostile)`, and executed a bare `send()` whose default recipient was hostile. Every parameter-level check the gate performs was blind to both routes. Calls are now bound to the function's signature with defaults applied before authorization, and the function is invoked from that same binding, so what was authorized and what runs cannot drift apart. Credited to an external review of the 1.8.0 wheel.
+- **An execution token authorized with no parameters is bound to the empty call.** `TokenStore.issue` stored an empty `parameters_hash` when the authorized call carried no parameters, and `validate_and_consume` compared hashes only when both the supplied parameters and the stored hash were non-empty. A token obtained by authorizing nothing therefore executed anything. The hash is now always computed, the empty call included, and the comparison is unconditional. The evidence path in `gate.py` follows the same rule, and a deferral's stored parameter hash is likewise always written. Credited to an external review of the 1.8.0 wheel.
+- **Caller contract:** the parameters passed to `execute()` must be the parameters passed to `authorize()`. `None` and `{}` are the same call. A mismatch raises `TokenInvalidError`. Every in-repo call site already satisfied this; a deployment that authorized one call and executed another was relying on the gap.
+- **An MCP server the wrapper cannot hook no longer constructs silently.** `AgentLockMCPServer._install_hook` looked for `call_tool` on the server and returned quietly when it was absent. Under mcp 2.x, which the `mcp` extra resolves to, `Server` has no `call_tool`: the wrapper installed nothing, reported nothing, and every tool handler ran ungated. A server exposing neither `call_tool` nor `add_request_handler` now raises `IntegrationUnsupportedError` at construction, naming the server type and the installed mcp version. Credited to an external review of the 1.8.0 wheel.
+- **A callable whose signature cannot be read refuses to be wrapped.** A wrapper that cannot bind a call's arguments cannot show the gate what the call carries, so it would gate a subset and let the rest through. `BindingError` is raised at wrap time rather than on the first call.
+
+### Added
+
+- **mcp 2.x support.** `AgentLockMCPServer` now installs on both SDK generations. Under 1.x it patches the `@server.call_tool()` decorator, as before, and it now forwards that decorator's own arguments (`validate_input=` and anything the SDK adds later) instead of discarding them. Under 2.x it wraps `add_request_handler` so that any registration for `tools/call` is guarded, reads `params.name` and `params.arguments`, strips the reserved `_agentlock_` keys from a copy, and invokes the original handler with a `params` object carrying the cleaned arguments. It also wraps a `tools/call` handler that was already registered when the wrapper is constructed, which is the route `Server(on_call_tool=...)` takes: that handler is written straight into the registry and never passes through `add_request_handler`. Both majors are tested against the real SDK.
+- **`agentlock/binding.py`,** with `bind_call_parameters(func, args, kwargs)` and `ensure_bindable(func)`. `bind_call_parameters` returns the dict of everything a call carries, keyed by parameter name, with defaults applied, `**kwargs` contents flattened to the top level and `*args` kept as a tuple under its own name, alongside the `BoundArguments` that reconstruct the call. Both are exported from the package root.
+- **`BindingError` and `IntegrationUnsupportedError`,** both subclasses of `AgentLockError`, both exported from the package root.
+- **`tests/test_v19_enforcement_gaps.py`,** nine tests. Each of the three gaps was first committed as a strict `xfail` measured failing against the engine at `d56122d`, and the markers came off as the gaps closed. Four of the nine drive the real MCP SDK: two under 2.x, one under 1.x, one on a server with neither surface.
+
+### Fixed
+
+- **Four mypy errors, and the type checker is clean.** `policy.py:219` and `:257` lacked annotations; both take or return `LineagePolicyConfig`. `gate.py:882` and `:884` reused the local name `_asserted`, already bound earlier in `authorize()` to a `list[str]`, for the D20 recipient disagreement check, which mypy read as a `list[str]` rebound to `str` and then compared as a set of lists. The two uses were in disjoint branches, so there was no runtime defect; the D20 local is now named `_asserted_recipient`.
+
+### Unchanged
+
+- The `mcp` extra stays `mcp>=1.0`. Both majors are supported and both are tested, so there is nothing to pin away from.
+- `SCHEMA_VERSION` stays `1.5`. No schema file is touched.
+- No denial reason, permission field, or pipeline step is added, removed or reordered.
+
 ## [1.8.0] - 2026-09-09
 
 The recipient release. Pipeline Step 8 was a comment block from v1.0 through v1.7.0: the `recipient` argument was threaded end to end and then discarded, and `RECIPIENT_NOT_ALLOWED` existed only as an enum member that nothing raised. It is now enforced.

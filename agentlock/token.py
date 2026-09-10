@@ -31,6 +31,8 @@ class ExecutionToken:
         role: The role under which this call is authorized.
         scope: Data boundary constraints snapshot.
         parameters_hash: SHA-256 of the serialized call parameters.
+            Always set by :meth:`TokenStore.issue`, including for a call
+            carrying no parameters, which hashes the empty mapping.
         issued_at: Unix timestamp of issuance.
         expires_at: Unix timestamp after which the token is invalid.
         status: Current lifecycle state.
@@ -105,9 +107,10 @@ class TokenStore:
             user_id=user_id,
             role=role,
             scope=scope or {},
-            parameters_hash=(
-                ExecutionToken.hash_parameters(parameters) if parameters else ""
-            ),
+            # G2: always bind, including the empty call.  A token issued
+            # with no parameters used to carry no hash, which made it a token
+            # for any parameters at all.
+            parameters_hash=ExecutionToken.hash_parameters(parameters or {}),
             _ttl_seconds=ttl or self._default_ttl,
         )
         self._tokens[token.token_id] = token
@@ -124,7 +127,9 @@ class TokenStore:
         Args:
             token_id: The token to validate.
             tool_name: Must match the tool the token was issued for.
-            parameters: If provided, hash must match the issued hash.
+            parameters: The parameters the call will run with.  Must be the
+                parameters the token was issued for.  ``None`` and ``{}`` are
+                the same call and match a token issued for the empty call.
 
         Returns:
             The consumed token.
@@ -141,10 +146,12 @@ class TokenStore:
             raise TokenInvalidError(
                 f"Token issued for '{token.tool_name}', not '{tool_name}'"
             )
-        if parameters and token.parameters_hash:
-            expected = ExecutionToken.hash_parameters(parameters)
-            if expected != token.parameters_hash:
-                raise TokenInvalidError("Parameter hash mismatch -- token is operation-bound")
+        # G2: unconditional.  There is no combination of empty parameters and
+        # empty stored hash that skips the comparison, because the empty call
+        # has a hash of its own.
+        expected = ExecutionToken.hash_parameters(parameters or {})
+        if expected != token.parameters_hash:
+            raise TokenInvalidError("Parameter hash mismatch -- token is operation-bound")
         token.consume()
         return token
 

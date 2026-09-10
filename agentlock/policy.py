@@ -26,7 +26,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agentlock.context import ContextState
-from agentlock.schema import AgentLockPermissions, ScopeConfig, version_at_least
+from agentlock.schema import (
+    AgentLockPermissions,
+    LineagePolicyConfig,
+    ScopeConfig,
+    version_at_least,
+)
 from agentlock.types import (
     ApprovalThreshold,
     DataBoundary,
@@ -216,7 +221,9 @@ _RECIPIENT_FAULT_UNKNOWN: tuple[str, str] = (
 )
 
 
-def active_lineage_policy(permissions: AgentLockPermissions):
+def active_lineage_policy(
+    permissions: AgentLockPermissions,
+) -> LineagePolicyConfig | None:
     """The tool's lineage policy if it is live, else ``None``.
 
     Live means: present, ``enabled``, and on a v1.3+ permission block.  Both
@@ -255,7 +262,9 @@ def resolve_action_classes(
 
 
 def lineage_gated_action(
-    lineage_policy, permissions: AgentLockPermissions, flags: ActionFlags
+    lineage_policy: LineagePolicyConfig,
+    permissions: AgentLockPermissions,
+    flags: ActionFlags,
 ) -> bool:
     """Is this action subject to the session-taint gate?
 

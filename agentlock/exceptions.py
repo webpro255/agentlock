@@ -255,3 +255,22 @@ class SchemaValidationError(AgentLockError):
 
 class ConfigurationError(AgentLockError):
     """Library misconfiguration."""
+
+
+class BindingError(AgentLockError):
+    """A callable's signature cannot be read, so its calls cannot be gated.
+
+    Raised at wrap time, never at call time.  A wrapper that cannot bind a
+    call's arguments to parameter names cannot show the gate what the call
+    carries, so it refuses to be built rather than gating a subset of the
+    arguments and letting the rest through.
+    """
+
+
+class IntegrationUnsupportedError(AgentLockError):
+    """An integration cannot install its authorization hook on this object.
+
+    Raised at construction time.  The alternative is an adapter that appears
+    to protect a server and does not, which is the fail-open shape this
+    exception exists to prevent.
+    """

@@ -879,9 +879,9 @@ class AuthorizationGate:
             # contradict the block's declared parameter.  Disagreement is a
             # fault; it is not resolved in either direction.
             if resolved_recipients and recipient:
-                _asserted = _normalize_recipient(recipient)
+                _asserted_recipient = _normalize_recipient(recipient)
                 _declared = {_normalize_recipient(r) for r in resolved_recipients}
-                if _declared != {_asserted}:
+                if _declared != {_asserted_recipient}:
                     recipient_fault = "assertion_disagrees"
 
         # Build request context
@@ -1822,12 +1822,12 @@ class AuthorizationGate:
                 session_id=resolved["session_id"],
                 resolution_at_commit=resolved["resolution"],
             )
+            # G2: the same unconditional rule the token store uses.  A
+            # confirmation that reports different parameters from the ones the
+            # deferral resolved is not evidence of that grant, and a
+            # confirmation that reports none is a claim about the empty call.
             expected = resolved["parameters_hash"]
-            if (
-                expected
-                and parameters is not None
-                and ExecutionToken.hash_parameters(parameters) != expected
-            ):
+            if ExecutionToken.hash_parameters(parameters or {}) != expected:
                 return False, "parameter_mismatch", facts
             return True, "", facts
 
@@ -1838,10 +1838,9 @@ class AuthorizationGate:
             if token.tool_name != tool_name:
                 return False, "tool_mismatch", facts
             facts.update(user_id=token.user_id, role=token.role)
+            # G2, as above.
             if (
-                token.parameters_hash
-                and parameters is not None
-                and ExecutionToken.hash_parameters(parameters)
+                ExecutionToken.hash_parameters(parameters or {})
                 != token.parameters_hash
             ):
                 return False, "parameter_mismatch", facts
@@ -2400,10 +2399,10 @@ class AuthorizationGate:
                     "role": record.role,
                     "session_id": record.session_id or session_id,
                     "resolution": record.resolution,
-                    "parameters_hash": (
-                        ExecutionToken.hash_parameters(record.parameters)
-                        if record.parameters
-                        else ""
+                    # G2: always a hash, so the evidence path has something
+                    # unconditional to compare against.
+                    "parameters_hash": ExecutionToken.hash_parameters(
+                        record.parameters or {}
                     ),
                 },
             )
