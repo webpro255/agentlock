@@ -2157,3 +2157,428 @@ No merge, no tag, no push, no upload, and no edit to `agentlock/`,
 and it is not merged to `main`. `dist/` holds the two artifacts digested above
 and is left in place for the maintainer; publishing them, and removing them
 afterwards, is a manual step this session does not take.
+
+# 1.10.1 FREEZE (2026-09-10)
+
+Date: 2026-09-10
+Branch: `v1.10.1-recheck`, cut from `main` at the `v1.10.0` tag.
+Working tree at measurement time: clean except
+`tests/test_v110_system_review.py`, which this freeze replaces and guards.
+
+The external reviewer re-ran their oracle against the published 1.10.0 wheel.
+The original 33 cases all pass. They added 32 cases, of which 7 fail, and the 7
+reduce to three root causes. Their combined 65 case file replaces
+`tests/test_v110_system_review.py` and is again the contract: it is the
+definition of done for this increment and it is not edited after the one
+mechanical change recorded in section U3.1.
+
+This is 1.10.1. No new feature, no new denial reason class. No push, merge,
+tag, or upload.
+
+Nothing in this document describes code that has been written on this branch.
+Every reproduction below is a measurement of the engine as it stands at
+`dcf3fb7`, which is the 1.10.0 line.
+
+## U1. The three findings, reproduced
+
+All three were reproduced against the published 1.10.0 wheel before this
+session, and all three are reproduced again here against the checkout at
+`dcf3fb7` by the reviewer's own cases.
+
+### G1. `whitelist_path` normalizes lexically before it resolves
+
+`agentlock/modify.py::ModifyEngine._action_whitelist_path` builds its candidate
+as `os.path.realpath(posixpath.normpath(value.replace("\\", "/")))`. The
+lexical `normpath` runs FIRST and collapses `..` against the spelling of the
+path rather than against where the path leads. Given a directory symlink at
+`allowed/jump` pointing outside the allowed tree,
+`allowed/jump/../private.txt` is collapsed to `allowed/private.txt` before the
+filesystem is consulted at all. `realpath` then sees a path that is genuinely
+inside the prefix, `commonpath` agrees, and the gate allows.
+
+The host then opens the ORIGINAL string, because on allow the action returns
+`value` unchanged. `open()` walks `jump` as a symlink, does not collapse the
+`..` lexically, and reads the file outside the prefix. The checked path and the
+opened path are two different files. That gap is the finding, not only the
+allow decision.
+
+The reviewer's case is
+`test_resolved_path_matches_the_path_opened[link_then_parent_escape]`. Its
+sibling `[link_then_parent_inside]`, where the composition resolves back inside
+the tree, is the control that a fix must not break, and it passes today.
+
+### G2. MCP output redaction misses two shapes and one whole policy
+
+Two independent defects in `agentlock/integrations/mcp.py`, reported together
+because they surface through the same four failing cases.
+
+**(a) Embedded resources are not descended into.** The rewriter in
+`AgentLockMCPServer._modify_text_content` reads `getattr(item, "text", None)`.
+An `EmbeddedResource` does not carry its text there. It carries a
+`TextResourceContents` at `.resource`, and the text is at `.resource.text`.
+The item therefore falls through to `apply_output_modifier`, which returns a
+custom object unchanged by its own stated contract, so the declared output
+transformation never reaches the string a client reads.
+
+**(b) The data policy path never runs for an MCP result at all.** In
+`_run_reported`, the redaction step is guarded by `isinstance(result, str)`. An
+MCP handler does not return a string, so for a tool configured with
+`data_policy.prohibited_in_output` and `redaction="auto"` and no modify policy,
+redaction is skipped entirely. `TextContent`, `structured_content` and embedded
+text all leak. The reviewer supplied
+`test_data_policy_plain_string_positive_control` as the control proving the
+data policy itself works on the plain string path, so this is the adapter and
+not the policy.
+
+The four failing cases are
+`test_mcp_standard_text_payloads_are_redacted[text-data_policy]`,
+`[structured-data_policy]`, `[embedded-modify]` and `[embedded-data_policy]`.
+`[text-modify]` and `[structured-modify]` pass, which is the 1.10.0 work
+holding.
+
+### G3. `restrict_domain` validates one address and reads it positionally
+
+`_action_restrict_domain` calls `email_pattern.search(value)` and inspects
+`match.group(1)`. `search` returns the FIRST match. Everything after it is
+never examined. `"bob@company.test, eve@outside.test"` is judged on
+`company.test` alone, passes, and the tool is invoked with both recipients
+intact. The semicolon form behaves the same way.
+
+The decision is therefore a function of the order the addresses are written in.
+`"eve@outside.test, bob@company.test"` blocks and
+`"bob@company.test, eve@outside.test"` allows, and those are the same recipient
+set. That case passes today for the wrong reason, and the reviewer included it
+deliberately as the paired control.
+
+The failing cases are
+`test_domain_transform_checks_all_recipients[bob@company.test, eve@outside.test-False]`
+and `[bob@company.test;eve@outside.test-False]`.
+
+## U2. Decisions of record
+
+**R1. `whitelist_path` resolves with filesystem semantics first.**
+`os.path.realpath` runs on the raw value, after backslash normalization only.
+No lexical `normpath` ahead of it. Prefixes get the same treatment, and the
+comparison stays `os.path.commonpath` of the pair against the resolved prefix.
+On allow the action RETURNS the resolved path, so the callable opens exactly
+the path that was checked, and the docstring says the parameter value is
+canonicalized. Relative paths remain blocked. The statement that this is
+canonicalization at authorization time and not a race resistant filesystem
+sandbox stays, unchanged and unweakened.
+
+**R2. One MCP payload walker, used by both output policies.** A single walker
+in `agentlock/integrations/mcp.py` covers `TextContent.text`,
+`EmbeddedResource` carrying `TextResourceContents` at `.resource.text`,
+`structured_content` and `structuredContent`, and the plain list or mapping
+returns the 1.x handler contract allows. `BlobResourceContents` and
+`ResourceLink` are passed through unchanged and the docstring says so, because
+a link is a reference and a blob is not text this engine claims to read. The
+data policy path in `_run_reported` calls the SAME walker, with
+`gate.redact_output` applied to each string leaf. Both SDK majors.
+
+**R3. `restrict_domain` parses the whole value.** Split on comma and semicolon,
+strip each piece, require every piece to carry an address whose domain is
+allowed. Any unparseable piece and any disallowed domain block the value. The
+order of the addresses cannot change the decision. See U2.1, which narrows one
+clause of this before any code is written.
+
+**R4. Version 1.10.1.** A CHANGELOG Security section for G1 through G3,
+crediting the external reviewer's 1.10.0 recheck. README counts and versions
+row. CITATION.cff version and date released.
+
+**R5. Files.** `agentlock/modify.py`, `agentlock/integrations/mcp.py`,
+`agentlock/__init__.py`, `pyproject.toml`, `CHANGELOG.md`, `README.md`,
+`CITATION.cff`, `tests/test_v110_system_review.py` (the replacement, with no
+edits beyond the U3.1 guards), `tests/test_v110_hardening.py` (engine level
+companions), `docs/PREDICTIONS_v110_hardening.md` (append only). Nothing else.
+
+The companions in `tests/test_v110_hardening.py`: G1 through the 1.x
+`FakeServer` and through `gate.call` with an assertion on the resolved path the
+callable actually received; G2 through the 1.x `FakeServer` with an embedded
+resource and again with a data policy; G3 on the edge forms, which are a
+trailing separator, a whitespace only piece, the display name form
+`Bob <bob@company.test>`, and an uppercase domain.
+
+### U2.1 R3 narrowed before the build: a value carrying no address at all
+
+R3 as written blocks any unparseable piece. Read literally that blocks a value
+with no address anywhere in it, and that is a behavior change beyond G3 which
+an existing test asserts against. `tests/test_modify.py`, in
+`TestRestrictDomain::test_no_email_in_field`:
+
+```python
+        result = engine.apply_params("send_email", {"to": "not-an-email"}, transforms)
+        assert not result.modified
+```
+
+That test asserts neither of the two behaviors STEP 0 named as expected
+casualties. It is not the first match domain rule and it is not the unresolved
+path return. It is a third thing: the standing rule that a field carrying no
+address is not a recipient list, and a domain allowlist has nothing to say
+about it. `tests/test_modify.py` is also not in the R5 file list.
+
+So R3's parse requirement is scoped, and the scope is stated rather than left
+to be discovered: **if the value contains no address anywhere, it is returned
+unchanged. If it contains at least one address, then every non empty piece must
+carry at least one address and every domain found in every piece must be
+allowed.** Pieces that are empty after stripping are discarded before that
+test, which is what makes a trailing separator and a whitespace only piece
+benign.
+
+This closes G3 completely. The smuggling shape the finding is about,
+`"bob@company.test, eve@outside.test"`, blocks. So does
+`"bob@company.test, something-unparseable"`, because the value carries an
+address and every remaining piece is then held to the same standard. What
+survives is only the case where the field carries no address at all, which is
+not a route past a domain allowlist, since an allowlist over domains can only
+govern things that have one.
+
+Two further limits, stated rather than implied. A display name containing a
+comma, as in `"Doe, Bob" <bob@company.test>`, is split into pieces that do not
+each carry an address and is therefore BLOCKED. That is a conservative failure
+and it is deliberate: a parser that tried to honor RFC 5322 quoting here would
+be a mail parser, and getting it subtly wrong is how the first match rule
+happened. And a bare local name with no domain, routed by a mail system that
+knows how, is not covered, for the same reason as the no address case.
+
+### U2.2 The ruff prediction was wrong before the build
+
+The replacement oracle raises 19 ruff findings that the 33 case file did not,
+because it is two files concatenated: a second import block at line 247 and
+semicolon separated statements in the new cases.
+
+```
+tests/test_v110_system_review.py  E402 x 7, F811 x 3, E702 x 9
+```
+
+`pyproject.toml` already carries a `per-file-ignores` entry for this exact file
+holding `E501`, `E701`, `I001` and `SIM105`, with a comment saying the file is
+held verbatim because it is the artifact that defines done. The same reasoning
+covers the three new codes, and the alternative is to reformat the reviewer's
+file, which R5 forbids and which would turn an independent check into a
+restatement.
+
+The frozen prediction below therefore says **no new `per-file-ignores` ENTRY**,
+not no new codes. The existing entry gains `E402`, `F811` and `E702`, and its
+comment is corrected to say five guards rather than four. That is a change to
+`pyproject.toml`, which is in the R5 list.
+
+## U3. STEP 0 measurements
+
+### U3.1 (0a) The file as received, and the one edit
+
+```
+sha256  e7cbfa867b9536852792be227e789ad87e2115c0996c3ce3987e6ac0dea89e1a
+        tests/test_v110_system_review.py
+lines   408
+em dashes 0
+```
+
+The sha256 is the expected value. Five `pytest.importorskip` guards were
+inserted ahead of the in function framework imports, in exactly the form the
+previous oracle carried, so the file can be collected where a framework is
+absent. The 33 case file needed four; the 65 case file has a fifth mcp site in
+`test_mcp_standard_text_payloads_are_redacted`. Nothing else was touched, which
+is confirmed by stripping the guard lines back out and re measuring the digest:
+
+```
+$ grep -v '^\s*pytest\.importorskip(' tests/test_v110_system_review.py | sha256sum
+e7cbfa867b9536852792be227e789ad87e2115c0996c3ce3987e6ac0dea89e1a
+```
+
+The diff:
+
+```diff
+@@ -38,6 +38,7 @@
+         wrapped = agentlock(g, name='task', permissions=p)(task)
+         result = asyncio.run(wrapped(_user_id='alice', _role='user'))
+     else:
++        pytest.importorskip("mcp")
+         from mcp.server import Server
+         import mcp.types as mt
+         from agentlock.integrations.mcp import AgentLockMCPServer
+@@ -83,6 +84,7 @@
+ 
+ @pytest.mark.parametrize('spoof', [None, 'flat', 'meta'])
+ def test_mcp_role_cannot_override_host(spoof):
++    pytest.importorskip("mcp")
+     from mcp.server import Server
+     import mcp.types as mt
+     from agentlock.integrations.mcp import AgentLockMCPServer
+@@ -104,6 +106,7 @@
+ 
+ @pytest.mark.parametrize('spoof', [False, True])
+ def test_fastapi_route_policy_cannot_be_switched(spoof):
++    pytest.importorskip("fastapi")
+     from fastapi import FastAPI
+     from agentlock.integrations.fastapi import AgentLockMiddleware
+     g, p, _ = setup()
+@@ -199,6 +202,7 @@
+ 
+ @pytest.mark.parametrize('role,status', [('user', 200), ('guest', 403)])
+ def test_flask_role_enforcement(role, status):
++    pytest.importorskip("flask")
+     from flask import Flask
+     from agentlock.integrations.flask import agentlock_required
+     g, _, _ = setup()
+@@ -306,6 +310,7 @@
+ @pytest.mark.parametrize('policy', ['modify', 'data_policy'])
+ @pytest.mark.parametrize('shape', ['text', 'structured', 'embedded'])
+ def test_mcp_standard_text_payloads_are_redacted(policy, shape):
++    pytest.importorskip("mcp")
+     from mcp.server import Server
+     import mcp.types as mt
+     from agentlock.integrations.mcp import AgentLockMCPServer
+```
+
+### U3.2 (0b) The oracle at `dcf3fb7`
+
+`/tmp/al18-extras`, which has mcp 2.x, fastapi and flask:
+
+```
+================== 7 failed, 58 passed, 13 warnings in 0.46s ===================
+```
+
+The expected summary is 58 passed and 7 failed. Both match. The seven, and the
+root cause each belongs to:
+
+```
+G1  test_resolved_path_matches_the_path_opened[link_then_parent_escape]
+G3  test_domain_transform_checks_all_recipients[bob@company.test, eve@outside.test-False]
+G3  test_domain_transform_checks_all_recipients[bob@company.test;eve@outside.test-False]
+G2  test_mcp_standard_text_payloads_are_redacted[text-data_policy]
+G2  test_mcp_standard_text_payloads_are_redacted[structured-data_policy]
+G2  test_mcp_standard_text_payloads_are_redacted[embedded-modify]
+G2  test_mcp_standard_text_payloads_are_redacted[embedded-data_policy]
+```
+
+G1 one, G2 four, G3 two. All 33 of the original cases pass, which is the
+1.10.0 work holding.
+
+**The same qualification the earlier freeze recorded, repeated because it still
+applies.** The instruction was to match the review's Appendix B row for row.
+The review document is not in this checkout; only its oracle file is. What was
+verified is the stated expected summary, 7 failed and 58 passed, and the
+distribution of those 7 over the three root causes as section U1 assigns them.
+Both match. If Appendix B is added to the repo later and any row disagrees with
+the table above, that is a STOP condition and this section is the thing to re
+measure against.
+
+### U3.3 (0c) Full suite baselines
+
+`/tmp/al18-extras`, whole suite:
+
+```
+============ 7 failed, 1641 passed, 9 skipped, 44 warnings in 3.52s ============
+```
+
+The same suite with the review file excluded:
+
+```
+================= 1583 passed, 9 skipped, 31 warnings in 3.46s =================
+```
+
+1583 plus 58 is 1641 and the failures are 7, so every one of the 7 is in the
+review file and no pre-existing test changed outcome.
+
+Checkout venv, system Python 3.14.6, fastapi and flask present and `mcp`
+absent:
+
+```
+=========== 3 failed, 1618 passed, 36 skipped, 43 warnings in 3.42s ============
+```
+
+Excluding the review file:
+
+```
+================ 1566 passed, 26 skipped, 30 warnings in 3.39s =================
+```
+
+1566 plus 52 is 1618, and 26 plus 10 is 36. The 10 skips are the mcp guarded
+cases, which are one mode of `test_output_transform_reaches_caller`, three of
+`test_mcp_role_cannot_override_host` and six of
+`test_mcp_standard_text_payloads_are_redacted`. 52 plus 3 plus 10 is 65. The 3
+failures are the 7 minus the 4 that are mcp guarded.
+
+### U3.4 Existing tests that assert the old behavior
+
+Predicted at zero. The scan found one, and it is the reason U2.1 exists rather
+than an edit: `tests/test_modify.py::TestRestrictDomain::test_no_email_in_field`,
+quoted in full in U2.1. It is not edited. R3 is scoped so that it keeps
+passing.
+
+The other existing use sites were checked and none of them changes outcome:
+
+* `whitelist_path` in `tests/test_modify.py`, `tests/test_gate_v12.py`,
+  `tests/test_first_call_defer_and_deny_on_block.py` and
+  `tests/test_receipts.py` all pass absolute paths under `/data`, `/public` or
+  `/etc` that do not exist on this machine, so `realpath` is the identity on
+  them and the returned resolved path equals the input. The one relative path,
+  `./config.json` against a `/data/` prefix, is expected to block and still
+  blocks, now structurally rather than because the working directory happens to
+  sit outside the prefix.
+* `restrict_domain` in `tests/test_gate_v12.py` registers a tool but never
+  invokes it with a `to` parameter.
+
+### U3.5 Lint, types, style at `dcf3fb7`
+
+```
+mypy agentlock/ --ignore-missing-imports   Success: no issues found in 34 source files
+ruff check .                               19 findings, all in the replacement
+                                           oracle, itemized in U2.2
+corpus grep over the diff                  0
+em dashes in the diff                      0
+ASCII double hyphens in the diff           0 outside the two in git's own diff
+                                           header lines
+```
+
+The corpus grep is the standing case insensitive scan of the diff for external
+evaluation suite names, run from a pattern held outside the repository so the
+names are not written into it.
+
+## U4. Frozen predictions
+
+**W1.** The oracle in `/tmp/al18-extras`: **65 passed, 0 failed**, with no edit
+to the file beyond the five guards in U3.1.
+
+**W2.** Full suite, 0 failed in each environment, at the U3.3 baseline plus the
+new non skipped tests:
+
+* `/tmp/al18-extras`: **1583 plus 65 plus the new engine companions passed, 0
+  failed, 9 skipped**.
+* checkout venv: **1566 plus 55 plus the new non skipped companions passed, 0
+  failed**, with the mcp guarded cases counted as skips.
+
+**W3.** `mypy agentlock/ --ignore-missing-imports` reports **0 errors**.
+`ruff check .` is **clean, with no new `per-file-ignores` ENTRY**; the existing
+entry for the review file gains `E402`, `F811` and `E702` for the reason given
+in U2.2. The corpus grep over the diff returns **0**, and the diff carries **0**
+em dashes and **0** ASCII double hyphens outside git's own header lines.
+
+**W4.** Files touched are **exactly R5, or a proper subset of it**, and nothing
+outside it. Specifically predicted: `tests/test_modify.py` is **not** touched,
+for the reason given in U2.1.
+
+**W5.** Rebuild in `/tmp/al18-extras` after `rm -rf dist build`: `twine check
+dist/*` **PASSED** for both artifacts, and the wheel metadata reports **Version
+1.10.1**. A fresh venv holding only the built wheel, running a copy of
+`tests/test_v110_system_review.py` placed outside the checkout so it resolves
+the engine from the wheel and not from the source tree: **65 passed**.
+
+**W6.** Each of the seven failing cases passes for the reason U2 gives, not
+incidentally. Specifically: `[link_then_parent_escape]` denies AND
+`[link_then_parent_inside]` still runs; `[bob@company.test, eve@outside.test]`
+blocks AND `[eve@outside.test, bob@company.test]` still blocks, so the pair is
+now order independent rather than accidentally agreeing; and
+`[text-modify]` and `[structured-modify]`, which pass today, still pass after
+the two output policies are put behind one walker.
+
+## U5. Commit plan
+
+* **A**: `docs: freeze 1.10.1, recheck oracle at 65 cases with 7 failing`.
+  Carries `tests/test_v110_system_review.py` and this section.
+* **B**: `fix: realpath before normalization, one MCP payload walker for both
+  output policies, exhaustive domain restriction`.
+* **C**: AMENDMENT 5, the measured results against U4.
+
+No merge, no tag, no push, no upload.
