@@ -11,6 +11,7 @@ awkwardly shaped signature.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 
 import pytest
@@ -585,3 +586,342 @@ class TestCommitTimeLineage:
             hashlib.sha256(url.encode()).hexdigest(), content=url,
         )
         assert gate.resolve_deferred_commits(sid)[0].resolution == "denied"
+
+
+class TestRedPass:
+    """The pre-release red pass against the 1.10.0 branch wheel.
+
+    Three findings were reported against the wheel built from
+    ``29db1b8``/``4bd3998`` (sha256 ``0d793500``).  Two reproduce and are
+    closed by E10 and E11; the third does not reproduce and is pinned here as
+    a guard rather than as an expected failure.  Which is which is stated on
+    each case.
+
+    The ``xfail(strict=True)`` markers are the freeze: they are committed
+    before the code that satisfies them, so the before state is in the
+    history, and they are removed in the same commit that closes the finding.
+    A strict xfail that starts passing is a failure, so neither the marker nor
+    the fix can be left half applied.
+    """
+
+    # F1: caller role overrides the session role (REPRODUCED)
+
+    @staticmethod
+    def _session_gate() -> AuthorizationGate:
+        gate = AuthorizationGate()
+        gate.create_session(user_id="alice", role="user")
+        gate.register_tool("admin_task", _perms(
+            requires_auth=True, allowed_roles=["admin"],
+        ))
+        gate.register_tool("user_task", _perms(
+            requires_auth=True, allowed_roles=["user"],
+        ))
+        return gate
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="F1: authorize() takes the caller's role over the session's",
+    )
+    def test_a_claimed_role_that_differs_from_the_session_is_denied(self):
+        """E10.  alice is authenticated at ``user``.  The caller says
+        ``admin``.  Through the branch wheel the claim wins, because
+        ``role = session.role`` runs only when no role was supplied, so an
+        admin-only tool is authorized over a user's session by anyone who can
+        name her.
+        """
+        from agentlock.types import DenialReason
+
+        gate = self._session_gate()
+        result = gate.authorize("admin_task", user_id="alice", role="admin")
+        assert not result.allowed
+        assert result.denial is not None
+        assert result.denial["reason"] == DenialReason.ROLE_MISMATCH.value
+        assert "session" in result.denial["detail"].lower()
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="F1: the wire value does not exist on the enum yet",
+    )
+    def test_role_mismatch_is_a_named_denial_reason(self):
+        """E10: a new enum member, not a reused one.  A claimed role that
+        contradicts an authenticated session is not the same finding as a role
+        the tool does not allow, and an auditor reading the log should not
+        have to guess which one happened.
+        """
+        from agentlock.types import DenialReason
+
+        assert DenialReason.ROLE_MISMATCH.value == "role_mismatch"
+
+    def test_no_role_supplied_still_resolves_from_the_session(self):
+        """Control, passing today: E10 changes nothing when the caller
+        supplies no role.  ``session.role`` is used, as it always was.
+        """
+        gate = self._session_gate()
+        result = gate.authorize("user_task", user_id="alice")
+        assert result.allowed
+
+    def test_a_matching_claimed_role_is_still_allowed(self):
+        """Control, passing today: agreement is not a mismatch."""
+        gate = self._session_gate()
+        result = gate.authorize("user_task", user_id="alice", role="user")
+        assert result.allowed
+
+    def test_a_claimed_role_with_no_session_is_trusted_as_before(self):
+        """Control, passing today: with no session there is nothing to
+        contradict, so the host is trusted to have authenticated the caller.
+        E10 says so in the docstring rather than changing it.
+        """
+        gate = AuthorizationGate()
+        gate.register_tool("admin_task", _perms(allowed_roles=["admin"]))
+        assert gate.authorize("admin_task", user_id="bob", role="admin").allowed
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="F1: an mcp client's claimed role beats the host's session",
+    )
+    def test_an_mcp_client_cannot_claim_a_role_over_a_session(self):
+        """F1 through the real mcp 2.x hook with NO default configured.
+
+        E4 made a configured ``default_role`` authoritative over the client.
+        With no default the client value is used, which is documented and
+        deliberate, but it was never bounded by an authenticated session.  A
+        client that names alice and claims ``admin`` therefore runs an
+        admin-only tool over her user session.
+        """
+        pytest.importorskip("mcp")
+        import mcp.types as mt
+        from mcp.server import Server
+
+        from agentlock.integrations.mcp import AgentLockMCPServer
+
+        gate = AuthorizationGate()
+        gate.create_session(user_id="alice", role="user")
+        ran = []
+
+        async def handler(ctx, params):
+            ran.append("ADMIN_ACTION")
+            return mt.CallToolResult(
+                content=[mt.TextContent(type="text", text="done")]
+            )
+
+        server = Server("local-probe", on_call_tool=handler)
+        AgentLockMCPServer(
+            server, gate,
+            {"admin_task": _perms(requires_auth=True, allowed_roles=["admin"])},
+        )
+        with contextlib.suppress(DeniedError):
+            asyncio.run(server.get_request_handler("tools/call").handler(
+                None,
+                mt.CallToolRequestParams(name="admin_task", arguments={
+                    "_agentlock_user_id": "alice",
+                    "_agentlock_role": "admin",
+                }),
+            ))
+        assert ran == []
+
+    # F2: output modification covers str returns only (REPRODUCED)
+
+    RETURNS = {
+        "dict": lambda: {"note": SECRET},
+        "list": lambda: [SECRET],
+        "nested": lambda: {"rows": [{"note": SECRET}]},
+        "tuple": lambda: (SECRET,),
+        "bytes": lambda: SECRET.encode(),
+    }
+
+    @staticmethod
+    def _modifying_gate() -> tuple[AuthorizationGate, AgentLockPermissions]:
+        gate = AuthorizationGate()
+        perms = _perms(modify_policy=_redact("output"))
+        gate.register_tool("task", perms)
+        return gate, perms
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="F2: the modifier is applied only when the return is a str",
+    )
+    @pytest.mark.parametrize("shape", sorted(RETURNS))
+    def test_the_decorator_modifies_every_shape_of_return(self, shape):
+        """E11.  E1 threaded the modifier onto every execution path, so it
+        does reach the decorator.  It is then guarded by
+        ``isinstance(result, str)``, and a tool that returns a mapping, a
+        sequence, or bytes is the ordinary case, so the declared
+        transformation was still inert for most tools.
+        """
+        from agentlock.decorators import agentlock as decorate
+
+        gate, perms = self._modifying_gate()
+        wrapped = decorate(gate, name="task", permissions=perms)(
+            self.RETURNS[shape]
+        )
+        assert SSN not in repr(wrapped(_user_id="alice", _role="user"))
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="F2: the modifier is applied only when the return is a str",
+    )
+    @pytest.mark.parametrize("shape", sorted(RETURNS))
+    def test_gate_call_modifies_every_shape_of_return(self, shape):
+        """E11 on the one-step path, which applies the modifier inside
+        ``gate.execute`` and carries the same guard.
+        """
+        gate, _ = self._modifying_gate()
+        result = gate.call(
+            "task", self.RETURNS[shape], user_id="alice", role="user",
+        )
+        assert SSN not in repr(result)
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="F2: bytes are not decoded, modified, and re-encoded",
+    )
+    def test_bytes_come_back_as_bytes(self):
+        """E11: the container type survives the walk.  A modifier that turned
+        a bytes return into a str would break the caller as surely as one that
+        left the SSN in it.
+        """
+        gate, _ = self._modifying_gate()
+        result = gate.call(
+            "task", lambda: SECRET.encode(), user_id="alice", role="user",
+        )
+        assert isinstance(result, bytes)
+        assert SSN not in result.decode()
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="F2: containers are not walked, so the tuple is untouched",
+    )
+    def test_a_tuple_comes_back_as_a_tuple(self):
+        """E11: likewise for the sequence types, which are not interchangeable
+        to a caller that indexes or unpacks them.
+        """
+        gate, _ = self._modifying_gate()
+        result = gate.call("task", lambda: (SECRET,), user_id="alice", role="user")
+        assert isinstance(result, tuple)
+        assert SSN not in result[0]
+
+    def test_an_unmodifiable_return_is_passed_through(self):
+        """Control, passing today: E11 names the types it covers and returns
+        everything else unchanged rather than guessing at it.
+        """
+        marker = object()
+        gate, _ = self._modifying_gate()
+        assert gate.call(
+            "task", lambda: marker, user_id="alice", role="user",
+        ) is marker
+
+    def test_a_str_return_is_still_modified(self):
+        """Control, passing today: the case E1 closed stays closed."""
+        gate, _ = self._modifying_gate()
+        result = gate.call("task", lambda: SECRET, user_id="alice", role="user")
+        assert SSN not in result
+
+    # F3: route mapping and the header (NOT REPRODUCED)
+
+    @staticmethod
+    def _fastapi_app(mapping):
+        pytest.importorskip("fastapi")
+        import fastapi
+
+        from agentlock.integrations.fastapi import AgentLockMiddleware
+
+        gate = AuthorizationGate()
+        gate.register_tool("task", _perms())
+        gate.register_tool("admin_task", _perms(allowed_roles=["admin"]))
+
+        app = fastapi.FastAPI()
+        ran = []
+
+        @app.post("/admin")
+        async def admin():
+            ran.append("ADMIN_ACTION")
+            return {"ok": True}
+
+        app.add_middleware(
+            AgentLockMiddleware, gate=gate, tool_name_from_path=mapping,
+        )
+        return app, ran
+
+    def test_fastapi_a_declined_route_ignores_the_tool_header(self):
+        """F3 as reported: with ``tool_name_from_path`` configured and
+        returning ``None`` for the route, the header is said to be consulted
+        and to let the client pick the tool.
+
+        Measured against the branch wheel: it is not.  The mapping's ``None``
+        is taken as "no tool name" and the request takes the existing
+        pass-through path, which is 200 with the handler running and no
+        authorization performed.  The header is never read for tool selection
+        while a mapping is configured.  That is exactly what E12 requires, so
+        this case is a guard on behavior already in the wheel and not an
+        expected failure.  It is written down because fastapi had no test for
+        the declined-route case, while flask did
+        (``TestFlaskToolSelection.test_a_declined_endpoint_passes_through_
+        with_the_header_ignored``), and an untested branch is how a finding
+        like this one gets reported.
+        """
+        app, ran = self._fastapi_app(lambda method, path: None)
+        from fastapi.testclient import TestClient
+
+        response = TestClient(app).post("/admin", headers={
+            "X-AgentLock-User-Id": "alice",
+            "X-AgentLock-Role": "user",
+            "X-AgentLock-Tool": "task",
+        })
+        assert response.status_code == 200
+        assert ran == ["ADMIN_ACTION"]
+
+    def test_fastapi_a_conflicting_tool_header_is_still_refused(self):
+        """Plain guard: E5's conflict case, unchanged by E12."""
+        app, ran = self._fastapi_app(lambda method, path: "admin_task")
+        from fastapi.testclient import TestClient
+
+        response = TestClient(app).post("/admin", headers={
+            "X-AgentLock-User-Id": "alice",
+            "X-AgentLock-Role": "user",
+            "X-AgentLock-Tool": "task",
+        })
+        assert response.status_code == 403
+        assert response.json()["detail"]["reason"] == "tool_selection_conflict"
+        assert ran == []
+
+    def test_fastapi_the_header_is_honored_with_no_mapping(self):
+        """Plain guard: E12 leaves header-only mode alone."""
+        app, ran = self._fastapi_app(None)
+        from fastapi.testclient import TestClient
+
+        response = TestClient(app).post("/admin", headers={
+            "X-AgentLock-User-Id": "alice",
+            "X-AgentLock-Role": "user",
+            "X-AgentLock-Tool": "admin_task",
+        })
+        assert response.status_code == 403
+        assert ran == []
+
+    def test_flask_a_declined_endpoint_ignores_the_tool_header(self):
+        """The flask half of F3, measured the same way and equally not
+        reproduced.  ``TestFlaskToolSelection`` already covers this; the case
+        is repeated here so the red pass record is complete on its own.
+        """
+        flask = pytest.importorskip("flask")
+        from agentlock.integrations.flask import AgentLockFlask
+
+        gate = AuthorizationGate()
+        gate.register_tool("task", _perms())
+        app = flask.Flask(f"{__name__}.redpass")
+        ran = []
+
+        @app.post("/admin")
+        def admin():
+            ran.append("ADMIN_ACTION")
+            return {"ok": True}
+
+        AgentLockFlask(
+            app, gate, tool_name_from_endpoint=lambda e, m, p: None,
+        )
+        response = app.test_client().post("/admin", headers={
+            "X-AgentLock-User-Id": "alice",
+            "X-AgentLock-Role": "user",
+            "X-AgentLock-Tool": "task",
+        })
+        assert response.status_code == 200
+        assert ran == ["ADMIN_ACTION"]

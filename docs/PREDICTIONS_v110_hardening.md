@@ -602,3 +602,358 @@ No new denial reason was added. The two reasons the commit path newly attaches,
 `param_lineage` and `novel_lineage`, are the ones `authorize()` has used since
 1.3.0 and 1.4.0 respectively, which is the point: the two enforcement points
 now name the same finding the same way.
+
+---
+
+# RED PASS FREEZE (2026-09-10)
+
+Appended after AMENDMENT 1 and before any code that closes the findings below.
+Sections 1 through 5 and AMENDMENT 1 are left exactly as they were written.
+
+A pre-release red pass was run against the branch wheel, `agentlock-1.10.0-py3-none-any.whl`,
+sha256 `0d793500416f1422731b7795f30e0b3df54ac356b339b3408272d8f9e615fb8f`, built
+from `4bd3998`. 1.10.0 is unreleased, so the findings close on this branch
+rather than in a patch release.
+
+The wheel was verified to be the tree: every file this section reproduces
+against was unzipped from that artifact and compared to the checkout, and
+`agentlock/gate.py`, `agentlock/modify.py`, `agentlock/decorators.py`,
+`agentlock/types.py`, `agentlock/integrations/fastapi.py` and
+`agentlock/integrations/flask.py` are byte identical. Every reproduction below
+is therefore a measurement of the shipped artifact and not of a tree that
+merely resembles it.
+
+Nothing in this section describes code written on this branch after `4bd3998`.
+
+## R1. The three findings, reproduced
+
+**F1. The caller's role overrides the session's role. REPRODUCED.**
+
+`agentlock/gate.py:765-767`, verbatim:
+
+```python
+        session = self._session_store.get_by_user(user_id) if user_id else None
+        if session and not role:
+            role = session.role
+```
+
+The assignment is guarded by `not role`, so the session's role is consulted
+only when the caller supplied none. A caller that supplies one is believed.
+Measured against the wheel:
+
+```
+F1 claim-admin: allow True None
+F1 no-role: allow True
+F1 no-session: allow True None
+```
+
+The first line is the finding: alice holds a session at role `user`; the tool
+`admin_task` is `requires_auth=True, allowed_roles=["admin"]`;
+`authorize("admin_task", user_id="alice", role="admin")` is ALLOW. The second
+and third lines are the controls, and both are behavior that is meant to stay.
+
+Through the MCP wrapper with no default configured, on the real mcp 2.x SDK
+(`/tmp/al18-extras`, mcp 2.2.0), the same claim runs the handler:
+
+```
+seen = ['ADMIN_ACTION']
+```
+
+E4 settled the case where the host configures a `default_role`: the
+configured value wins and the client's is stripped. It left the no-default
+case reading the client's value, which is documented and deliberate for a
+transport the host trusts. What was never true is that a client's claim should
+survive contact with an authenticated session that says otherwise. The gate
+holds both facts and believes the weaker one.
+
+**F2. Output modification covers `str` returns only. REPRODUCED.**
+
+`agentlock/gate.py:1811` and `agentlock/decorators.py:222-228` both guard the
+modifier with `isinstance(result, str)`. E1 threaded the modifier onto every
+execution path, so it now reaches the call; it is then discarded for every
+return shape that is not a bare string. Measured against the wheel, with a
+declared `redact_pii` transformation on `output`:
+
+```
+F2 sync str    : leaked=False 'Customer SSN [REDACTED:ssn]'
+F2 sync dict   : leaked=True {'note': 'Customer SSN 123-45-6789'}
+F2 sync list   : leaked=True ['Customer SSN 123-45-6789']
+F2 sync nested : leaked=True {'a': [{'b': 'Customer SSN 123-45-6789'}]}
+F2 sync tuple  : leaked=True ('Customer SSN 123-45-6789',)
+F2 sync bytes  : leaked=True b'Customer SSN 123-45-6789'
+F2 call str    : leaked=False 'Customer SSN [REDACTED:ssn]'
+F2 call dict   : leaked=True {'note': 'Customer SSN 123-45-6789'}
+F2 call list   : leaked=True ['Customer SSN 123-45-6789']
+F2 call nested : leaked=True {'a': [{'b': 'Customer SSN 123-45-6789'}]}
+F2 call tuple  : leaked=True ('Customer SSN 123-45-6789',)
+F2 call bytes  : leaked=True b'Customer SSN 123-45-6789'
+```
+
+A tool that returns a mapping is the ordinary case, not the exotic one, so the
+declared transformation was inert for most tools that declare it. The oracle
+could not see this because its every fixture returns a bare string.
+
+**F3. Route mapping and the header. NOT REPRODUCED.**
+
+Reported as: with `tool_name_from_path` configured, a route the callback
+declines by returning `None` falls back to consulting `X-AgentLock-Tool`, so
+the client selects the tool for that route.
+
+Measured against the wheel, in `/tmp/al18-extras` (fastapi 0.141.1, Flask
+3.1.3) and again in the checkout venv (fastapi 0.135.3), a mapping that returns
+`None` for the route with the header naming a registered, permitted tool:
+
+```
+fastapi mapping-None + header: 200 {'ok': True} seen= ['HANDLER_RAN']
+fastapi mapping-None no header: 200 seen= ['HANDLER_RAN']
+fastapi header-only: 200 seen= ['HANDLER_RAN']
+flask mapping-None + header: 200 seen= ['HANDLER_RAN']
+flask header-only: 200 seen= ['HANDLER_RAN']
+```
+
+The header is not consulted. `agentlock/integrations/fastapi.py:191-220` reads
+the header into `header_tool` before the branch, but inside the mapping branch
+`header_tool` is used only for the conflict comparison, which is guarded by
+`if tool_name and ...`; `tool_name` is then `None` and the request takes the
+`if not tool_name` pass-through. `agentlock/integrations/flask.py:278-303` has
+the identical shape. That is exactly the behavior E12 specifies, and both
+docstrings already state both halves of it: fastapi point 1 says a declined
+path "passes through with the header ignored" and point 2 says the header is
+honored only with no mapping, and flask says the same.
+
+**Why the finding was still worth making.** Flask had a test pinning this
+branch, `TestFlaskToolSelection.test_a_declined_endpoint_passes_through_with_the_header_ignored`.
+FastAPI had none: no test in the suite exercised `tool_name_from_path`
+returning `None`. An untested branch that is correct reads exactly like an
+untested branch that is not, and E5's own note says it "closed the conflict
+case", which invites the reading that it closed nothing else. The finding is a
+coverage finding rather than a defect finding, and the coverage is added below.
+
+**Consequence for E12 and E14.** E12 requires no code change in either
+integration. `agentlock/integrations/fastapi.py` and
+`agentlock/integrations/flask.py` are therefore predicted untouched, and the
+E14 file list is predicted to be satisfied as a proper subset. This is stated
+here, before the build, so STEP 2 cannot be read as having moved the target
+after the fact.
+
+## R2. Decisions of record
+
+Restated as received, so this document is readable without the instruction
+that produced it.
+
+**E10. Session role is authoritative.** In `authorize()`, when a session is
+resolved for `user_id` and the caller supplied a nonempty `role` that differs
+from `session.role`, the decision is DENY with `DenialReason.ROLE_MISMATCH`, a
+new enum member with wire value `"role_mismatch"`, and a detail naming that the
+claimed role does not match the authenticated session, before any policy step
+runs. When no role is supplied, `session.role` is used as today. When no
+session exists, the caller's role is used as today, and the docstring states
+that this trusts the host. The same rule applies wherever `gate.py` resolves a
+session for a caller-supplied role, the line 723 region included.
+
+**E11. Output modification walks the return value.** `str` is modified. `dict`,
+`list` and `tuple` are walked recursively and every `str` leaf is modified,
+preserving container types. `bytes` are decoded as UTF-8 with
+`errors="replace"`, modified, and re-encoded. Any other type is returned
+unchanged. The modifier's docstring states which types are covered. Applies
+wherever `modify_output_fn` is applied: `execute`, `call`, both decorators,
+both MCP hooks, autogen.
+
+**E12. Route mapping excludes the header.** In fastapi and flask, when
+`tool_name_from_path` is configured the header is never consulted for tool
+selection. A route for which the callback returns `None` is treated as having
+no tool name and takes the existing no-tool-name path. The header is honored
+only when no callback is configured. Docstrings state both.
+
+**E13.** Version stays 1.10.0. CHANGELOG Security section extended with F1 to
+F3, credited to "a pre-release red pass against the built wheel". README
+counts. No schema change.
+
+**E14. Files.** `agentlock/gate.py`, `agentlock/types.py`,
+`agentlock/modify.py`, `agentlock/integrations/fastapi.py`,
+`agentlock/integrations/flask.py`, `CHANGELOG.md`, `README.md`,
+`tests/test_v110_hardening.py` (new class `TestRedPass`),
+`docs/PREDICTIONS_v110_hardening.md` (append only). Nothing else.
+
+## R3. Existing tests that assert the old behavior
+
+Predicted before editing: **zero** edits to existing test files.
+
+The survey is a measurement rather than a reading. A pytest plugin wrapped
+`AuthorizationGate.authorize` and `AuthorizationGate.execute` at `4bd3998` and
+recorded, with the test id, every call that the E10 and E11 changes would
+reach: for E10, every `authorize` where a session exists for `user_id` and a
+nonempty differing `role` was supplied; for E11, every `execute` that returned
+a non-`str` with a live `modify_output_fn`. The whole suite was run under it in
+`/tmp/al18-extras` (`1583 passed, 9 skipped, 24 deselected`).
+
+| Change | Calls reached across the whole suite | Tests involved |
+|---|---|---|
+| E10 | 1 | `tests/test_v110_system_review.py::test_flask_role_enforcement[guest-403]` |
+| E11 | 0 | none |
+
+The single E10 hit is in the oracle, which is the one file in the arc that must
+not be edited, so it is quoted in full rather than summarized. The call
+recorded was `tool='task', session_role='user', claimed_role='guest'`. The
+test, `tests/test_v110_system_review.py:203-218`:
+
+```python
+@pytest.mark.parametrize('role,status', [('user', 200), ('guest', 403)])
+def test_flask_role_enforcement(role, status):
+    ...
+    response = app.test_client().post('/task', headers={'X-AgentLock-User-Id': 'alice', 'X-AgentLock-Role': role})
+    assert response.status_code == status
+    assert bool(seen) == (status == 200)
+```
+
+**It survives.** The two assertions are on the HTTP status and on whether the
+handler ran. Today the guest case denies with `insufficient_role` and returns
+403 with the handler unrun. Under E10 it denies earlier, with `role_mismatch`,
+and returns 403 with the handler unrun. Neither assertion names a reason. The
+`user` case is agreement, not a mismatch, and is unaffected.
+
+That the oracle contains a case E10 changes the reason for, and that the case
+still passes, is worth stating plainly: it is a near miss, not a clean margin.
+If a future change to this rule needs the oracle edited, that is a STOP and this
+row is where the argument starts.
+
+E11's zero is over `gate.execute` only, which is the path `gate.call`, the sync
+decorator and autogen all reach. The two paths that apply the modifier
+themselves were surveyed by reading instead: every existing use of an `output`
+transformation in the suite is either a direct `ModifyEngine` unit test
+(`tests/test_modify.py:205-233,279-330`) or an `authorize`-only assertion
+(`tests/test_gate_v12.py:29,250`, `tests/test_first_call_defer_and_deny_on_block.py:166`).
+None of them executes a tool. `build_output_modifier` keeps its
+`Callable[[str], str]` signature and the walk is added beside it, so
+`tests/test_modify.py::TestBuildOutputModifier` is untouched by construction.
+
+## R4. STEP 0 measurements
+
+### R4.1 Baselines at `4bd3998`, before `TestRedPass`
+
+| Environment | Suite |
+|---|---|
+| `/tmp/al18-extras` (py3.14.6, mcp 2.2.0, fastapi 0.141.1, Flask 3.1.3) | `1583 passed, 9 skipped` |
+| checkout venv (py3.14.6, no mcp, fastapi 0.135.3, Flask 3.1.3) | `1568 passed, 24 skipped` |
+| `/tmp/al19-mcp1` (py3.13.14, mcp 1.30.0, no fastapi, no flask), 4 deselected per K2c | `1568 passed, 20 skipped, 4 deselected` |
+| `/tmp/al18-probe313` (py3.13) | `1584 passed, 8 skipped` |
+
+All four reconcile with AMENDMENT 1 section A1.1 exactly.
+
+Oracle alone, `/tmp/al18-extras`: `33 passed, 4 warnings in 0.41s`.
+
+### R4.2 With `TestRedPass` added
+
+`TestRedPass` is 24 cases: 15 strict xfails, 9 plain guards.
+
+| Environment | Suite |
+|---|---|
+| `/tmp/al18-extras` | `1592 passed, 9 skipped, 15 xfailed` |
+| checkout venv | `1577 passed, 25 skipped, 14 xfailed` |
+| `/tmp/al19-mcp1` (4 deselected) | `1573 passed, 24 skipped, 4 deselected, 15 xfailed` |
+| `/tmp/al18-probe313` | `1593 passed, 8 skipped, 15 xfailed` |
+
+Every arithmetic difference from R4.1 is accounted for: 9 new passes
+everywhere; 15 xfails wherever `mcp` is present and 14 where it is not, the
+missing one being the MCP case, which skips; the checkout venv gains that 1
+skip; `/tmp/al19-mcp1` has mcp but neither framework, so its 4 F3 cases skip
+and only 5 guards pass there.
+
+**No xfail XPASSes in any environment.** That is the freeze working: F1 and F2
+are red in exactly the shape the fix will turn green, and F3 is not marked
+xfail at all, because it is not failing.
+
+### R4.3 The marker inventory
+
+The 15 strict xfails, all removed by the fix:
+
+* E10 at the gate: 2. The claimed-role denial, and the existence of the
+  `role_mismatch` enum member.
+* E10 through mcp 2.x: 1.
+* E11 through the sync decorator: 5, one per return shape.
+* E11 through `gate.call`: 5, one per return shape.
+* E11 container identity: 2. `bytes` come back `bytes`, a `tuple` comes back a
+  `tuple`.
+
+The 9 plain guards, passing now and required to keep passing:
+
+* E10 controls: 3. No role supplied resolves from the session; an agreeing
+  claimed role is allowed; a claimed role with no session is trusted as before.
+* E11 controls: 2. A `str` return is still modified; an unmodifiable return is
+  passed through untouched.
+* F3 / E12: 4. The fastapi declined route ignores the header (the reported
+  finding, pinned as behavior); the fastapi conflict is still 403; fastapi
+  header-only mode still works; the flask declined route ignores the header.
+
+### R4.4 Lint, types, style
+
+`ruff check .`: **All checks passed.** One finding was raised against the new
+test file on the first run, `SIM105` for a `try`/`except DeniedError`/`pass`,
+and was rewritten as `contextlib.suppress` rather than suppressed. No new
+`per-file-ignores` entry was added.
+
+Style scan of `tests/test_v110_hardening.py`: `emdash: 0 double-hyphen: 0`.
+Three comment dividers were written with a pair of ASCII hyphens on the first
+draft and rewritten before the commit. Corpus grep over the new test file: **0**.
+
+`mypy agentlock/` is **environment dependent at `4bd3998`, before this arc
+touches anything**, and this contradicts AMENDMENT 1's K3a. Measured at HEAD
+with the tree clean of engine edits:
+
+```
+/tmp/al18-extras   agentlock/integrations/autogen.py:48: error: Cannot find implementation or library stub for module named "autogen"  [import-not-found]
+                   Found 1 error in 1 file (checked 34 source files)
+/tmp/al18-probe313 agentlock/integrations/autogen.py:48: error: Skipping analyzing "autogen": module is installed, but missing library stubs or py.typed marker  [import-untyped]
+                   Found 1 error in 1 file (checked 34 source files)
+/tmp/al19-mcp1     agentlock/integrations/fastapi.py:44: error: Cannot find implementation or library stub for module named "fastapi"  [import-not-found]
+                   Found 3 errors in 3 files (checked 34 source files)
+```
+
+Every finding is a missing third-party stub for an optional integration
+dependency, and the count is a function of which optional packages the
+environment has, not of the engine. None is in a file this arc edits. The
+`mypy` on the checkout venv's PATH is a broken install
+(`/home/n1trolab/.local/bin/mypy` runs but `import mypy` fails), which is the
+likeliest reason A1.1 recorded a clean run it cannot now reproduce; that is
+recorded here rather than restated, per the standing rule about not
+propagating a number without re-measuring it. The prediction below is written
+against the measured baseline.
+
+## R5. Frozen predictions
+
+Stated before any implementation code is written. A MISMATCH on any of these is
+a STOP: no commit, report, and amend the failed prediction in place, dated,
+before proceeding.
+
+**P1.** Every one of the 15 `xfail(strict=True)` markers is removed, and all 24
+`TestRedPass` cases pass in every environment where their framework is present.
+No marker is left in place, and no case is deleted or weakened.
+
+**P2.** Full suite, per environment, equal to the R4.1 baseline plus the new
+non-skipped cases and zero failures:
+
+* `/tmp/al18-extras`: **1607 passed, 9 skipped, 0 failed, 0 xfailed**.
+* checkout venv: **1591 passed, 25 skipped, 0 failed**.
+* `/tmp/al19-mcp1`, 4 deselected: **1588 passed, 24 skipped, 0 failed**.
+* `/tmp/al18-probe313`: **1608 passed, 8 skipped, 0 failed**.
+
+**P3.** `mypy agentlock/` output is unchanged from the R4.4 baseline in each
+environment, with **zero findings in `agentlock/gate.py`,
+`agentlock/types.py` and `agentlock/modify.py`**. `ruff check .` is clean with
+no new `per-file-ignores` entry. The corpus grep over the diff returns **0**,
+and the diff contains **0** em dashes and **0** ASCII double hyphens.
+
+**P4.** Files touched are **exactly E14 or a proper subset of it**, and nothing
+outside it. Specifically predicted: `agentlock/integrations/fastapi.py` and
+`agentlock/integrations/flask.py` are **not** touched, for the reason given in
+R1 under F3, so the set is the other seven.
+
+**P5.** Zero edits to existing test files, including
+`tests/test_v110_system_review.py`, and the oracle still reports **33 passed**
+in `/tmp/al18-extras`.
+
+**P6.** Rebuild: `twine check dist/*` **PASSED** on both artifacts, metadata
+**Version 1.10.0**, no version bump. A fresh venv with only the rebuilt wheel
+installed runs `/tmp/al110_redpass_repro.py`, a script outside the checkout so
+it resolves the engine from the wheel, and reports F1 closed, F2 closed for all
+five return shapes on both paths, and F3 unchanged at the pass-through status.
