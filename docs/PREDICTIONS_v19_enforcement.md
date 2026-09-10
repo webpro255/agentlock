@@ -769,3 +769,173 @@ grep condition and it does not change W7: `README.md` was already in the release
 commit's file list.
 
 Everything after this line is append only.
+
+---
+
+## AMENDMENT 2 (2026-09-09): v1.9.0 released, every release prediction matched
+
+Measured on `v1.9-enforcement-completeness`. The release commit is
+`e9aeb93 release: v1.9.0`, documentation only, on top of the freeze commit
+`9e8d552 docs: freeze v1.9.0 release predictions`. No merge, no tag, no push,
+no upload. The two restatements recorded in the freeze, R1 and R2, are what the
+release edits follow; W1 to W7 are otherwise unchanged.
+
+### Scoreboard
+
+| Prediction | Verdict | Evidence |
+|---|---|---|
+| W1 | MATCH | `yaml.safe_load` loads the file, 15 top-level keys. `version: 1.9.0`, `date-released: 2026-09-09` which is `date +%F`, `doi: 10.5281/zenodo.22681594`, and `identifiers` is one entry, the concept DOI. The 1.8.0 version DOI entry is gone. Verbatim below. |
+| W2 | MATCH | `CHANGELOG.md:10` reads `## [1.9.0] - 2026-09-09`. The Security section carries the scoping text as its closing bullet, in the R1 form. The suite line at `:16` quotes all three environments with interpreter and mcp versions, unchanged from AMENDMENT 1. |
+| W3 | MATCH | The versions table already carried the 1.9.0 row from the build, so it was not touched. The scoping text is in the versions section, where the README describes argument binding, extended with the token contract sentence. `grep -n "1\.8\.0" README.md` returns two lines, both history: the 1.8.0 versions table row and the 1.8.0 sentence in the per-version counts paragraph that footnotes that table. Neither is a current claim. No CITATION line about 1.8.0's DOI remains: R2 removed the one the prediction allowed to stand. Verbatim below. |
+| W4 | MATCH | Built in `/tmp/al18-extras` after `rm -rf dist build`. `twine check` PASSED on both artifacts. Wheel METADATA carries `Metadata-Version: 2.4` and `Version: 1.9.0`. `pyproject.toml:2` still reads `requires = ["hatchling<1.30"]` and the build resolved `hatchling==1.29.0`. |
+| W5 | MATCH | `/tmp/al19-wheel`, a fresh venv on CPython 3.14.6, installed `dist/agentlock-1.9.0-py3-none-any.whl[crypto,mcp]` and prints `1.9.0`. `/tmp/al19_wheel_repro.py`, written outside the repository, reports `17 passed, 0 failed` covering (a), (b) and (c). Output below. |
+| W6 | MATCH | `/tmp/al18-extras` after `pip install -e ".[dev,crypto,mcp]"`: `1503 passed, 9 skipped, 16 warnings in 3.31s`, 0 failed. `ruff check .` reports `All checks passed!`. `mypy agentlock/ --ignore-missing-imports` reports `Success: no issues found in 34 source files`. The legacy-name grep over `agentlock tests schema` returns 0. |
+| W7 | MATCH | `git show --stat --name-only e9aeb93` lists `CHANGELOG.md`, `CITATION.cff`, `README.md`. Nothing else. `dist/` and `build/` are ignored at `.gitignore:5-6`. The version was bumped by the build commit and `pyproject.toml` was not touched. |
+
+Seven predictions, seven MATCH, 0 MISMATCH.
+
+### One thing W3 predicted loosely, stated exactly
+
+W3 allowed the grep to return "history rows and the CITATION line about 1.8.0's
+DOI if present". What it actually returns is two lines, neither of them a
+CITATION line:
+
+```
+$ grep -n "1\.8\.0" README.md
+318:| 1.8.0   | recipient policy enforcement at pipeline Step 8; declared recipient parameter read from the trusted permission block; recipient sets | 1495 with the `crypto` and `mcp` extras, 8 skipped |
+332:install additionally skips the same 13 optional-extra tests. For 1.8.0 it
+```
+
+`:318` is a history row. `:332` is a history sentence, not a row: it is inside
+the paragraph that footnotes the versions table and gives the per-version test
+counts for 1.6.0, 1.7.0, 1.8.0 and 1.9.0 in turn. It is history of the same kind
+as the row, in prose, and it is not a claim about the current release. It is
+recorded here rather than folded into "history rows" so the difference between
+what W3 said and what the repository holds is on the record.
+
+The CITATION line the prediction was willing to tolerate is gone, per R2. It read
+`This release: https://doi.org/10.5281/zenodo.22681595`, which is 1.8.0's
+version DOI, and at v1.9.0 it was false.
+
+### W1 verbatim
+
+```
+$ python3 -c "import yaml, json; d = yaml.safe_load(open('CITATION.cff')); print(d['version'], d['date-released'], d['doi']); print(json.dumps(d['identifiers']))"
+1.9.0 2026-09-09 10.5281/zenodo.22681594
+[{"type": "doi", "value": "10.5281/zenodo.22681594", "description": "Concept DOI, resolves to the latest version"}]
+```
+
+### W4 verbatim
+
+```
+$ /tmp/al18-extras/bin/twine check dist/*
+Checking dist/agentlock-1.9.0-py3-none-any.whl: PASSED
+Checking dist/agentlock-1.9.0.tar.gz: PASSED
+```
+
+Wheel `agentlock-1.9.0.dist-info/METADATA`, first three lines:
+
+```
+Metadata-Version: 2.4
+Name: agentlock
+Version: 1.9.0
+```
+
+Artifacts, `sha256sum dist/*`:
+
+```
+972e9633e00c18890de6cc7e334d872880534ca388e2f6e795fc0eebe16ffc88  dist/agentlock-1.9.0-py3-none-any.whl
+9a28ea6a49f6eb748f1c4f1a2b59428869aca5c01c20cfa70bb87653a6c096bd  dist/agentlock-1.9.0.tar.gz
+```
+
+Neither artifact is uploaded and neither is committed. `dist/` is ignored.
+
+### W5 verbatim
+
+The script guards its own premise: it exits before testing anything if the
+resolved `agentlock` package does not live in the venv's `purelib`. Run from
+`/tmp`, it resolves the wheel.
+
+```
+$ /tmp/al19-wheel/bin/python /tmp/al19_wheel_repro.py
+agentlock 1.9.0 from /tmp/al19-wheel/lib/python3.14/site-packages/agentlock/__init__.py
+mcp 2.2.0
+
+(a) G1 argument binding through the decorator
+  PASS  positional call denies
+  PASS  default call denies
+  PASS  keyword call denies
+  PASS  body never ran, counter stays 0
+  PASS  known contact positional executes
+  PASS  known contact keyword executes
+  PASS  counter is 2 after the two allowed calls
+
+(b) G2 token binding
+  PASS  empty authorize is allowed
+  PASS  execute with other parameters raises TokenInvalidError
+  PASS  the empty call still executes on an empty token
+
+(c) G3 mcp 2.x and fail closed
+  PASS  handler registered by the constructor
+  PASS  hostile recipient denies
+  PASS  the handler never ran
+  PASS  known contact reaches the handler
+  PASS  reserved keys stripped
+  PASS  recipient delivered unchanged
+  PASS  bare object raises IntegrationUnsupportedError
+        Cannot install an AgentLock authorization hook on __main__.Bare: it exposes neither 'call_tool' (mcp 1.x) nor 'add_request_handler' (mcp 2.x).  Installed mcp version: 2.2.0.  Refusing to construct rather than wrap a server whose tool calls would not be authorized.
+
+17 passed, 0 failed
+ALL PASS
+```
+
+(c) exercises the constructor route, which is D2's route rather than W5's
+literal `add_request_handler` route. `Server(on_call_tool=handler)` is what W5
+names, and it is the route that writes the registry directly, so the hook's
+re-registration of what is already bound to `tools/call` is what the wheel is
+proving here.
+
+### W6 verbatim
+
+```
+$ /tmp/al18-extras/bin/python -m pytest -q
+1503 passed, 9 skipped, 16 warnings in 3.31s
+
+$ /tmp/al18-extras/bin/ruff check .
+All checks passed!
+
+$ /tmp/al18-extras/bin/mypy agentlock/ --ignore-missing-imports
+Success: no issues found in 34 source files
+```
+
+### W7 verbatim
+
+```
+$ git show --stat --name-only --format= e9aeb93
+CHANGELOG.md
+CITATION.cff
+README.md
+```
+
+Release commit: `e9aeb93`.
+
+### What is left for the manual step
+
+Three things, none of them this branch's to do.
+
+1. Merge, tag `v1.9.0`, and push. Nothing here merged, tagged or pushed.
+2. Upload `dist/agentlock-1.9.0-py3-none-any.whl` and
+   `dist/agentlock-1.9.0.tar.gz`, whose hashes are recorded above, after the
+   push. Nothing here uploaded.
+3. After Zenodo mints the 1.9.0 version DOI from the GitHub release, add it back
+   to `CITATION.cff` as a second `identifiers` entry and to the README's
+   software archive line, in a follow-up docs commit. Both places now say the
+   version DOI is minted at publication rather than naming a stale one.
+
+The standalone adapters are the fourth thing and are not part of this release.
+`crewai-agentlock` 0.2.0 carries both G1 routes and `langchain-agentlock`
+0.1.0 carries the defaults route; both are scoped in the CHANGELOG and the README
+rather than left for a reader to discover. They are fixed in their own
+repositories, on their own releases.
+
+Everything after this line is append only.
