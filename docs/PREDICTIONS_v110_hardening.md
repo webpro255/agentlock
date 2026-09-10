@@ -1919,3 +1919,241 @@ standing flag; corpus grep 0.
 * **Commit B**, the release surface: `release: v1.10.0`.
 * **Commit C**, AMENDMENT 4: the result table, the wheel and sdist sha256, the
   METADATA lines, and commit B's hash. Append only.
+
+---
+
+# AMENDMENT 4
+
+Date: 2026-09-10. Appended after STEP 1 and STEP 2, before the release commit.
+The RELEASE FREEZE section above is left exactly as it was frozen; this section
+records what happened to each of its predictions and amends the two that were
+defective.
+
+## A4.1 Result table
+
+| # | Prediction | Measured | Verdict |
+|---|---|---|---|
+| V1a | CHANGELOG 1.10.0 heading carries today's date from `date +%F` | `date +%F` is `2026-09-10`; `CHANGELOG.md:10` is `## [1.10.0] - 2026-09-10` | MET |
+| V1b | the seven review groups and what changed for each, then the three red pass findings (session role authority, output walking, route mapping), then the two second pass findings (structured content, sets), then the stated limits | Security carries them in exactly that order: 12 group bullets, then session role and `role_mismatch`, then the output walk, then route mapping, then structured content, then sets, then the docstring limits bullet, then a new `### Limits` section | MET |
+| V1c | the stated limits are dictionary keys, objects, the `__wrapped__` boundary, and HTTP adapters passing no body parameters | all four, in that order, in the new `### Limits` section | MET |
+| V1d | the not-additive statement names callers who relied on caller-supplied roles over a session or on unbound tokens | both named, each as its own bolded clause, with what breaks and what to do instead | MET |
+| V1e | suite figures per environment with interpreter and mcp versions from AMENDMENT 3 | four environments, each with its interpreter and its mcp version; all four re-measured at this commit and equal to A3.5 | MET |
+| V1f | credits "an external review of the 1.9.1 wheel" and "pre-release red passes against the built wheel" | both strings present, the second added to the intro in the plural form the prediction names | MET |
+| V1g | the entry states all of the above **in order**, with the not-additive statement and the suite figures after the limits | the six substantive items are in the predicted order inside Security; the not-additive statement and the suite figures are front matter, above Security | **MISMATCH, prediction defect, amended in A4.2** |
+| V2a | README versions row for 1.10.0 with the `[crypto,mcp]` figure | row present, `1616 with the crypto and mcp extras plus fastapi and flask, 9 skipped` | MET, with the qualification in A4.4 |
+| V2b | the counts paragraph | present, and corrected: see A4.5 | MET |
+| V2c | one paragraph under the execution contract describing effective parameters and output modification as the single contract every wrapper follows | added at `README.md:395` | MET |
+| V2d | `grep -n "1\.9\.1" README.md` returns only history lines | 5 lines (318, 341, 364, 378, 382), all versions-table or history prose; none claims 1.9.1 as current | MET |
+| V3 | CITATION.cff: version 1.10.0, `date-released` today, `doi` the concept DOI, `identifiers` concept only, `yaml.safe_load` validates | `1.10.0`, `2026-09-10`, `10.5281/zenodo.22681594`, one identifier carrying that same concept DOI, `safe_load` OK | MET, and the file needed no edit |
+| V4 | version already 1.10.0 in both places; no other current-version string says 1.9.x | `pyproject.toml:7` and `agentlock/__init__.py:37` both `1.10.0`; the grep returns nothing once the nine historical "through 1.9.1" docstring references are excluded | MET |
+| V5 | build after `rm -rf dist build`: twine PASSED, `Metadata-Version: 2.4`, `Version: 1.10.0`, hatchling pin unchanged | both artifacts `PASSED`; `Metadata-Version: 2.4`; `Version: 1.10.0`; `requires = ["hatchling<1.30"]` unchanged, resolving `hatchling==1.29.0` | MET |
+| V6 | fresh `/tmp/al110-wheel` with the four extras prints 1.10.0; the oracle copied to `/tmp` runs 33 passed against site-packages; both red pass scripts exit 0 | `1.10.0` from `/tmp/al110-wheel/lib/python3.14/site-packages/agentlock/__init__.py`; `33 passed, 4 warnings in 0.49s` from `/tmp/al110-oracle`; both scripts report every check CLOSED and exit 0 | MET |
+| V7 | full suite in `/tmp/al18-extras` after reinstall: 1616 passed, 9 skipped, 0 failed; ruff clean; mypy clean with the standing flag; corpus grep 0 | `1616 passed, 9 skipped, 35 warnings in 3.45s`; `All checks passed!`; `Success: no issues found in 34 source files`; corpus grep 0 over the diff | MET |
+| V8 | files in the release commit: `CHANGELOG.md`, `README.md`, `CITATION.cff`, nothing else | 2 files: `CHANGELOG.md` and `README.md`. `CITATION.cff` is unmodified | **MISMATCH, prediction defect, amended in A4.3** |
+
+Neither mismatch is an engine defect and neither is a defect in the release
+surface. Both are defects in the predictions, and both are amended below rather
+than worked around by editing the repository into agreement with a wrong
+prediction.
+
+## A4.2 V1g amended: the not-additive statement and the suite figures are front matter
+
+**Measured.** The 1.10.0 entry reads, top to bottom: the summary paragraph, the
+not-additive paragraph, the suite paragraph, `### Security`, `### Limits`,
+`### Changed`. V1 lists the not-additive statement and the suite figures fifth
+and sixth of six, after the limits. Read as a layout directive, the entry does
+not match.
+
+**Why the prediction is the thing that is wrong.** V1 enumerates what the entry
+must state, and it enumerates the six items in the order a reader of the
+predictions document would want to check them. It was not written against the
+file's existing shape, and the file's shape is not this release's invention:
+every entry in `CHANGELOG.md`, back through 1.9.1, 1.9.0 and earlier, opens with
+a summary, then any statement about compatibility, then the suite figures, and
+only then the categorized bullets. Moving 1.10.0's two paragraphs to the bottom
+would make it the single entry in the file laid out differently from every other
+one, and it would put the sentence "this release is not additive" below several
+thousand words of bullets, where the reader it exists to warn will not reach it
+before upgrading. A prediction that costs a reader the warning it was written to
+guarantee is a defective prediction.
+
+**What the prediction was actually protecting** is that the six items are all
+present and that the substantive ones are in a defensible order. They are. The
+ordering that carries meaning is the one inside `### Security`, where the seven
+groups come first because they are what the release was opened for, the three
+red pass findings follow in the order they were found, the two second pass
+findings follow those, and the limits come last because a limit is only readable
+after the thing it bounds. That order is exactly as predicted and was produced
+by moving one bullet: the route mapping re-examination, which had been sitting
+after the limits bullet at the end of Security, now sits third among the red
+pass findings where V1 puts it.
+
+**Amendment.** V1's ordering clause now reads:
+
+> The entry states, in order **within its `### Security` and `### Limits`
+> sections**: the seven review groups and what changed for each, the three red
+> pass findings (session role authority, output walking, route mapping), the two
+> second pass findings (structured content, sets), and the stated limits
+> (dictionary keys, objects, the `__wrapped__` boundary, HTTP adapters passing
+> no body parameters). The not-additive statement and the suite figures are
+> front matter, above `### Security`, which is where every other entry in the
+> file carries them and where the not-additive warning reaches a reader before
+> the upgrade rather than after it.
+
+## A4.3 V8 amended: CITATION.cff already carried the release values
+
+**Measured.** The release commit carries two files, `CHANGELOG.md` and
+`README.md`. `CITATION.cff` is byte identical to `fadd292` and appears in no
+diff.
+
+**Why.** Every one of V3's four requirements was already true at HEAD:
+`version: 1.10.0`, `date-released: 2026-09-10`, `doi:
+10.5281/zenodo.22681594`, and a single identifier carrying that same concept
+DOI. The version was moved to 1.10.0 during the code passes, and 1.10.0's
+release date is the same day as those passes, so the field that would normally
+need touching at release time was already correct.
+
+**This was visible before the freeze and was frozen anyway.** T1 recorded it in
+terms: "V3 is therefore predicted to be satisfied by a file that needs no edit,
+and the prediction is stated anyway so that STEP 2 measures it rather than
+assumes it." That was the right call for V3, which is a prediction about the
+file's CONTENT and is MET. It was not carried into V8, which is a prediction
+about the commit's CONTENTS, and those are different things: a file can satisfy
+every content requirement and still not appear in a commit. V8 was written by
+listing the files the release touches conceptually rather than the files the
+release changes.
+
+**No edit was made to force agreement.** Touching `CITATION.cff` to put it in
+the commit, by rewriting a field to its own value or by adding whitespace, would
+have made the prediction true by making the repository worse, and would have put
+a meaningless entry in the file's history. The prediction moves instead.
+
+**Amendment.** V8 now reads:
+
+> The files in the release commit are `CHANGELOG.md` and `README.md`. Nothing
+> else. `CITATION.cff` is verified against V3 and is unmodified, because it
+> already carried `version: 1.10.0`, today's `date-released`, the concept DOI
+> and a concept-only `identifiers` block at `fadd292`.
+
+## A4.4 V2a qualified: the 1.10.0 figure needs more than the two extras
+
+The README versions row reports 1616 as the figure "with the `crypto` and `mcp`
+extras plus `fastapi` and `flask`". Every earlier row in that table reports a
+figure that the two extras alone produce. 1.10.0's does not, and the row says
+so rather than reporting a number the stated environment cannot reach.
+
+The reason is measurable: six `importorskip` sites in the suite guard on
+`fastapi` or `flask`, four of them in `tests/test_v110_hardening.py` and two in
+the review's own file, and several are parametrized. With the two extras and
+neither web framework installed, those cases skip and the figure is below 1616.
+The prediction says "the `[crypto,mcp]` figure", and the only truthful way to
+report a `[crypto,mcp]` figure for this release is to name what else has to be
+present for it. The counts paragraph now states the same thing in prose.
+
+## A4.5 Two stale claims found and corrected during STEP 1, neither predicted
+
+Neither of these is in V1 to V8. Both were found while applying them, and both
+are recorded because the standing rule about not propagating a claim without
+re-verifying it against the artifact is what caught them.
+
+**1. The 1.10.0 entry claimed the release adds no new denial reason.** The
+summary paragraph read "no detection feature, no new schema field and no new
+denial reason". That was true when it was written, before the first red pass.
+The first red pass then added `DenialReason.ROLE_MISMATCH`, and a Security
+bullet fourteen lines below the summary says so in its own heading: "`role_mismatch`
+is a new denial reason and not a reuse of `insufficient_role`". The entry
+contradicted itself, and the half a reader is most likely to carry away is the
+summary. Corrected to state that the release adds exactly one denial reason,
+`role_mismatch`, and that it came out of the red pass rather than out of the
+seven groups. The two commit-time reasons, `param_lineage` and `novel_lineage`,
+are still correctly described as reasons `authorize()` already used.
+
+**2. Both files misdescribed the environment behind the 1595 figure.** The
+CHANGELOG called it "CPython 3.14.6 with no optional extras" and the README
+called it "a bare install", attributing its 30 skips to tests "guarded on
+`mcp`, `fastapi` or `flask`". Measured with `pytest -rs` at this commit, that
+environment is the system CPython 3.14.6, which has `fastapi 0.135.3`,
+`flask 3.1.3` and PyNaCl 1.6.2 installed and lacks only `mcp`. Its 30 skips are
+22 guarded on `mcp`, 1 on `autogen`, and the 7 pre-increment-3 baselines that
+have stood down since 1.7.0. **Not one skip is guarded on a web framework**,
+because both are present. Both files now describe the environment as what it is
+and break the 30 down by guard. The figure itself, 1595 passed and 30 skipped,
+was correct and is unchanged; only the account of why was wrong.
+
+The second of these matters more than it looks. A reader deciding what to
+install reads that sentence, and "a bare install runs 1595" invited them to
+expect 1595 from an install that would in fact skip more. AMENDMENT 3's figures
+were right; the prose attached to them was not, and no prior pass re-measured
+the prose because no prediction was ever pointed at it.
+
+## A4.6 Final measurements
+
+Suite, all four environments, re-measured at this commit, 0 failed in each:
+
+```
+/tmp/al18-extras    1616 passed, 9 skipped, 35 warnings in 3.45s
+checkout venv       1595 passed, 30 skipped, 34 warnings in 3.40s
+/tmp/al19-mcp1      1595 passed, 26 skipped, 4 deselected in 3.07s
+/tmp/al18-probe313  1617 passed, 8 skipped, 1 warning in 3.44s
+```
+
+All four equal AMENDMENT 3 section A3.5 exactly.
+
+Types, lint and style:
+
+```
+mypy agentlock/ --ignore-missing-imports   Success: no issues found in 34 source files
+ruff check .                               All checks passed!
+diff em dashes                             0
+diff ASCII double hyphens                  1, the `--ignore-missing-imports` flag
+                                           inside backticks, declared at A2.5
+corpus grep over the diff                  0
+```
+
+Release build in `/tmp/al18-extras`, after `rm -rf dist build`:
+
+```
+Successfully built agentlock-1.10.0.tar.gz and agentlock-1.10.0-py3-none-any.whl
+Checking dist/agentlock-1.10.0-py3-none-any.whl: PASSED
+Checking dist/agentlock-1.10.0.tar.gz: PASSED
+```
+
+METADATA, read out of the wheel at `agentlock-1.10.0.dist-info/METADATA`:
+
+```
+Metadata-Version: 2.4
+Name: agentlock
+Version: 1.10.0
+License-Expression: AGPL-3.0-or-later
+Requires-Python: >=3.10
+```
+
+Artifact digests:
+
+```
+64ae637443a623726a20d174eefb5439786912892c3610a5b07bb4bf0516b8de  dist/agentlock-1.10.0-py3-none-any.whl
+8613b0fe85716e9d5fcf9c9aceb37edde979bfc1ba8b98f924ec41fdc6d37ee8  dist/agentlock-1.10.0.tar.gz
+```
+
+Fresh venv `/tmp/al110-wheel`, holding only the built wheel with the
+`crypto`, `mcp`, `fastapi` and `flask` extras, exercised from outside the
+checkout so it cannot resolve the source tree:
+
+```
+version 1.10.0 from /tmp/al110-wheel/lib/python3.14/site-packages/agentlock/__init__.py
+oracle, copied to /tmp/al110-oracle: 33 passed, 4 warnings in 0.49s
+/tmp/al110_redpass_repro.py:  F1 CLOSED, F1 mcp CLOSED, F2 CLOSED, F3 CLOSED, exit=0
+/tmp/al110_redpass2_repro.py: F4 mcp 2.x CLOSED, F4 mcp 1.x CLOSED, E15 list CLOSED,
+                              E15 mapping CLOSED, F5 set CLOSED, F5 frozenset CLOSED,
+                              F6 UNCHANGED, exit=0
+```
+
+The release commit is ``08c189a3762fc2a56aa61d9038892e2c58b0130b``, carrying `CHANGELOG.md` and `README.md`.
+
+## A4.7 What this session did not do
+
+No merge, no tag, no push, no upload, and no edit to `agentlock/`,
+`pyproject.toml` or any test file. The branch is `v1.10-integration-hardening`
+and it is not merged to `main`. `dist/` holds the two artifacts digested above
+and is left in place for the maintainer; publishing them, and removing them
+afterwards, is a manual step this session does not take.
