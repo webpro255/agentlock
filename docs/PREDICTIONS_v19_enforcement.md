@@ -939,3 +939,270 @@ rather than left for a reader to discover. They are fixed in their own
 repositories, on their own releases.
 
 Everything after this line is append only.
+
+---
+
+## 1.9.1 FREEZE (2026-09-10): the variadic keyword collision
+
+Branch `v1.9.1-binding-collision`, cut from `main` at
+`80c85a6 Merge v1.9-enforcement-completeness: argument binding, token binding,
+mcp 2.x fail closed`, which is the v1.9.0 tag plus the merge. Working tree clean
+except the new test class this freeze adds.
+
+This is a patch release closing one class of gap in `agentlock/binding.py`,
+found by the same external review that found G1 to G4. No other change. Nothing
+below describes code that has been written: Section 2 of this freeze is the
+engine at 1.9.0, measured.
+
+### 1. The gap, as reported
+
+Quoted as received.
+
+> `bind_call_parameters` flattens VAR_KEYWORD entries onto the top-level
+> parameters dict with `parameters.update(value)`. When a flattened key equals
+> the name of another bound parameter, the flattened value overwrites the bound
+> one. The gate then sees a value the function does not receive.
+>
+> **C1.** `def send(to, /, **extras)`; `send("attacker@evil.test",
+> to="bob@company.com")`: gate sees `to=bob`, function executes with
+> `to=attacker`. Sync and async wrappers, and autogen `protect_functions`, all
+> affected.
+>
+> **C2.** `def f(*args, **kw)`; `f(1, 2, args="spoof")`: gate sees
+> `args="spoof"`, function receives `args=(1, 2)`.
+>
+> **C3.** `def g(**kw)`; `g(kw="spoof")`: gate and function see the same dict.
+> Not a hiding. Must keep working.
+
+### 2. The gap at the source, measured at 1.9.0
+
+`agentlock/binding.py:84-95`, verbatim:
+
+```python
+    parameters: dict[str, Any] = {}
+    for name, parameter in signature.parameters.items():
+        if name not in bound.arguments:
+            continue
+        value = bound.arguments[name]
+        if parameter.kind is inspect.Parameter.VAR_KEYWORD:
+            parameters.update(value)
+        elif parameter.kind is inspect.Parameter.VAR_POSITIONAL:
+            parameters[name] = tuple(value)
+        else:
+            parameters[name] = value
+    return parameters, bound
+```
+
+`signature.parameters` iterates in declaration order, so a VAR_KEYWORD is
+visited last and its `update` lands on top of every name already written. The
+three call sites all reach this function and none of them inspects what it
+returns, so all three carry the gap: `agentlock/decorators.py:136` and `:218`,
+and `agentlock/integrations/autogen.py:130`.
+
+The three shapes, run against the checkout at 1.9.0. C1 and C2 substitute the
+test file's existing constants for the report's addresses, `attacker@evil.com`
+for `attacker@evil.test`; nothing else differs.
+
+```
+$ python3 repro.py
+C1  gate sees {'to': 'bob@company.com'}  function runs with to = attacker@evil.com
+C2  gate sees {'args': 'spoof'}  function runs with args = (1, 2)
+C3  gate sees {'kw': 'spoof', 'to': 'x'}  function runs with kw = {'kw': 'spoof', 'to': 'x'}
+```
+
+C1 and C2 are confirmed as reported. C3 is confirmed as the case that is not a
+hiding: the gate is shown exactly the mapping the function receives, because
+`kw` is the variadic parameter itself and there is no other parameter of that
+name for a flattened key to shadow.
+
+### 3. Decisions of record
+
+Recorded as received. Section 4 records two defects in them, found while taking
+Section 2's measurements and before any code was written.
+
+**Y1.** In `bind_call_parameters`, before flattening a VAR_KEYWORD mapping,
+compute the set of names of every other parameter in the signature (all kinds
+except the VAR_KEYWORD itself). If any flattened key is in that set, raise
+`BindingError` naming the colliding key and the function. This is a call-time
+error, raised before `authorize` is called, so the call never executes and the
+gate is never shown a value the function would not receive.
+
+**Y2.** No wrapper catches `BindingError`. It propagates to the caller, like
+`TokenInvalidError` does.
+
+**Y3.** Version 1.9.1. CHANGELOG under Security: the collision rule, the three
+shapes, credit "the same external review", and the statement that C3 remains
+allowed.
+
+**Y4.** Files: `agentlock/binding.py`, `agentlock/__init__.py`,
+`pyproject.toml`, `CHANGELOG.md`, `CITATION.cff` (version 1.9.1 and
+`date-released` from `date +%F`, doi stays the concept DOI), `README.md`
+(versions row), `tests/test_v19_enforcement_gaps.py` gains the new cases in its
+own class, `docs/PREDICTIONS_v19_enforcement.md` (append only). Nothing else.
+
+### 4. Defects in the decisions, found before this freeze was committed
+
+Two. Both were found by reading the repository while preparing to apply Y1 to
+Y4, and both before any mechanism code was written. They are recorded here
+rather than as a numbered amendment for the reason Section 4 of the original
+freeze is where it is: nothing had been committed yet, so there is no earlier
+record for an amendment to correct. Y1 to Y4 above are reproduced exactly as
+received and are not edited. The restatements are what the build follows and
+what Section 6 is scored against.
+
+#### S1. Y4's file list excludes the one docstring Y1 makes false
+
+`agentlock/exceptions.py:260-268`, verbatim:
+
+```python
+class BindingError(AgentLockError):
+    """A callable's signature cannot be read, so its calls cannot be gated.
+
+    Raised at wrap time, never at call time.  A wrapper that cannot bind a
+    call's arguments to parameter names cannot show the gate what the call
+    carries, so it refuses to be built rather than gating a subset of the
+    arguments and letting the rest through.
+    """
+```
+
+Y1 raises `BindingError` at call time, from inside `bind_call_parameters`, and
+for a reason that has nothing to do with an unreadable signature. Both the
+summary line and the sentence "Raised at wrap time, never at call time" become
+false the moment Y1 lands. Y4 does not name `agentlock/exceptions.py`, so
+following it literally ships an exception class whose own documentation
+contradicts the code that raises it.
+
+Two other docstrings mention `BindingError` and are left alone deliberately.
+`agentlock/integrations/autogen.py:110-116` documents `_wrap_function` raising
+it at wrap time, which stays true of that function: the collision is raised
+from `guarded`, not from `_wrap_function`. `CHANGELOG.md:24` is the 1.9.0
+entry, which is history and is not edited; the 1.9.1 entry states the new rule.
+Incomplete is tolerable in a changelog of a past release. False in a class
+docstring is not.
+
+**Restatement, which the build follows:** `agentlock/exceptions.py` is added to
+Y4's file list, for one edit, the `BindingError` docstring, which is rewritten
+to state both reasons the exception is raised and where each is raised from.
+Nothing else in that file is touched. Y4 is otherwise unchanged.
+
+#### S2. Y4's README edit leaves the per-version count paragraph naming 1.9.0 as current
+
+Y4 names `README.md` and scopes it to "versions row". The versions table at
+`README.md:314-323` is footnoted by a paragraph at `:325-341` that gives the
+test counts per environment for each release in turn, ending:
+
+```
+For 1.9.0 it is 1503 passing and 9 skipped under `mcp 2.x`, the
+9 being those 8 plus the mcp 1.x test, which selects on the installed
+SDK major; under `mcp 1.x` it is 1502 passing and 10 skipped, the two 2.x
+tests taking the place of the 1.x one. Nothing fails in any of these
+environments.
+```
+
+Adding a 1.9.1 row to the table and stopping leaves that paragraph's last
+entry, which a reader takes as the current release's environment breakdown,
+naming the previous release. This is R2's shape from the release freeze: a
+stale current claim left standing because the edit list named a narrower target
+than the change requires.
+
+**Restatement, which the build follows:** the paragraph gains one sentence for
+1.9.1, in the form the sentences before it use. This is a second edit inside
+`README.md`, a file Y4 already names, and it does not change Y4's file list.
+
+### 5. Measurements at freeze
+
+Environments are the four of record from Section 2 of the original freeze,
+unchanged. Full suite on `v1.9.1-binding-collision` at `80c85a6`, **before**
+the new test class exists:
+
+| Environment | Interpreter | mcp | Result |
+|---|---|---|---|
+| checkout | 3.14.6 | absent | `1498 passed, 14 skipped` |
+| `/tmp/al18-extras` | 3.14.6 | 2.2.0 | `1503 passed, 9 skipped` |
+| `/tmp/al19-mcp1` | 3.13.14 | 1.30.0 | `1502 passed, 10 skipped` |
+| `/tmp/al18-probe313` | 3.13.14 | 2.2.0, pyautogen 0.9.0 | `1504 passed, 8 skipped` |
+
+Those four lines are AMENDMENT 1's figures, reproduced on this branch.
+
+Full suite **with** the freeze class present, which is the tree this document
+is committed on:
+
+| Environment | Result |
+|---|---|
+| checkout | `1500 passed, 14 skipped, 4 xfailed` |
+| `/tmp/al18-extras` | `1505 passed, 9 skipped, 4 xfailed` |
+| `/tmp/al19-mcp1` | `1504 passed, 10 skipped, 4 xfailed` |
+| `/tmp/al18-probe313` | `1506 passed, 8 skipped, 4 xfailed` |
+
+The xfail count is 4 in every environment: XC1, XC2, XC3 and XC4, all strict,
+all measured failing at 1.9.0. None of the six new tests is skipped anywhere:
+the class needs no optional extra, and XC3 monkeypatches the AutoGen import
+check as X3 does. The two added passes in each line are XC5 and XC6, which
+carry no marker.
+
+Per test, at freeze, identical in all four environments:
+
+| Test | Shape | At 1.9.0 |
+|---|---|---|
+| XC1 sync decorator, `send(to, /, **extras)` | C1 | XFAIL |
+| XC2 async decorator, same signature | C1 | XFAIL |
+| XC3 autogen `protect_functions`, same signature | C1 | XFAIL |
+| XC4 `bind_call_parameters` on `f(*args, **kw)` | C2 | XFAIL |
+| XC5 `bind_call_parameters` on `g(**kw)` | C3 | PASSED |
+| XC6 the 1.9.0 binding shapes | regression guard | PASSED |
+
+`ruff check .` passes and the legacy-name grep over `agentlock tests schema`
+returns 0 at `80c85a6`.
+
+### 6. Predictions
+
+Frozen before any mechanism code exists.
+
+**Z1.** All XC tests pass with their xfail markers removed, in every
+environment, and no test reports a strict XPASS failure. XC5 and XC6 have no
+marker to remove and pass throughout, at freeze and after the build.
+
+**Z2.** Suite figures, stated as received and with the arithmetic resolved. The
+new non-skipped test count is 6 in every environment, because none of the six
+is guarded.
+
+| Environment | As received | Resolved |
+|---|---|---|
+| checkout | 1498 plus new non-skipped tests passed, 0 failed, 14 skipped | `1504 passed, 14 skipped, 0 failed` |
+| `/tmp/al18-extras` | 1503 plus new passed, 0 failed, 9 skipped | `1509 passed, 9 skipped, 0 failed` |
+| `/tmp/al19-mcp1` | 0 failed | `1508 passed, 10 skipped, 0 failed` |
+
+`/tmp/al18-probe313` is not named by Z2 and is not scored. It is measured
+anyway, because XC3 runs there against a real `pyautogen 0.9.0` rather than
+under the monkeypatched import check, and the figure is recorded in the
+amendment.
+
+**Z3.** `mypy agentlock/ --ignore-missing-imports` reports 0 errors, run with
+`/tmp/al18-extras/bin/mypy`, the binary that produced B4 and U4. `ruff check .`
+passes. The legacy-name grep over `agentlock tests schema` returns 0.
+
+**Z4.** Files touched, and nothing else: `agentlock/binding.py`,
+`agentlock/exceptions.py` (per S1), `agentlock/__init__.py`, `pyproject.toml`,
+`CHANGELOG.md`, `CITATION.cff`, `README.md`,
+`tests/test_v19_enforcement_gaps.py`, `docs/PREDICTIONS_v19_enforcement.md`.
+Nine paths across the three commits of this release.
+
+**Z5.** Build in `/tmp/al18-extras` after `rm -rf dist build`: `twine check`
+PASSED on both artifacts, wheel METADATA carries `Metadata-Version: 2.4` and
+`Version: 1.9.1`. A fresh venv `/tmp/al191-wheel` installs the wheel and an
+external script written in `/tmp`, outside the repository, reproduces C1 and C2
+as `BindingError` and C3 as allowed, against the installed wheel only. The
+script guards its own premise and exits before testing anything if the resolved
+`agentlock` package does not live in the venv's `purelib`.
+
+### 7. What this release is not
+
+A behavior-preserving patch. A call whose variadic keyword mapping carries a
+key that names another parameter used to be authorized against the flattened
+value and executed with the bound one. It now raises. A deployment that made
+such calls deliberately, with a function whose signature genuinely has a
+parameter and a variadic key of the same name, will see `BindingError` where it
+previously saw execution. That is the fix. C3, where there is nothing to
+shadow, is untouched and stays allowed.
+
+Everything after this line is append only.
