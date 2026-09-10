@@ -957,3 +957,263 @@ in `/tmp/al18-extras`.
 installed runs `/tmp/al110_redpass_repro.py`, a script outside the checkout so
 it resolves the engine from the wheel, and reports F1 closed, F2 closed for all
 five return shapes on both paths, and F3 unchanged at the pass-through status.
+
+---
+
+# AMENDMENT 2
+
+Date: 2026-09-10. Appended after STEP 1 and STEP 2, before the code commit.
+The RED PASS FREEZE section above is left exactly as it was frozen; this
+section records what happened to each of its predictions and amends the four
+that were defective.
+
+## A2.1 Result table
+
+| # | Prediction | Measured | Verdict |
+|---|---|---|---|
+| P1 | 15 strict xfail markers removed; all 24 `TestRedPass` cases pass wherever their framework is present | 15 markers removed; `TestRedPass` is **25** cases and all pass | **MISMATCH, prediction defect, amended in A2.2** |
+| P2a | `/tmp/al18-extras`: 1607 passed, 9 skipped | `1608 passed, 9 skipped` | **MISMATCH, same defect, amended in A2.2** |
+| P2b | checkout venv: 1591 passed, 25 skipped | `1591 passed, 26 skipped` | **MISMATCH, same defect, amended in A2.2** |
+| P2c | `/tmp/al19-mcp1`, 4 deselected: 1588 passed, 24 skipped | `1588 passed, 25 skipped, 4 deselected` | **MISMATCH, same defect, amended in A2.2** |
+| P2d | `/tmp/al18-probe313`: 1608 passed, 8 skipped | `1609 passed, 8 skipped` | **MISMATCH, same defect, amended in A2.2** |
+| P3a | `mypy agentlock/` unchanged from the R4.4 baseline, 0 findings in the arc's files | unchanged in all three environments; 0 findings in every file this arc edits | MET, though R4.4's framing of the baseline was itself wrong; corrected in A2.3 |
+| P3b | `ruff check .` clean, no new `per-file-ignores` entry | `All checks passed!`, no new entry | MET |
+| P3c | corpus grep over the diff 0; 0 em dashes; 0 ASCII double hyphens | 0, 0, and 1 remaining, which is the flag `--ignore-missing-imports` inside backticks in a pre-existing CHANGELOG sentence | MET, with the qualification in A2.5 |
+| P4 | files exactly E14 or a proper subset; fastapi and flask untouched | 8 files: 6 within E14, **2 outside it**; fastapi and flask untouched as predicted | **MISMATCH, prediction defect, amended in A2.4** |
+| P5 | zero edits to existing test files; oracle 33 passed | zero edits, `tests/test_v110_system_review.py` byte identical; `33 passed, 4 warnings in 0.41s` | MET |
+| P6 | rebuild `twine check` PASSED at 1.10.0; fresh wheel venv runs the external script with F1 and F2 closed and F3 unchanged | both artifacts `PASSED`; `Version 1.10.0`; the script reports CLOSED on all four checks and exits 0 | MET |
+
+None of the five mismatches is an engine defect. Four are defects in the
+predictions, and one of those is a defect this branch introduced into its own
+test file. All are amended below rather than worked around in code.
+
+## A2.2 P1 and P2 amended: this branch repeated the mistake A1.2 documented
+
+**Measured.** In `/tmp/al19-mcp1` (CPython 3.13.14, mcp 1.30.0) the fixed suite
+failed one case:
+
+```
+tests/test_v110_hardening.py:695: in test_an_mcp_client_cannot_claim_a_role_over_a_session
+    server = Server("local-probe", on_call_tool=handler)
+E   TypeError: Server.__init__() got an unexpected keyword argument 'on_call_tool'
+```
+
+This is the freeze's own test file and the freeze's own mistake. A1.2 recorded,
+about the review's file, that `pytest.importorskip("mcp")` guards the ABSENCE
+of the package and not the presence of the wrong SDK major, and A1.4 recorded
+this branch shipping an MCP case without a guard at all. The E10 MCP case was
+then written with the 2.x constructor behind exactly the guard A1.2 had already
+shown to be insufficient. Reading the amendment was not the same as applying
+it.
+
+**Fix, in this branch's file only.** Two changes, neither of them to the
+oracle:
+
+1. `test_an_mcp_client_cannot_claim_a_role_over_a_session` now checks
+   `inspect.signature(Server.__init__).parameters` for `on_call_tool` and
+   skips with a stated reason where it is absent. The guard names the
+   constructor it needs rather than the package it needs.
+2. A new case, `test_an_mcp_1x_client_cannot_claim_a_role_over_a_session`,
+   carries E10 over the 1.x `call_tool` hook through the `FakeServer` fixture
+   the rest of the file already uses. The hook's 1.x branch is selected by the
+   presence of `call_tool` and not by the SDK version, so it runs at either
+   major. Without it, skipping the 2.x case where only 1.x is installed would
+   have left the finding uncovered in exactly the environment the skip was
+   added for. It asserts the denial reason as well as that the handler never
+   ran.
+
+**Amendment.** P1 now reads:
+
+> Every one of the 15 `xfail(strict=True)` markers is removed, and all **25**
+> `TestRedPass` cases pass in every environment where their framework and SDK
+> major are present. Measured: 25 passed in `/tmp/al18-extras`, 25 passed in
+> `/tmp/al18-probe313`, `20 passed, 5 skipped` in `/tmp/al19-mcp1` (the four F3
+> cases and the 2.x MCP case), `24 passed, 1 skipped` in the checkout venv.
+
+P2 now reads:
+
+> * `/tmp/al18-extras`: **1608 passed, 9 skipped, 0 failed**.
+> * checkout venv: **1591 passed, 26 skipped, 0 failed**.
+> * `/tmp/al19-mcp1`, 4 deselected: **1588 passed, 25 skipped, 0 failed**.
+> * `/tmp/al18-probe313`: **1609 passed, 8 skipped, 0 failed**.
+
+Every difference from the frozen figures is the one added case and the one
+added skip. `/tmp/al19-mcp1` holds its pass count because the 2.x case it loses
+to the new skip is the case the 1.x companion replaces there.
+
+## A2.3 R4.4 corrected: the project's mypy invocation carries a flag
+
+The freeze recorded, under R4.4, that `mypy agentlock/` reports one to three
+findings depending on the environment and that this "contradicts AMENDMENT 1's
+K3a". The finding was measured correctly and the conclusion drawn from it was
+wrong.
+
+Every CHANGELOG entry from 1.9.0 onward states the invocation as
+`mypy agentlock/ --ignore-missing-imports`. Measured at this commit:
+
+```
+/tmp/al18-extras   Success: no issues found in 34 source files
+/tmp/al18-probe313 Success: no issues found in 34 source files
+/tmp/al19-mcp1     Success: no issues found in 34 source files
+```
+
+The bare invocation's findings are all `import-not-found` or `import-untyped`
+against optional integration dependencies (`autogen`, `fastapi`, `flask`,
+`mcp`), so its count is a function of which optional packages a venv happens to
+hold and not of the engine. A1.1 abbreviated the project's command to "mypy 0"
+and was reporting the flagged run; R4.4 measured the unflagged one and read the
+difference as a contradiction. It is not one, and AMENDMENT 1 stands. Recorded
+here rather than silently dropped, because the freeze accused a prior
+measurement of being unreproducible and that accusation should not outlive the
+reason for it.
+
+Both invocations are reported from here on. The flagged one,
+**`mypy agentlock/ --ignore-missing-imports`, is clean in all three
+environments**, and the bare invocation's output is byte identical before and
+after this arc, with **zero findings in any file the arc edits**.
+
+## A2.4 P4 and E14 amended: E11 names two application sites E14 does not list
+
+**Measured.** Eight files changed. Six are in E14:
+
+```
+CHANGELOG.md, README.md, agentlock/gate.py, agentlock/modify.py,
+agentlock/types.py, tests/test_v110_hardening.py
+```
+
+Two are not:
+
+```
+agentlock/decorators.py, agentlock/integrations/mcp.py
+```
+
+**Why they had to be.** E11 states where the walk applies: "execute, call, both
+decorators, both MCP hooks, autogen". Four of those six reach it through
+`gate.execute` and so are satisfied by the change to `agentlock/gate.py`:
+`execute` itself, `call`, the sync decorator (which runs through `gate.call`),
+and autogen (which calls `gate.execute` directly). The other two apply the
+modifier in their own code and cannot be reached from `gate.py` at all:
+
+* `agentlock/decorators.py:222`, the async wrapper, which applies
+  `auth_result.modify_output_fn` itself in the position `gate.execute` would.
+* `agentlock/integrations/mcp.py:381`, `_modify_text_content`, which is the
+  MCP hooks' applier for both SDK majors.
+
+E14 listed `agentlock/integrations/fastapi.py` and
+`agentlock/integrations/flask.py`, which E12 turned out not to need, and did
+not list the two files E11 does need. It was written against the finding list
+rather than against the call graph. E11 is the substantive decision and E14 is
+the bookkeeping around it, so the bookkeeping is what moves.
+
+**Amendment.** E14's file list now reads:
+
+> `agentlock/gate.py`, `agentlock/types.py`, `agentlock/modify.py`,
+> `agentlock/decorators.py`, `agentlock/integrations/mcp.py`, `CHANGELOG.md`,
+> `README.md`, `tests/test_v110_hardening.py`,
+> `docs/PREDICTIONS_v110_hardening.md` (append only). Nothing else.
+> `agentlock/integrations/fastapi.py` and `agentlock/integrations/flask.py`
+> were listed for E12 and are not needed, for the reason recorded in R1 under
+> F3.
+
+and P4 now reads:
+
+> Files touched are exactly the amended E14: 8 changed plus this document.
+> Nothing outside it. `agentlock/integrations/fastapi.py` and
+> `agentlock/integrations/flask.py` are not touched.
+
+The count is unchanged at eight either way, which is a coincidence and not a
+justification.
+
+## A2.5 The one remaining ASCII double hyphen, declared
+
+The diff contains a single `--`, in the CHANGELOG's suite sentence:
+
+```
+`mypy agentlock/ --ignore-missing-imports` reports 0 errors
+```
+
+It is a command-line flag inside a code span, in a sentence that predates this
+arc and that the arc re-emits only to carry new numbers. Removing the hyphens
+would misname the command. It is declared here rather than treated as a style
+violation to argue about later. Every other line of the diff, prose and code,
+carries none, and the diff contains zero em dashes.
+
+## A2.6 What the fix actually changed, stated for the record
+
+**E10 placement.** The check runs after the velocity and combo signals are
+recorded and before the tool-existence guard. Telemetry still sees a caller
+that repeatedly claims a role it does not hold, which is exactly the behavior
+a velocity detector exists to notice. The tool-existence guard runs after,
+rather than before, so a caller whose claimed identity has already failed is
+not told whether the tool it named is registered.
+
+**One session lookup where there were two.** `authorize()` resolved the
+session twice for the same caller, once at the hardening block and once at the
+role block. E10 says the rule applies wherever the gate resolves a session for
+a caller-supplied role; the way to make that true without stating it twice is
+for there to be one resolution, so the two are now one, named `session`, and
+the rule sits directly under it.
+
+**Denial shape.** `role_mismatch` carries `required_role` as the session's role
+and `current_role` as the claim, so `DeniedError` renders both without any
+caller having to reconstruct them. It is logged with the SESSION's role, not
+the claimed one, because the audit record is a record of who the caller
+actually is.
+
+**`apply_output_modifier` is a function, not a method.** It lives in
+`agentlock/modify.py` beside `ModifyEngine` and takes the `str -> str` callable
+as an argument. `build_output_modifier` keeps its signature and its behavior,
+so `tests/test_modify.py::TestBuildOutputModifier` is untouched by construction
+rather than by luck, which is what the R3 survey predicted.
+
+**Named tuples and subclasses.** `tuple` is rebuilt through `type(value)._make`
+where that exists, so a named tuple keeps its own type rather than degrading to
+a plain tuple. `dict` and `list` subclasses are rebuilt as plain `dict` and
+`list`, because there is no general way to call an arbitrary subclass's
+constructor, and the docstring says so rather than leaving a caller to discover
+it.
+
+**Dictionary keys are not modified.** A key is a field name. A transformation
+that renamed fields would corrupt the payload it was asked to sanitize, so the
+walk descends into values only.
+
+## A2.7 Final measurements
+
+Suite, all four environments, 0 failed in each:
+
+```
+/tmp/al18-extras    1608 passed, 9 skipped, 35 warnings in 3.46s
+checkout venv       1591 passed, 26 skipped, 34 warnings in 3.37s
+/tmp/al19-mcp1      1588 passed, 25 skipped, 4 deselected in 3.04s
+/tmp/al18-probe313  1609 passed, 8 skipped, 1 warning in 3.42s
+```
+
+Oracle alone, `/tmp/al18-extras`, from a file byte identical to the one frozen
+at commit A: `33 passed, 4 warnings in 0.41s`.
+
+Rebuild, `/tmp/al18-extras`:
+
+```
+Successfully built agentlock-1.10.0.tar.gz and agentlock-1.10.0-py3-none-any.whl
+Checking dist/agentlock-1.10.0-py3-none-any.whl: PASSED
+Checking dist/agentlock-1.10.0.tar.gz: PASSED
+```
+
+`importlib.metadata.version("agentlock")` in the fresh wheel venv:
+`1.10.0`. The version did not move; 1.10.0 is unreleased and these findings
+close inside it.
+
+External reproduction, `/tmp/al110_redpass_repro.py`, run from `/tmp` against a
+venv holding only the rebuilt wheel and its extras:
+
+```
+engine 1.10.0 from /tmp/al110-redpass-wheel/lib/python3.14/site-packages/agentlock/__init__.py
+F1 gate: CLOSED (claim denied=True, session role resolves=True, agreement allowed=True, no-session trusted=True)
+F1 mcp: CLOSED (handler ran: [])
+F2: CLOSED (leaks: none)
+F3: CLOSED (status 200, handler ['HANDLER_RAN']; the header is not consulted while a mapping is configured)
+exit=0
+```
+
+The oracle, copied outside the checkout and run against that same wheel:
+`33 passed, 4 warnings in 0.49s`.
