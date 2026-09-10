@@ -444,3 +444,161 @@ tree: **33 passed**.
 
 Per the review's suggested order: E1, E4, E5 together; then E3; then E6, E7, E2
 together; then E8.
+
+---
+
+# AMENDMENT 1
+
+Date: 2026-09-10. Appended after STEP 1 and STEP 2, before any code commit.
+Section 4 above is left exactly as it was frozen; this section records what
+happened to each of its predictions and amends the two that were defective.
+
+## A1.1 Result table
+
+| # | Prediction | Measured | Verdict |
+|---|---|---|---|
+| K1 | oracle: 33 passed in `/tmp/al18-extras`, no edits beyond 0a | `33 passed, 4 warnings in 0.41s` | MET |
+| K2a | `/tmp/al18-extras`: 1553 plus new engine tests passed, 0 failed, 9 skipped | `1583 passed, 9 skipped` (1553 + the 30 in `tests/test_v110_hardening.py`) | MET |
+| K2b | checkout venv: 1515 plus new non skipped passed, 0 failed, framework guarded tests as skips | `1568 passed, 24 skipped` (1515 + 29 + 24; skips 14 + 4 + 6) | MET |
+| K2c | `/tmp/al19-mcp1`: 0 failed | `4 failed, 1568 passed, 20 skipped` | **MISMATCH, prediction defect, amended in A1.2** |
+| K2d | `/tmp/al18-probe313`: 0 failed | `1584 passed, 8 skipped` | MET |
+| K3a | mypy 0 | `Success: no issues found in 34 source files` | MET |
+| K3b | ruff clean | clean only after the amendment in A1.3 | **MISMATCH, prediction defect, amended in A1.3** |
+| K3c | corpus grep 0 | 0 over the diff and 0 in the new test file | MET |
+| K4 | files exactly E9 | 16 files, all in E9; `agentlock/types.py` not needed and not touched | MET |
+| K5a | twine PASSED, Version 1.10.0 | both artifacts `PASSED`; `importlib.metadata.version("agentlock")` is `1.10.0` | MET |
+| K5b | fresh wheel venv, oracle copied to `/tmp`: 33 passed | `33 passed` from `/tmp/al110-oracle`, resolving `/tmp/al110-wheel/lib/python3.14/site-packages/agentlock/__init__.py` | MET |
+
+Neither mismatch is an engine defect. Both are defects in the prediction, and
+both are amended below rather than worked around in code.
+
+## A1.2 K2c amended: the oracle cannot run against an mcp 1.x SDK
+
+**Measured.** In `/tmp/al19-mcp1` (CPython 3.13.14, `mcp 1.30.0`, no fastapi,
+no flask) the suite is `4 failed, 1568 passed, 20 skipped`. All four failures
+are in `tests/test_v110_system_review.py` and all four are the same error:
+
+```
+tests/test_v110_system_review.py:47: in test_output_transform_reaches_caller
+    server = Server('local-probe', on_call_tool=handler)
+E   TypeError: Server.__init__() got an unexpected keyword argument 'on_call_tool'
+```
+
+`test_output_transform_reaches_caller[mcp]` and all three
+`test_mcp_role_cannot_override_host` cases. `on_call_tool` is the mcp **2.x**
+`Server` constructor; 1.x has no such keyword. The review wrote its fixture
+against the SDK major it had installed.
+
+**Why this is not an engine finding.** The failure is a `TypeError` raised
+inside the test file, constructing the SDK's own object, on the line before
+`AgentLockMCPServer` is mentioned. No engine code has run at that point, so no
+engine change can affect it. Measured directly: with this branch's code stashed
+and the tree back at commit A, the same environment gives
+`13 failed, 16 passed, 4 skipped`, and those four are among the thirteen.
+`test_mcp_role_cannot_override_host[None]` is the tell: it PASSES in
+`/tmp/al18-extras` at the freeze and FAILS in `/tmp/al19-mcp1` at the freeze,
+which only an SDK difference explains.
+
+**Why it was not caught at freeze time.** Step 0c measured `/tmp/al18-extras`
+and the checkout venv. `/tmp/al19-mcp1` first appears in K2, where its figure
+was predicted rather than measured. The prediction assumed the oracle was
+SDK-major portable. It is not, and 0a could not have made it so: the
+instruction there was to add `pytest.importorskip("mcp")` and nothing else,
+which guards the absence of the package, not the presence of the wrong major.
+
+**Amendment.** K2c now reads:
+
+> `/tmp/al19-mcp1`: **0 failed** with the four `tests/test_v110_system_review.py`
+> cases that construct the mcp 2.x `Server` deselected. Measured:
+> `1568 passed, 20 skipped, 4 deselected`.
+
+**Why the file is still not edited.** It is the contract for the arc. Rewriting
+its fixture to construct a 1.x server would make the oracle a thing this branch
+authored, which is the one property it has that nothing else in the suite does.
+
+**What covers the 1.x hook instead.** `tests/test_v110_hardening.py` carries
+`TestMcp1xExecutionContract`, six cases over the 1.x `call_tool` branch through
+the `FakeServer` fixture that `tests/test_v15_integration_confirmation.py`
+already uses: output transformation as a bare string, output transformation
+across `TextContent` blocks, parameter transformation into the handler, the E4
+identity precedence, the documented client-trusting fallback, and the reserved
+keys not leaking into the tool's arguments. Those run wherever `mcp` is
+installed, at either major, and they pass in `/tmp/al19-mcp1`.
+
+## A1.3 K3b amended: the verbatim oracle does not satisfy this project's ruff config
+
+**Measured.** Before any amendment, `ruff check .` reported 27 findings: 2 in
+engine files and 25 in `tests/test_v110_system_review.py`.
+
+**The 2 engine findings were real and are fixed in code**, both introduced by
+this branch: `SIM401` in `agentlock/binding.py` (an `if` expression that is
+`dict.get` with a default) and `SIM105` in `agentlock/integrations/mcp.py` (a
+`try`/`except`/`pass` that is `contextlib.suppress`). Both rewritten. No
+suppression was used for either.
+
+**The 25 remaining are all in the oracle**, and are its house style rather than
+this project's: 10 `E701` (a statement on the same line as its `if` or `try`),
+7 `I001` (unsorted in-function import blocks), 6 `E501` (lines over 100
+characters), 2 `SIM105`. They were present at commit A and were always going
+to be: K3 predicted `ruff clean` without ever having run ruff over the file.
+
+**Amendment.** K3b now reads:
+
+> `ruff check .` is **clean**, with `tests/test_v110_system_review.py` carrying
+> a `per-file-ignores` entry in `pyproject.toml` for `E501`, `E701`, `I001`
+> and `SIM105`, the four rules its verbatim text violates.
+
+The entry is scoped to that one path and to those four rules, and carries a
+comment saying why. Every other file in the repository, this branch's own new
+test file included, is held to the unchanged config. The alternative,
+reformatting the review's file, would have edited the artifact that defines
+done, turning an independent check into a restatement of this branch's own
+opinion.
+
+## A1.4 One defect of this branch's own, recorded
+
+`tests/test_v110_hardening.py` was first written without a
+`pytest.importorskip("mcp")` guard on its six MCP cases, which failed in the
+checkout venv where `mcp` is absent (`6 failed, 24 passed`). That is this
+branch's file and this branch's mistake, fixed by adding the guard, after which
+the same environment reports `24 passed, 6 skipped`. Recorded because the
+freeze doc claims the suite goes green everywhere, and the first measurement
+that said otherwise deserves to be in the record rather than only in the fix.
+
+## A1.5 Behavior changes beyond the seven groups, declared
+
+Three changes in this arc go slightly past the failing assertion that prompted
+them. Each is listed in the CHANGELOG and repeated here so the freeze document
+records the decision and not only the outcome.
+
+1. **`AgentLockFlask` installs its `before_request` hook unconditionally.**
+   E5 requires the `X-AgentLock-Tool` header to be honored where no mapping is
+   configured. Flask installed the hook only when a mapping was given, so that
+   case was unreachable. A request naming no tool and matching no mapping still
+   passes through untouched, which is every unmapped request before this
+   change; the delta is that an app with no mapping now gates a request that
+   names a tool in the header, which is the FastAPI behavior it is being made
+   to match.
+2. **`whitelist_path` no longer passes `/data-private/x` against a `/data`
+   prefix.** A consequence of comparing resolved paths with `commonpath`
+   instead of comparing strings with `startswith`. It is a tightening in the
+   same direction as the two cases the oracle pins, and no test in the suite
+   depended on the looser reading.
+3. **A bearer JWT now beats the identity headers rather than yielding to
+   them.** E5 states it for the configured-JWT case; it is implemented as
+   "a bearer token whose payload names a subject", in both frameworks and in
+   the FastAPI dependency, because that is the condition a request can actually
+   be tested against. No test in the suite sent an `Authorization` header
+   before this arc.
+
+## A1.6 What did not change
+
+`agentlock/types.py` was listed in E9 conditionally, "only if `AuthResult` or a
+status needs it". `AuthResult` is defined in `agentlock/gate.py`, and no token
+or deferral status gained a value: an expired commit resolves to the existing
+`"deny"` and a policy denial to the existing `"denied"`. The file is untouched.
+
+No new denial reason was added. The two reasons the commit path newly attaches,
+`param_lineage` and `novel_lineage`, are the ones `authorize()` has used since
+1.3.0 and 1.4.0 respectively, which is the point: the two enforcement points
+now name the same finding the same way.
