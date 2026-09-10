@@ -1407,3 +1407,393 @@ and the README rather than left for a reader to discover. They are fixed in
 their own repositories, on their own releases.
 
 Everything after this line is append only.
+
+---
+
+## 1.9.1 RED PASS FREEZE (2026-09-10): three more binding gaps
+
+Branch `v1.9.1-binding-collision` at `5ad7066 docs: AMENDMENT 3, v1.9.1 built
+and every prediction matched`. Working tree clean except the new test class this
+freeze adds.
+
+1.9.1 is built but not released: nothing merged, tagged, pushed or uploaded. A
+red pass was run against the built wheel, `sha256
+026c785d827c2fd579e5a4e444ee924a5aff36bf50c9f08a64321cfc316e677c`, whose content
+is identical to this checkout. It found three more binding gaps. They close on
+this branch, before the merge, and the version stays 1.9.1.
+
+Nothing below describes code that has been written. Section 2 of this freeze is
+the engine as it stands, measured.
+
+### 1. The three gaps, as reported
+
+Quoted as received, before any code was read for them.
+
+> **P1. functools.partial:** `partial(send1, HOSTILE)` where
+> `def send1(to, /, **extras)`, called with `to=CONTACT`. `inspect.signature` of
+> the partial omits the pre-bound positional; the gate binds `to=CONTACT` and the
+> function runs with `to=HOSTILE`. Pre-bound keywords have the same shape.
+
+> **P2. str subclass:** `class Liar(str)` overriding `strip` and `casefold` to
+> return CONTACT and `__str__` to return HOSTILE. `_normalize_recipient` calls
+> the overridden methods; the gate sees the contact, the function sends to
+> `str(value)` which is the attacker.
+
+> **P3. Unobservable declared parameter:** `def send(*args, **kw)` with
+> `recipient_parameter="to"` called `send(HOSTILE)`. The gate sees
+> `args=(HOSTILE,)`, `"to"` is absent, Step 8 skips, the call runs. The
+> declaration can never enforce for positional calls.
+
+### 2. The three gaps at the source, measured at 1.9.1
+
+#### P1
+
+`agentlock/binding.py:140-141` binds the callable it is handed:
+
+```python
+    signature = ensure_bindable(func)
+    bound = signature.bind_partial(*args, **kwargs)
+```
+
+For a `functools.partial`, `inspect.signature` reports the signature of the call
+still to be made, not of the function that will run. The arguments the partial
+already carries are gone from it.
+
+```
+$ python3 repro.py
+P1 signature of partial: (**extras)
+P1 RESULT: sent function ran with to = attacker@evil.com
+```
+
+The gate was shown `{'to': 'bob@company.com'}`, which is the value that landed in
+`**extras`, and the function ran with the positional the partial supplied. Both
+`agentlock/decorators.py:136` and `:218` and
+`agentlock/integrations/autogen.py:130` reach this function, so all three
+wrappers carry it. A nested partial behaves identically.
+
+The keyword shape splits by signature. Over `def send1(to, /, **extras)`, where
+`to` is positional only, `inspect.signature` refuses the partial outright and
+1.9.1 already fails closed on it:
+
+```
+partial keyword prebind, po sig
+   sig=SIGERR ValueError: partial object ... has incorrect arguments
+   BINDERR BindingError: Cannot read the signature of ...
+```
+
+Over `def send1(to, **extras)`, where `to` can be passed by keyword, the
+signature becomes `(*, to='bob@company.com', **extras)` and the pre-bound value
+arrives as a default, which `apply_defaults()` already shows the gate. That
+route is bound correctly at 1.9.1 and must stay bound correctly after the fix.
+
+#### P2
+
+`agentlock/policy.py:175-177`, verbatim:
+
+```python
+def _normalize_recipient(value: str) -> str:
+    """Normalize a recipient or allowlist entry: strip, then casefold."""
+    return value.strip().casefold()
+```
+
+The annotation says `str`. The value is whatever the caller passed, and a `str`
+subclass satisfies every `isinstance` check the gate makes on the way here while
+answering `strip` and `casefold` with anything it likes.
+
+```
+P2 recipient=: DecisionType.ALLOW None
+P2 parameters=: DecisionType.ALLOW None
+```
+
+Both routes allow, against a value whose data is the attacker's address, at
+`known_contacts_only` with one contact who is not the attacker.
+
+#### P3
+
+`agentlock/gate.py:859`, the D18 extraction's own condition, verbatim:
+
+```python
+        if _v15 and _rp and isinstance(parameters, dict) and _rp in parameters:
+```
+
+`_rp in parameters` is the skip. `bind_call_parameters` keys a `VAR_POSITIONAL`
+by its own parameter name, because its entries have no names of their own, so a
+positional call to `def send(*args, **kw)` produces `{'args': (HOSTILE,)}` and no
+`to` at all. The declared parameter is absent, the condition is false, pipeline
+step 8 never runs, and the call is allowed.
+
+```
+P3 RESULT: sent to attacker@evil.com calls = 1
+P3 wrap over *args: wrapped OK
+```
+
+The second line is the wrap-time half. `def send(*args)` cannot receive a `to`
+by any route, and the block declaring one is accepted anyway.
+
+### 3. Decisions of record
+
+Recorded as received. Section 4 records two defects in them, found while taking
+Section 2's measurements and before any code was written.
+
+**Q1.** `bind_call_parameters` unwraps `functools.partial` (and
+`partialmethod`) before binding: `func` becomes `partial.func`, `args` becomes
+`partial.args + args`, `kwargs` becomes `{**partial.keywords, **kwargs}`,
+recursively for nested partials. The shadow rule then applies to pre-bound values
+too. `ensure_bindable` applies the same unwrapping so the wrap-time check sees
+the real callable.
+
+**Q2.** In `agentlock/policy.py`, `_normalize_recipient` first coerces with
+`str.__str__(value)` and every recipient helper operates on that plain `str`. In
+`gate.py` D18 extraction, the same coercion is applied to each `str`-typed value
+before it is placed in `recipients`, so `RequestContext` never carries a subclass
+instance. `isinstance` checks are unchanged; the coercion is what changes.
+
+**Q3.** `ensure_bindable` gains an optional keyword `must_observe: str | None`.
+When given: if the (unwrapped) signature has no parameter of that name and no
+`VAR_KEYWORD`, raise `BindingError` at wrap time stating that the declared
+recipient parameter cannot be observed on this callable. Every wrapper
+(`decorators.py` sync and async, autogen `guarded`) passes the block's
+`scope.recipient_parameter` as `must_observe`, resolving it from the
+`AgentLockPermissions` the wrapper already holds; `None` when the block declares
+none.
+
+**Q4.** `bind_call_parameters` gains the same optional `must_observe`. When given
+and the key is absent from the bound parameters and the `VAR_POSITIONAL` tuple is
+non-empty, raise `BindingError` at call time: the call supplied positional
+arguments the gate cannot name while a recipient parameter is declared. When the
+key is absent and there are no positional extras, the existing D19 skip applies
+unchanged.
+
+**Q5.** Version stays 1.9.1 (unreleased). CHANGELOG 1.9.1 Security section
+extended with P1 to P3, and a Threat model note: the gate binds to the callable's
+signature as `inspect` reports it, following `__wrapped__`; a wrapper that
+advertises one signature and alters arguments before calling the inner function
+is the application's own code and outside the boundary.
+
+**Q6.** Files: `agentlock/binding.py`, `agentlock/policy.py`, `agentlock/gate.py`,
+`agentlock/decorators.py`, `agentlock/integrations/autogen.py`, `CHANGELOG.md`,
+`tests/test_v19_enforcement_gaps.py`,
+`docs/PREDICTIONS_v19_enforcement.md` (append only). Nothing else.
+
+### 4. Defects in the decisions, found before this freeze was committed
+
+Two. Both were found by reading the repository while preparing to apply Q1 to
+Q6, and both before any mechanism code was written. They are recorded here for
+the reason Section 4 of the original freeze and Section 4 of the 1.9.1 freeze are
+where they are: nothing had been committed yet, so there is no earlier record for
+an amendment to correct. Q1 to Q6 above are reproduced exactly as received and
+are not edited. The restatements are what the build follows and what Section 6 is
+scored against.
+
+#### T1. Q2's stated invariant is wider than the site Q2 names
+
+Q2 names one site in `gate.py`, the D18 extraction, and one field, `recipients`.
+The reason it gives is wider than that: "so `RequestContext` never carries a
+subclass instance". `RequestContext` carries two recipient fields, not one.
+`agentlock/gate.py:894` passes the caller's asserted `recipient` straight
+through:
+
+```python
+            recipient=recipient,
+```
+
+Coercing only `resolved_recipients` leaves `ctx.recipient` holding whatever the
+caller passed. Enforcement would still be correct, because
+`_normalize_recipient` coerces at the point of comparison, but the invariant Q2
+states as its reason would be false, and XR5 is written against exactly that
+field.
+
+**Restatement, which the build follows:** the coercion is applied at the same
+site to the asserted `recipient` as well as to each entry of
+`resolved_recipients`, so the field Q2's reason names is the field the build
+protects. Everything else in Q2 stands unchanged, including that `isinstance`
+checks are untouched.
+
+#### T2. Q6's file list excludes the one docstring Q3 and Q4 make false
+
+`agentlock/exceptions.py:259-277`, verbatim:
+
+```python
+class BindingError(AgentLockError):
+    """A call's arguments cannot be bound to parameter names, so it cannot be
+    gated.
+
+    Two reasons, raised at two different moments.
+
+    The callable's signature cannot be read.  Raised at wrap time: a wrapper
+    that cannot bind a call's arguments cannot show the gate what the call
+    carries, so it refuses to be built rather than gating a subset of the
+    arguments and letting the rest through.
+
+    Or the call's ``**kwargs`` mapping carries a key that names another
+    parameter of the same callable.  Raised at call time, from inside the
+    binding and before the gate is asked anything: flattening such a key over
+    the parameter it names would show the gate one value while the function
+    ran with the other, so the call is refused instead.  A key equal to the
+    ``**kwargs`` parameter's own name shadows nothing and is bound normally.
+    """
+```
+
+That docstring was itself rewritten one release ago, under S1, because the
+version before it was false. "Two reasons, raised at two different moments" is an
+enumeration, and Q3 and Q4 each add one: a wrap-time reason (a declared recipient
+parameter no signature can carry) and a call-time reason (positional arguments
+the gate cannot name while such a parameter is declared). Following Q6 literally
+ships four reasons under a docstring that says two and lists them.
+
+This is S1's shape, one release later, and the same answer applies.
+
+**Restatement, which the build follows:** `agentlock/exceptions.py` is added to
+Q6's file list, for one edit, the `BindingError` docstring, rewritten to state
+all four reasons and where each is raised from. Nothing else in that file is
+touched. Prediction Z9 is scored against the restated list of nine paths, not
+against Q6's eight.
+
+### 5. Two things the build does not change, recorded so the record is complete
+
+Neither is a defect in a decision. Both are limits the decisions leave in place,
+and naming them here is cheaper than discovering later that the record implied
+otherwise.
+
+**The decorator still requires an explicit `name` over a partial.**
+`agentlock/decorators.py:91` reads `tool_name = name or func.__name__`, and a
+`functools.partial` has no `__name__`. Q1 unwraps inside `bind_call_parameters`
+and `ensure_bindable`; it says nothing about tool naming, and the build changes
+nothing there. Decorating a partial without passing `name` raises
+`AttributeError` at wrap time, which fails closed. XR1 and XR2 pass `name`
+explicitly.
+
+**`unwrap_partial` is public in `agentlock/binding.py` and not re-exported.**
+The wrappers need the callable that will actually run, in order to invoke
+`target(*bound.args, **bound.kwargs)` rather than re-applying the partial's own
+arguments. It is resolved once at wrap time, not per call. It is added to
+`binding.__all__` and deliberately not added to `agentlock/__init__.py`, because
+Q6 excludes that file and no decision asks for a new name on the package's public
+surface.
+
+### 6. Measurements at freeze
+
+Environments are the four of record, unchanged. Full suite on
+`v1.9.1-binding-collision` at `5ad7066`, **before** the new test class exists.
+These are AMENDMENT 3's figures, reproduced:
+
+| Environment | Interpreter | mcp | Result |
+|---|---|---|---|
+| checkout | 3.14.6 | absent | `1504 passed, 14 skipped` |
+| `/tmp/al18-extras` | 3.14.6 | 2.2.0 | `1509 passed, 9 skipped` |
+| `/tmp/al19-mcp1` | 3.13.14 | 1.30.0 | `1508 passed, 10 skipped` |
+| `/tmp/al18-probe313` | 3.13.14 | 2.2.0, pyautogen 0.9.0 | `1510 passed, 8 skipped` |
+
+Full suite **with** the freeze class present, which is the tree this document is
+committed on:
+
+| Environment | Result |
+|---|---|
+| checkout | `1508 passed, 14 skipped, 7 xfailed` |
+| `/tmp/al18-extras` | `1513 passed, 9 skipped, 7 xfailed` |
+| `/tmp/al19-mcp1` | `1512 passed, 10 skipped, 7 xfailed` |
+| `/tmp/al18-probe313` | `1514 passed, 8 skipped, 7 xfailed` |
+
+Eleven tests are added and none is skipped anywhere: the class needs no optional
+extra. Seven carry a strict xfail and four do not, so every environment gains
+exactly 4 passes and 7 xfails over its pre-class figure.
+
+Per test, at freeze, identical in all four environments:
+
+| Test | Shape | At 1.9.1 |
+|---|---|---|
+| XR1 sync decorator over `partial(send1, HOSTILE)` | P1 | XFAIL |
+| XR2 async decorator, same partial | P1 | XFAIL |
+| XR3 partial pre-binding `to` by keyword, positional only signature | P1 | PASSED |
+| XR4 `bind_call_parameters` on a partial with a pre-bound keyword | P1 guard | PASSED |
+| XR5 lying `str` subclass asserted as `recipient` | P2 | XFAIL |
+| XR6 lying `str` subclass in the declared parameter | P2 | XFAIL |
+| XR7 subclass whose data is a contact, methods lying | P2 | XFAIL |
+| XR8 wrap time, `def send(*args)` with `recipient_parameter` declared | P3 | XFAIL |
+| XR9 wrap time, `def send(*args, **kw)` wraps | P3 guard | PASSED |
+| XR10 call time, `send(HOSTILE)` on that wrapper | P3 | XFAIL |
+| XR11 no declared recipient parameter, `def send(*args)` runs | P3 guard | PASSED |
+
+XR3 passes at freeze for a reason the build replaces. `inspect.signature` refuses
+`partial(send1, to=CONTACT)` over a positional only `to`, so 1.9.1 raises
+`BindingError` from the unreadable signature. After Q1 the signature is readable,
+the pre-bound keyword can only reach `**extras`, and the shadow rule refuses it.
+The test asserts what must hold in both worlds: `BindingError` or `TypeError`,
+and the function never runs with the attacker.
+
+XR7 fails at freeze in the direction opposite to XR5 and XR6, which is why it is
+in the set. At 1.9.1 the gate reads the lying methods and denies a value whose
+data is a known contact. The fix is coercion, not a ban on subclasses, and XR7 is
+the half of that rule the other two do not measure.
+
+`ruff check .` reports `All checks passed!`, `mypy agentlock/
+--ignore-missing-imports` reports `Success: no issues found in 34 source files`,
+and the legacy-name grep over `agentlock tests schema` returns 0, all at
+`5ad7066` with the freeze class present.
+
+### 7. Predictions
+
+Frozen before any mechanism code exists.
+
+**Z6.** All eleven XR tests pass with their markers removed, in every
+environment, and no test in `tests/test_v19_enforcement_gaps.py` reports a strict
+XPASS failure. XR3, XR4, XR9 and XR11 have no marker to remove and pass
+throughout, at freeze and after the build.
+
+**Z7.** Suite figures, stated as received and with the arithmetic resolved. The
+new non-skipped test count is 11 in every environment, because none of the eleven
+is guarded.
+
+| Environment | As received | Resolved |
+|---|---|---|
+| checkout | 1504 plus new non-skipped passed, 0 failed, 14 skipped | `1515 passed, 14 skipped, 0 failed` |
+| `/tmp/al18-extras` | 1509 plus new passed, 0 failed, 9 skipped | `1520 passed, 9 skipped, 0 failed` |
+| `/tmp/al19-mcp1` | 0 failed | `1519 passed, 10 skipped, 0 failed` |
+
+`/tmp/al18-probe313` is not named by Z7 and is not scored. It is measured anyway,
+because XC3 runs there against a real `pyautogen 0.9.0` rather than under the
+monkeypatched import check, and the figure is recorded in the amendment. Its
+resolved figure is `1521 passed, 8 skipped`.
+
+**Z8.** `mypy agentlock/ --ignore-missing-imports` reports 0 errors, run with
+`/tmp/al18-extras/bin/mypy`, the binary that produced B4, U4 and Z3. `ruff check
+.` passes. The legacy-name grep over `agentlock tests schema` returns 0.
+
+**Z9.** Files touched, and nothing else: `agentlock/binding.py`,
+`agentlock/policy.py`, `agentlock/gate.py`, `agentlock/decorators.py`,
+`agentlock/integrations/autogen.py`, `agentlock/exceptions.py` (per T2),
+`CHANGELOG.md`, `tests/test_v19_enforcement_gaps.py`,
+`docs/PREDICTIONS_v19_enforcement.md`. Nine paths across the three commits of
+this red pass.
+
+**Z10.** Rebuild in `/tmp/al18-extras` after `rm -rf dist build`: `twine check`
+PASSED on both artifacts, wheel METADATA carries `Metadata-Version: 2.4` and
+`Version: 1.9.1`. A fresh venv `/tmp/al191b-wheel` installs the wheel, and an
+external script written in `/tmp`, outside the repository, reproduces P1 as
+`BindingError`, P2 as a denial, and P3 as `BindingError` at wrap time and at call
+time, against the installed wheel only. The script guards its own premise and
+exits before testing anything if the resolved `agentlock` package does not live
+in the venv's `purelib`.
+
+### 8. What this red pass is not
+
+A behavior-preserving patch, and not a new feature either.
+
+A deployment that gates a `functools.partial` was being authorized against the
+part of the call the partial had not already made. It now binds the whole call,
+and where the partial's own arguments collide with the caller's, the 1.9.1 shadow
+rule refuses it rather than picking a winner.
+
+A deployment that passes a `str` subclass as a recipient was being enforced
+against whatever that subclass's `strip` and `casefold` returned. It is now
+enforced against the string's data. This allows values that used to deny as well
+as denying values that used to allow: XR7 is the first direction and XR5 is the
+second.
+
+A deployment that declared `recipient_parameter` over a variadic signature was
+getting no enforcement at all on positional calls, silently. It now raises at
+wrap time when the parameter can never be carried, and at call time when a
+particular call carries positional arguments the gate cannot name. Both are new
+refusals on paths that previously ran.
+
+Everything after this line is append only.
