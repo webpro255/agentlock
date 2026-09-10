@@ -1611,7 +1611,6 @@ class TestBranchWheelRedPass:
             return None
         return seen[0]
 
-    @pytest.mark.xfail(strict=True, reason="G4, closed by the at sign rule")
     @pytest.mark.parametrize("value", [
         "bob@compаny.test",
         "bob@[10.0.0.1]",

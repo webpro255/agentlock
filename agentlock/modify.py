@@ -56,8 +56,33 @@ _EMAIL_PATTERN = re.compile(
     r"\b[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Z|a-z]{2,})\b"
 )
 
-# G3.  A recipient field separates addresses with either of these.
+# G3.  A recipient field separates RECIPIENTS with either of these.  Whitespace
+# separates the parts of ONE recipient, which is how a display name is written,
+# so it is not a peer of these two and gets its own split below.
 _RECIPIENT_SEPARATORS = re.compile(r"[,;]")
+
+
+def _address_domain(token: str) -> str | None:
+    """The domain of a token that is exactly one address, or ``None``.
+
+    G4.  The pattern is used as a FULL match here, not as a search.  A search
+    asks whether some substring of the token is an address, which is how
+    ``bob@company.test@evil.test`` was judged on ``company.test`` and allowed:
+    the pattern read the part it recognized and stopped before the rest.  A
+    full match asks whether the token IS an address, so anything the pattern
+    cannot account for in its entirety is refused rather than partly read.
+
+    Angle brackets around the address are stripped first, because that is how a
+    display name is written and the address inside them is what the token is
+    about.  The bracketed form is taken from the LAST ``<`` so that
+    ``Bob<bob@company.test>``, written without a space, is read the same way as
+    ``Bob <bob@company.test>``.
+    """
+    inner = token
+    if inner.endswith(">") and "<" in inner:
+        inner = inner[inner.rindex("<") + 1:-1]
+    match = _EMAIL_PATTERN.fullmatch(inner)
+    return match.group(1) if match else None
 
 
 def apply_output_modifier(
@@ -306,74 +331,91 @@ class ModifyEngine:
         is the FIRST address in the value and nothing after it.
         ``"bob@company.test, eve@outside.test"`` was judged on ``company.test``
         alone, passed, and the tool was invoked with both recipients intact.
-        The decision was a function of the order the addresses were written in:
-        the same recipient set blocked when the outside address came first and
-        allowed when it came second.  A restriction whose answer depends on
-        spelling order is not a restriction.
+        The decision was a function of the order the addresses were written in.
+        1.10.1 made the parse exhaustive over the pieces of the value, which
+        closed that.
 
-        The whole value is parsed now.  It is split on both comma and
-        semicolon, each piece is stripped, pieces that are empty after
-        stripping are discarded, and then EVERY remaining piece must carry at
-        least one address and EVERY domain found in EVERY piece must be
-        allowed.  One unparseable piece or one disallowed domain blocks the
-        value.  Order cannot change the answer, because no piece is privileged
-        over any other.
+        G4.  What 1.10.1 left unchanged was how the value is recognized as a
+        recipient list at all: it asked ``_EMAIL_PATTERN`` whether it could
+        find an address anywhere, and if it could not, the value was held to
+        carry none and returned unchanged.  That is correct for a field holding
+        something that is not a recipient, and wrong for a field holding a
+        recipient the pattern cannot read.  ``_EMAIL_PATTERN`` is ASCII only
+        and wants a dotted domain, so ``bob@compаny.test`` spelled with a
+        Cyrillic letter and the address literal ``bob@[10.0.0.1]`` both failed
+        it and both passed a domain allowlist.  Both are deliverable.
+        ``bob@company.test@evil.test`` passed for the neighboring reason: the
+        pattern recognized the leading part, and what a mail system does with
+        the rest was never decided.
 
-        Addresses are collected per piece with ``finditer`` rather than
-        ``search``, so a piece holding more than one address has all of them
-        checked and none can shelter behind the first.  The display name form
-        ``Bob <bob@company.test>`` is accepted, because the pattern finds the
-        address inside it.  Domains compare case insensitively.
+        **The at sign decides, not the pattern.**  An at sign is what makes a
+        string an address; the pattern is one opinion about which addresses are
+        well formed, and an engine that refuses to decide about the addresses
+        its own pattern cannot read is deciding in the caller's favor.  So:
 
-        **The scope, stated rather than left to be discovered.**  A value that
-        carries no address ANYWHERE is returned unchanged.  A field with no
-        address in it is not a recipient list, and an allowlist over domains
-        can only govern things that have a domain.  This is the behavior the
-        engine has always had and it is what
-        ``TestRestrictDomain::test_no_email_in_field`` pins.  Once the value
-        carries even one address, every remaining piece is held to the standard
-        above, so the smuggling shape the finding is about, an allowed address
-        followed by anything else, blocks.
+        1. A value with no ``@`` anywhere is returned unchanged.  A field with
+           no at sign in it is not a recipient list, and an allowlist over
+           domains can only govern things that have a domain.  This is the
+           behavior the engine has always had and it is what
+           ``TestRestrictDomain::test_no_email_in_field`` pins.
+        2. Otherwise the value is split on comma and semicolon into pieces,
+           each piece is stripped, and pieces empty after stripping are
+           discarded.  That is what makes a trailing separator and a whitespace
+           only piece benign.
+        3. Every remaining piece must carry at least one whitespace separated
+           token containing an ``@``.  A piece with none blocks the value:
+           once a value has been established as a recipient list, a piece the
+           parser cannot read is not evidence of innocence.
+        4. Every token containing an ``@``, in every piece, must parse as
+           exactly one ASCII address, and its domain must be on the allowlist
+           after casefold.  A token that does not parse blocks the value.
 
-        Two limits follow from parsing this way, and both fail closed.  A
-        display name containing a comma, as in ``"Doe, Bob"
+        The two separators do different jobs, which is what they already are.
+        A comma or a semicolon separates RECIPIENTS.  Whitespace separates the
+        parts of one recipient, which is how ``Bob <bob@company.test>`` is
+        written, so the display name form is accepted: the token carrying the
+        at sign parses once its angle brackets come off, and the tokens that
+        carry no at sign are the name.  Domains compare after casefolding, so a
+        value differing from the allowlist only in case is the same value.
+
+        Order cannot change the answer, because no piece and no token is
+        privileged over any other.
+
+        Two limits, both fail closed, both stated rather than left to be
+        discovered.  A display name containing a comma, as in ``"Doe, Bob"
         <bob@company.test>``, splits into pieces that do not each carry an
         address and is therefore BLOCKED; honoring RFC 5322 quoting here would
         mean writing a mail parser, and getting one subtly wrong is how the
         first match rule happened.  A bare local name with no domain, which a
         mail system may still know how to route, is not covered, for the same
-        reason as the no address case.
+        reason as the no at sign case: there is no domain in it to compare.
         """
         allowed = config.get("allowed_domains", [])
         if not allowed:
             return value
 
-        allowed_lower = {str(d).lower() for d in allowed}
+        if "@" not in value:
+            return value
+
+        allowed_folded = {str(d).casefold() for d in allowed}
         blocked = "[BLOCKED: external domain not allowed]"
 
         pieces = [
             piece.strip()
             for piece in _RECIPIENT_SEPARATORS.split(value)
         ]
-        pieces = [piece for piece in pieces if piece]
 
-        found_any = False
-        unparseable = False
         for piece in pieces:
-            domains = [m.group(1).lower() for m in _EMAIL_PATTERN.finditer(piece)]
-            if not domains:
-                # A piece with no address is only a problem once some other
-                # piece has established that this value IS a recipient list.
-                unparseable = True
+            if not piece:
                 continue
-            found_any = True
-            if any(domain not in allowed_lower for domain in domains):
+            tokens = [token for token in piece.split() if "@" in token]
+            if not tokens:
                 return blocked
+            for token in tokens:
+                domain = _address_domain(token)
+                if domain is None or domain.casefold() not in allowed_folded:
+                    return blocked
 
-        if not found_any:
-            return value
-        if unparseable:
-            return blocked
         return value
 
     def _action_whitelist_path(self, value: str, config: dict[str, Any]) -> str:

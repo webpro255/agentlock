@@ -430,10 +430,14 @@ class AgentLockMCPServer:
         ``BlobResourceContents`` carries base64 in ``blob`` and no ``text``, so
         the second case leaves it alone: this engine does not claim to decode a
         blob, guess its media type, and redact inside it.  ``ResourceLink``
-        carries a URI and no content at all, so it reaches the third case and
-        comes back untouched, because a link is a reference to data rather than
-        the data.  A host serving sensitive material as a blob or behind a link
-        has to redact it at the source.
+        carries no content at all, so it reaches the third case and comes back
+        untouched: BOTH its ``uri`` and its ``name`` are passed through, and
+        neither is transformed.  A link is a reference to data rather than the
+        data, and following one to find out what it points at would mean
+        fetching it, which is not something an authorization decision does.
+        The name travels with the link, so a host that puts sensitive material
+        in either field is publishing it and has to redact it at the source,
+        exactly as it does for a blob.
         """
         text = getattr(item, "text", None)
         if isinstance(text, str):
@@ -492,6 +496,16 @@ class AgentLockMCPServer:
         which of the two the installed version is.  Both SDK majors are served
         by the same code, which is why the structured field is looked up under
         both of its spellings.
+
+        **What is passed through unchanged, deliberately.**  A result's
+        ``_meta``, which the Python models spell ``meta``, is not walked.  The
+        two payloads above are what a client reads as the ANSWER; ``_meta`` is
+        the transport's own channel, carrying things like a progress token and
+        a cursor, and rewriting values there would change how a client routes a
+        result rather than what it reads out of one.  A handler that puts
+        sensitive material in ``_meta`` is putting it outside the payload this
+        engine claims to cover.  ``_rewrite_leaf``'s own docstring states what
+        it passes through within a content block.
         """
         if isinstance(result, str):
             return modify(result)
