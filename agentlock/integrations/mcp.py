@@ -406,71 +406,118 @@ class AgentLockMCPServer:
         return dict(effective) if effective is not None else arguments
 
     @staticmethod
-    def _modify_text_content(result: Any, modify: Callable[[str], str]) -> Any:
-        """Apply an output transformation to every text item in a result.
+    def _rewrite_leaf(item: Any, modify: Callable[[str], str]) -> Any:
+        """Apply the transformation to one content item.
 
-        An MCP handler does not return a string.  It returns a
-        ``CallToolResult`` carrying a list of content blocks, or that list on
-        its own, and the text a client actually reads is the ``text`` field of
-        each ``TextContent`` in it.  A transformation that only knew how to
-        rewrite a string therefore never touched anything an MCP client saw,
-        which is why a declared output transformation was inert over this
-        adapter through 1.9.1.
+        Three shapes, in the order they are tried:
 
-        Content models are rewritten in place where they allow it and copied
-        where they do not, so a frozen SDK model is handled without assuming
-        which of the two the installed version is.
+        * an item carrying ``text`` directly, which is ``TextContent`` and also
+          ``TextResourceContents`` when this is reached through the case below;
+        * an item carrying a ``resource``, which is ``EmbeddedResource``.  G2:
+          an embedded resource holds its text one level down, at
+          ``.resource.text``, and the walk through 1.10.0 read ``.text`` on the
+          outer object, found nothing, and handed the whole model to
+          ``apply_output_modifier``, which returns a custom object unchanged by
+          its own stated contract.  The declared transformation therefore never
+          reached the string a client reads.  The resource is now rewritten and
+          written back;
+        * anything else, which goes to ``apply_output_modifier`` so that a
+          handler returning plain strings, a mapping, or bytes rather than SDK
+          content blocks is transformed on the same terms as every other
+          execution path.
 
-        E11: an item that is not a content model is handed to
-        ``apply_output_modifier``, so a handler that returns plain strings, a
-        mapping, or bytes rather than SDK content blocks is transformed on the
-        same terms as every other execution path.  The types that walk covers
-        are listed on it; anything outside them is returned untouched.
-
-        E15: a ``CallToolResult`` carries TWO payloads, and the content blocks
-        are only one of them.  ``structured_content`` is the machine-readable
-        answer, which is what a client reads it for, and through the first red
-        pass this method stopped at the content list and never looked at it.  A
-        handler putting the same value in both returned one copy redacted and
-        the other intact.  The structured payload now goes through the same
-        walk, under either SDK major's spelling of the field.
+        **What is passed through unchanged, deliberately.**
+        ``BlobResourceContents`` carries base64 in ``blob`` and no ``text``, so
+        the second case leaves it alone: this engine does not claim to decode a
+        blob, guess its media type, and redact inside it.  ``ResourceLink``
+        carries a URI and no content at all, so it reaches the third case and
+        comes back untouched, because a link is a reference to data rather than
+        the data.  A host serving sensitive material as a blob or behind a link
+        has to redact it at the source.
         """
-
-        def rewrite(item: Any) -> Any:
-            text = getattr(item, "text", None)
-            if not isinstance(text, str):
-                return apply_output_modifier(item, modify)
+        text = getattr(item, "text", None)
+        if isinstance(text, str):
             new_text = modify(text)
             if new_text == text:
                 return item
             return _set_field(item, "text", new_text)
 
+        resource = getattr(item, "resource", None)
+        if resource is not None:
+            resource_text = getattr(resource, "text", None)
+            if isinstance(resource_text, str):
+                new_resource = AgentLockMCPServer._rewrite_leaf(resource, modify)
+                if new_resource is resource:
+                    return item
+                return _set_field(item, "resource", new_resource)
+            # BlobResourceContents and anything else without text.
+            return item
+
+        return apply_output_modifier(item, modify)
+
+    @staticmethod
+    def _walk_payload(result: Any, modify: Callable[[str], str]) -> Any:
+        """Apply an output transformation to every text payload in a result.
+
+        This is the ONE walker over an MCP result, and both output policies go
+        through it: the declared output transformation and the data policy's
+        automatic redaction.  G2: through 1.10.0 they did not share a walk.
+        The transformation had this one and the data policy had
+        ``isinstance(result, str)``, which is never true of an MCP result, so a
+        tool that declared ``prohibited_in_output`` with ``redaction="auto"``
+        and no modify policy had its redaction skipped entirely and leaked
+        through every shape at once.  Two policies over the same payload need
+        one definition of what the payload is, or the weaker definition decides
+        what leaks.
+
+        An MCP handler does not return a string.  It returns a
+        ``CallToolResult`` carrying a list of content blocks, or that list on
+        its own, and the text a client actually reads is the ``text`` field of
+        each block.  The shapes covered, and they are the whole list:
+
+        * ``str``: modified, which is the plain return an older handler makes.
+        * ``list``: every item walked as a content item.
+        * a result with a ``content`` list: every item walked, then the
+          structured payload walked as well.  E15: a ``CallToolResult`` carries
+          TWO payloads and the content blocks are only one of them.
+          ``structured_content`` is the machine-readable answer, which is what
+          a client reads it for, and a handler putting the same value in both
+          must not get one copy redacted and the other intact.
+        * anything else, including a plain mapping or sequence return, which
+          the 1.x handler contract allows: handed to ``apply_output_modifier``,
+          whose own docstring lists what it covers.
+
+        Content models are rewritten in place where they allow it and copied
+        where they do not, so a frozen SDK model is handled without assuming
+        which of the two the installed version is.  Both SDK majors are served
+        by the same code, which is why the structured field is looked up under
+        both of its spellings.
+        """
         if isinstance(result, str):
             return modify(result)
 
         if isinstance(result, list):
-            return [rewrite(item) for item in result]
+            return [
+                AgentLockMCPServer._rewrite_leaf(item, modify) for item in result
+            ]
 
         content = getattr(result, "content", None)
         if not isinstance(content, list):
-            # E11: not a content-carrying model, so the walk decides.  E15: a
-            # plain mapping or sequence return, which the 1.x handler contract
-            # allows, is walked on exactly these terms and nothing more is
-            # needed for it.
             return apply_output_modifier(result, modify)
 
-        rewritten = [rewrite(item) for item in content]
+        rewritten = [
+            AgentLockMCPServer._rewrite_leaf(item, modify) for item in content
+        ]
         if rewritten != content:
             result = _set_field(result, "content", rewritten)
-        # E15: the content blocks are not the whole result.
-        return AgentLockMCPServer._modify_structured_content(result, modify)
+        return AgentLockMCPServer._walk_structured(result, modify)
 
     @staticmethod
-    def _modify_structured_content(result: Any, modify: Callable[[str], str]) -> Any:
+    def _walk_structured(result: Any, modify: Callable[[str], str]) -> Any:
         """Apply the walk to a result's structured payload, if it has one.
 
         E15.  Both field names are tried because the two SDK majors spell it
-        differently and one applier serves both hooks.  A payload that is
+        differently and one walker serves both hooks.  A payload that is
         ``None`` is left alone: absent is not the same as empty, and writing a
         walked ``None`` back would be a change with nothing behind it.
         """
@@ -530,15 +577,20 @@ class AgentLockMCPServer:
         # ``gate.execute`` applies it: after the call, before redaction.
         modify = getattr(auth, "modify_output_fn", None)
         if modify is not None:
-            result = self._modify_text_content(result, modify)
+            result = self._walk_payload(result, modify)
 
-        # Apply redaction
-        if isinstance(result, str):
-            redaction = gate.redact_output(name, result)
-            if redaction.was_redacted:
-                return redaction.redacted
+        # G2: the data policy's automatic redaction, over the SAME walk.  It
+        # was guarded by ``isinstance(result, str)`` through 1.10.0, which is
+        # never true of an MCP result, so a tool declaring
+        # ``prohibited_in_output`` with ``redaction="auto"`` had this step
+        # skipped and leaked through every shape the walk covers.  Redaction of
+        # an unconfigured tool is the identity, so walking unconditionally
+        # changes nothing for a tool that declared no data policy.
+        def redact(text: str) -> str:
+            redaction = gate.redact_output(name, text)
+            return redaction.redacted if redaction.was_redacted else text
 
-        return result
+        return self._walk_payload(result, redact)
 
 
     def register_tool(
