@@ -1576,3 +1576,225 @@ unchanged at the stated limit.
 **Q7.** `README.md` counts move to the Q2 figures and the CHANGELOG's 1.10.0
 suite sentence moves with them. The added-test count in the README's Versions
 prose moves from 88 to 96 and `TestRedPass` from 25 to 33.
+
+---
+
+# AMENDMENT 3
+
+Date: 2026-09-10. Appended after STEP 1 and STEP 2, before the code commit.
+The RED PASS 2 FREEZE section above is left exactly as it was frozen; this
+section records what happened to each of its predictions and amends the one
+that was defective.
+
+## A3.1 Result table
+
+| # | Prediction | Measured | Verdict |
+|---|---|---|---|
+| Q1a | 4 strict xfail markers removed; `33 passed` in `/tmp/al18-extras` and `/tmp/al18-probe313` | 4 removed; `33 passed` in both | MET |
+| Q1b | `/tmp/al19-mcp1`: `27 passed, 6 skipped` | `27 passed, 6 skipped` | MET |
+| Q1c | checkout venv: `29 passed, 4 skipped` | `27 passed, 6 skipped` | **MISMATCH, prediction defect, amended in A3.2** |
+| Q2a | `/tmp/al18-extras`: 1616 passed, 9 skipped, 0 failed | `1616 passed, 9 skipped` | MET |
+| Q2b | checkout venv: 1595 passed, 30 skipped, 0 failed | `1595 passed, 30 skipped` | MET |
+| Q2c | `/tmp/al19-mcp1`, 4 deselected: 1595 passed, 26 skipped, 0 failed | `1595 passed, 26 skipped, 4 deselected` | MET |
+| Q2d | `/tmp/al18-probe313`: 1617 passed, 8 skipped, 0 failed | `1617 passed, 8 skipped` | MET |
+| Q3a | `mypy agentlock/ --ignore-missing-imports` clean in all three; bare invocation unchanged from S4.4; 0 findings in the two edited files | clean in all three; bare invocation 1, 1 and 3 findings exactly as at S4.4; 0 findings in either edited file | MET |
+| Q3b | `ruff check .` clean, no new `per-file-ignores` entry | `All checks passed!`, no new entry | MET |
+| Q3c | 0 em dashes, 0 ASCII double hyphens outside the flag A2.5 declared, corpus grep 0 | 0, and the only ASCII double hyphen in the diff is that same declared flag in the CHANGELOG suite sentence, and 0 | MET |
+| Q4 | files exactly E17 or a proper subset; gate, decorators, types, fastapi and flask untouched | 5 files, all within E17; the five named files untouched | MET |
+| Q5 | zero edits to existing test files; oracle 33 passed | `tests/test_v110_system_review.py` byte identical; `33 passed, 4 warnings` in the checkout and again against the rebuilt wheel from outside it | MET |
+| Q6 | rebuild `twine check` PASSED at 1.10.0; fresh wheel venv reports F4 closed on both majors, F5 closed with types preserved, F6 unchanged | both artifacts `PASSED`; `Version 1.10.0`; the script reports CLOSED on all six checks, F6 UNCHANGED, and exits 0 | MET |
+| Q7 | README counts move to the Q2 figures; added-test count 88 to 96; `TestRedPass` 25 to 33 | done, and the CHANGELOG suite sentence moved with them | MET |
+
+One mismatch, and it is a defect in the prediction rather than in the engine.
+It is amended below rather than worked around in code.
+
+## A3.2 Q1c amended, and a figure in AMENDMENT 2 corrected with it
+
+**Measured.** In the checkout venv, which has no `mcp` at all, the fixed
+`TestRedPass` is `27 passed, 6 skipped`, not the predicted `29 passed,
+4 skipped`. The class total is 33 either way, so the mismatch is entirely in
+how the 33 split.
+
+The six skips, named:
+
+```
+tests/test_v110_hardening.py:694  test_an_mcp_client_cannot_claim_a_role_over_a_session
+tests/test_v110_hardening.py:738  test_an_mcp_1x_client_cannot_claim_a_role_over_a_session
+tests/test_v110_hardening.py:979  test_mcp_2x_structured_content_is_modified
+tests/test_v110_hardening.py:1021 test_mcp_1x_structured_content_is_modified
+tests/test_v110_hardening.py:1056 test_mcp_1x_a_list_return_is_walked
+tests/test_v110_hardening.py:1084 test_mcp_1x_a_mapping_return_is_walked
+```
+
+Four of those are this pass's own cases, which S4.2 predicted and measured
+correctly. The other two are the E10 pair from the previous pass, and BOTH of
+them skip here: `importorskip("mcp")` guards each, and the checkout venv has no
+`mcp`.
+
+**Where the wrong number came from.** A2.2 records the fixed `TestRedPass` in
+the checkout venv as `24 passed, 1 skipped`. Measured now at `33d0386`, with
+the tree exactly as AMENDMENT 2 left it:
+
+```
+tests/test_v110_hardening.py::TestRedPass   23 passed, 2 skipped
+```
+
+A2.2's figure is one skip short. Its argument is unaffected: the 1.x companion
+was added so that skipping the 2.x case where only a 1.x SDK is installed would
+not leave the finding uncovered, and that is exactly what it does in
+`/tmp/al19-mcp1`. What A2.2 did not say is that in an environment with NO SDK
+both cases skip together, which is the correct and intended outcome and simply
+was not counted.
+
+**How this pass then repeated it.** Q1c took A2.2's `24 passed, 1 skipped` as
+given and added this pass's four cases to it, without re-measuring the figure
+it was building on. That is precisely the move the standing rule exists to
+forbid: a number was propagated from a prior document instead of being
+re-measured against the artifact it describes. The rule was written about
+version, license and test-count claims, and a per-class test count is a
+test-count claim.
+
+Two things make this a small error rather than a large one, and neither is a
+defense of it. Q2b, the full-suite figure for the same environment, was derived
+from a measurement taken at `33d0386` in S4.1 rather than from a prior document,
+and it is exactly right: `1595 passed, 30 skipped`. And S4.2's own prose says
+the checkout venv gains four skips, which reconciles. Only the per-class
+absolute figure was carried forward unmeasured.
+
+**Amendment.** Q1 now reads:
+
+> Every one of the 4 `xfail(strict=True)` markers is removed, and all 33
+> `TestRedPass` cases pass in every environment where their framework and SDK
+> major are present. Measured: `33 passed` in `/tmp/al18-extras` and
+> `/tmp/al18-probe313`; `27 passed, 6 skipped` in `/tmp/al19-mcp1` (the four F3
+> cases, the 2.x MCP role case and the 2.x structured content case); and
+> `27 passed, 6 skipped` in the checkout venv (those same four F3 cases are
+> absent from that list, because fastapi and flask ARE installed there; the six
+> are both MCP role cases, both structured content cases and both 1.x guards).
+
+and A2.2's checkout venv figure is corrected from `24 passed, 1 skipped` to
+**`23 passed, 2 skipped`**, measured at `33d0386`. No other figure in
+AMENDMENT 2 moves; all four of its full-suite figures reproduce exactly.
+
+## A3.3 E16's bytes clause, resolved as the freeze said it would be
+
+S2 recorded, before the build, that E16's instruction to state "non-UTF-8 bytes
+are not modified" is false of the engine, and that the behavior would be left
+alone and the docstring made true instead. That is what happened. The bytes
+branch of `apply_output_modifier` is byte for byte unchanged, and the docstring
+now carries a "What this does not modify" block naming three limits: dictionary
+keys, objects, and bytes that are not valid UTF-8, the last of which says that
+the readable part IS transformed and the unreadable part is neither transformed
+nor preserved.
+
+The open question is restated here so it does not close by being forgotten: if
+the intent was that non-UTF-8 bytes should pass through untouched, that is a
+behavior change to E11's stated choice of `errors="replace"`, it belongs in its
+own finding with its own freeze, and this pass did not make it.
+
+## A3.4 What the fix actually changed, stated for the record
+
+**One setter where there were two.** `_modify_text_content` already carried a
+set-in-place-then-copy fallback for content models, and the structured payload
+needs the same one. Rather than write it twice, it is now a module-level
+`_set_field(obj, name, value)` in `agentlock/integrations/mcp.py`, and the
+content rewrite path was folded onto it. The behavior of that path is
+unchanged, which the previous pass's own reproduction script confirms against
+the rebuilt wheel: F1, F2 and F3 all still report CLOSED.
+
+**An object that will take neither a set nor a copy is returned unchanged.**
+`_set_field` swallows the failure rather than raising. A declared
+transformation that could not be applied is not a reason to fail a call the
+gate has already authorized and the tool has already run, and the caller is
+better served by the untransformed value than by an exception from inside the
+adapter. This is the rule the content path already had; it is now stated once,
+where the fallback lives.
+
+**Both field names, tried in order, and `None` left alone.** The 2.x SDK's
+`structured_content` carries `structuredContent` as a serialization alias,
+which attribute access does not see, so the alias cannot stand in for the 1.x
+spelling and both names have to be tried. A payload that is `None` is skipped:
+absent is not empty, and writing a walked `None` back would be a change with
+nothing behind it. Measured at the installed versions, neither SDK's model is
+frozen, so the copy fallback does not fire today; it is written because
+`_modify_text_content` already needed one for `content` and an SDK that freezes
+one field can freeze the other.
+
+**Sets rebuild the plain type, not the subclass.** `set` comes back `set` and
+`frozenset` comes back `frozenset`, which is the distinction that matters to a
+caller putting the value in another set. A subclass of either degrades to the
+plain type, on exactly the reasoning A2.6 gave for `dict` and `list`: there is
+no general way to call an arbitrary subclass's constructor. The docstring says
+so rather than leaving a caller to find out.
+
+**F6 is pinned by cases that assert the leak.** The two F6 guards assert that a
+dict keyed by the secret comes back with that key intact and that an object
+whose `__str__` carries the secret comes back as the same object. Asserting a
+leak reads strangely until the alternative is considered: a limit that no test
+holds is a limit that moves quietly. If a future change starts modifying keys
+or mutating objects, these fail and the decision gets argued instead of drifting.
+
+## A3.5 Final measurements
+
+Suite, all four environments, 0 failed in each:
+
+```
+/tmp/al18-extras    1616 passed, 9 skipped, 35 warnings in 3.53s
+checkout venv       1595 passed, 30 skipped, 34 warnings in 3.37s
+/tmp/al19-mcp1      1595 passed, 26 skipped, 4 deselected in 3.05s
+/tmp/al18-probe313  1617 passed, 8 skipped, 1 warning in 3.44s
+```
+
+`TestRedPass` alone: `33 passed` in `/tmp/al18-extras` and
+`/tmp/al18-probe313`, `27 passed, 6 skipped` in `/tmp/al19-mcp1` and in the
+checkout venv.
+
+Oracle alone, `/tmp/al18-extras`, from a file byte identical to the one the
+external review supplied: `33 passed, 4 warnings in 0.43s`.
+
+Types and lint:
+
+```
+mypy agentlock/ --ignore-missing-imports   Success in all three environments
+mypy agentlock/                            1, 1 and 3 findings, all optional-dependency
+                                           stubs, unchanged from the S4.4 baseline
+ruff check .                               All checks passed!
+```
+
+Rebuild, `/tmp/al18-extras`:
+
+```
+Successfully built agentlock-1.10.0.tar.gz and agentlock-1.10.0-py3-none-any.whl
+Checking dist/agentlock-1.10.0-py3-none-any.whl: PASSED
+Checking dist/agentlock-1.10.0.tar.gz: PASSED
+```
+
+`importlib.metadata.version("agentlock")` in the fresh wheel venv: `1.10.0`.
+The version did not move; 1.10.0 is unreleased and these findings close inside
+it, as the first three did.
+
+External reproduction, `/tmp/al110_redpass2_repro.py`, run from `/tmp` against
+a venv holding only the rebuilt wheel and its extras:
+
+```
+engine 1.10.0 from /tmp/al110-redpass2-wheel/lib/python3.14/site-packages/agentlock/__init__.py
+F4 mcp 2.x: CLOSED (structured {'note': 'Customer SSN [REDACTED:ssn]'})
+F4 mcp 1.x: CLOSED (structured {'note': 'Customer SSN [REDACTED:ssn]'})
+E15 list return: CLOSED
+E15 mapping return: CLOSED
+F5 set: CLOSED (set {'Customer SSN [REDACTED:ssn]'})
+F5 frozenset: CLOSED (frozenset)
+F6 stated limit: UNCHANGED (dict key intact=True, object identical=True)
+exit=0
+```
+
+The FIRST red pass's script, `/tmp/al110_redpass_repro.py`, run unchanged
+against the same new wheel, still reports F1, F2 and F3 CLOSED and exits 0. The
+oracle, copied outside the checkout and run against that wheel: `33 passed`.
+
+The rebuilt artifacts:
+
+```
+d2afa56afaedfe1a67c374bdf58280310d80e37b502deacd81808cc2a1453417  dist/agentlock-1.10.0-py3-none-any.whl
+c754494d57b0573bb49bce2b3eb58068f57e74259d6c67a14dbed6f32195e1c5  dist/agentlock-1.10.0.tar.gz
+```
