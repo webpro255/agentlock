@@ -491,3 +491,510 @@ def test_x8_uninspectable_callable_refuses_to_wrap():
         agentlock_decorator(gate, name="opaque_tool", permissions=_perms())(
             Uninspectable()
         )
+
+
+# ---------------------------------------------------------------------------
+# 1.9.1: variadic keyword names that collide with a bound parameter
+# ---------------------------------------------------------------------------
+
+
+class TestBindingCollision:
+    """C1 to C3, from the same external review that found G1 to G4.
+
+    ``bind_call_parameters`` flattens a ``VAR_KEYWORD`` mapping onto the
+    top-level parameters dict with ``parameters.update(value)``. When a
+    flattened key equals the name of another bound parameter, the flattened
+    value overwrites the bound one, and the gate is then shown a value the
+    function does not receive.
+
+    C1 is the hiding: ``def send(to, /, **extras)`` called as
+    ``send(hostile, to=contact)`` shows the gate the contact while the
+    function runs with the hostile address. C2 is the same shape over
+    ``*args``. C3 is the case that is not a hiding and must keep working:
+    ``def g(**kw)`` called as ``g(kw="spoof")`` shows the gate exactly what
+    the function receives, because ``kw`` is the variadic parameter itself
+    and not another parameter it could shadow.
+
+    XC1 to XC4 were marked ``xfail(strict=True)`` at freeze and measured
+    failing against 1.9.0. The markers came off when the collision rule
+    landed; the tests are unchanged otherwise and are now the regression guard
+    for it. XC5 and XC6 never carried a marker: they are the guards that the
+    collision rule itself must not break.
+    """
+
+    def test_xc1_sync_decorator_rejects_a_variadic_key_shadowing_a_parameter(self):
+        """C1 through the sync ``@agentlock`` wrapper.
+
+        The gate must never be shown ``to=CONTACT`` for a call the function
+        will run with ``to=HOSTILE``. The call is refused before ``authorize``
+        is reached, so nothing is authorized and nothing executes.
+        """
+        from agentlock.decorators import agentlock as agentlock_decorator
+        from agentlock.exceptions import BindingError
+
+        calls = {"n": 0}
+        gate = _gate()
+
+        @agentlock_decorator(gate, name="send_email", permissions=_perms())
+        def send_email(to, /, **extras):
+            calls["n"] += 1
+            return "sent"
+
+        with pytest.raises(BindingError) as exc:
+            send_email(HOSTILE, to=CONTACT, _user_id="alice", _role="user")
+        assert "to" in str(exc.value)
+        assert "send_email" in str(exc.value)
+        assert calls["n"] == 0
+
+    def test_xc2_async_decorator_rejects_a_variadic_key_shadowing_a_parameter(self):
+        """C1 through the async wrapper. Same shape, same refusal."""
+        from agentlock.decorators import agentlock as agentlock_decorator
+        from agentlock.exceptions import BindingError
+
+        calls = {"n": 0}
+        gate = _gate()
+
+        @agentlock_decorator(gate, name="send_email", permissions=_perms())
+        async def send_email(to, /, **extras):
+            calls["n"] += 1
+            return "sent"
+
+        with pytest.raises(BindingError) as exc:
+            asyncio.run(
+                send_email(HOSTILE, to=CONTACT, _user_id="alice", _role="user")
+            )
+        assert "to" in str(exc.value)
+        assert "send_email" in str(exc.value)
+        assert calls["n"] == 0
+
+    def test_xc3_autogen_guarded_rejects_a_variadic_key_shadowing_a_parameter(
+        self, monkeypatch
+    ):
+        """C1 through ``protect_functions``.
+
+        ``_check_autogen_available`` is monkeypatched to a no op, as X3 does.
+        The wrapper, the gate and the permission block are all real.
+        """
+        from agentlock.exceptions import BindingError
+        from agentlock.integrations import autogen as al_autogen
+
+        monkeypatch.setattr(al_autogen, "_check_autogen_available", lambda: None)
+
+        calls = {"n": 0}
+        gate = _gate()
+
+        def send_email(to, /, **extras):
+            calls["n"] += 1
+            return "sent"
+
+        protected = al_autogen.protect_functions(
+            {"send_email": send_email}, gate, {"send_email": _perms()}
+        )
+        guarded = protected["send_email"]
+
+        with pytest.raises(BindingError) as exc:
+            guarded(
+                HOSTILE,
+                to=CONTACT,
+                _agentlock_user_id="alice",
+                _agentlock_role="user",
+            )
+        assert "to" in str(exc.value)
+        assert "send_email" in str(exc.value)
+        assert calls["n"] == 0
+
+    def test_xc4_variadic_key_shadowing_var_positional_is_rejected(self):
+        """C2, measured on the binding function directly.
+
+        ``f(1, 2, args="spoof")`` binds ``args=(1, 2)`` and then flattens
+        ``args="spoof"`` over it. The gate would see the string; the function
+        receives the tuple.
+        """
+        from agentlock.binding import bind_call_parameters
+        from agentlock.exceptions import BindingError
+
+        def f(*args, **kw):
+            return args
+
+        with pytest.raises(BindingError) as exc:
+            bind_call_parameters(f, (1, 2), {"args": "spoof"})
+        assert "args" in str(exc.value)
+        assert "f" in str(exc.value)
+
+    def test_xc5_a_variadic_key_matching_the_variadic_name_still_binds(self):
+        """C3, the case that is not a hiding.
+
+        ``def g(**kw)`` has no parameter named ``kw`` that a flattened key
+        could shadow: ``kw`` is the variadic itself. The gate and the function
+        see the same mapping, so the call is allowed and the flattened view is
+        returned unchanged.
+        """
+        from agentlock.binding import bind_call_parameters
+
+        def g(**kw):
+            return kw
+
+        params, bound = bind_call_parameters(g, (), {"kw": "spoof", "to": "x"})
+        assert params == {"kw": "spoof", "to": "x"}
+        assert g(*bound.args, **bound.kwargs) == {"kw": "spoof", "to": "x"}
+
+    def test_xc6_the_1_9_0_binding_shapes_still_hold(self):
+        """Regression guard: the collision rule must not disturb G1's fix.
+
+        The three routes that 1.9.0 closed, positional, function default and
+        keyword, still deny a hostile recipient, and a known contact still
+        executes by both routes.
+        """
+        from agentlock.decorators import agentlock as agentlock_decorator
+
+        calls = {"n": 0}
+        gate = _gate()
+
+        @agentlock_decorator(gate, name="send_email", permissions=_perms())
+        def send_email(to: str = HOSTILE, body: str = "") -> str:
+            calls["n"] += 1
+            return "sent"
+
+        auth = {"_user_id": "alice", "_role": "user"}
+
+        for call in (
+            lambda: send_email(HOSTILE, **auth),
+            lambda: send_email(**auth),
+            lambda: send_email(to=HOSTILE, **auth),
+        ):
+            with pytest.raises(DeniedError) as exc:
+                call()
+            assert exc.value.reason == "recipient_not_allowed"
+
+        assert calls["n"] == 0
+        assert send_email(CONTACT, **auth) == "sent"
+        assert send_email(to=CONTACT, **auth) == "sent"
+        assert calls["n"] == 2
+
+
+# ---------------------------------------------------------------------------
+# 1.9.1 red pass: three more binding gaps, found against the built wheel
+# ---------------------------------------------------------------------------
+
+
+def _perms_without_recipient_parameter(
+    policy: RecipientPolicy = RecipientPolicy.KNOWN_CONTACTS_ONLY,
+):
+    """The same block as ``_perms``, declaring no recipient parameter."""
+    return AgentLockPermissions(
+        version="1.5",
+        risk_level=RiskLevel.MEDIUM,
+        requires_auth=True,
+        allowed_roles=["user"],
+        scope=ScopeConfig(allowed_recipients=policy),
+    )
+
+
+def _liar(lie: str) -> type:
+    """A ``str`` subclass whose methods report ``lie`` and whose data does not.
+
+    ``strip`` and ``casefold`` are what ``_normalize_recipient`` calls, and
+    ``__str__`` is what an application calls on its way to the wire. An
+    instance built from one address and lying about another is the shape P2
+    describes: whichever of the two the gate reads decides what it enforces.
+    """
+
+    class Liar(str):
+        def strip(self, *chars: object) -> str:
+            return lie
+
+        def casefold(self) -> str:
+            return lie
+
+        def __str__(self) -> str:
+            return lie
+
+    return Liar
+
+
+class TestBindingRedPass:
+    """P1, P2 and P3, from a red pass against the built 1.9.1 wheel.
+
+    The wheel was ``sha256 026c785d``, identical in content to the checkout it
+    was built from, so every shape below reproduces in both.
+
+    P1. ``functools.partial``. ``inspect.signature`` of a partial omits the
+    parameters the partial has already bound positionally. The gate binds what
+    is left, so ``partial(send, HOSTILE)`` called with ``to=CONTACT`` is
+    authorized against the contact and runs against the attacker. Pre-bound
+    keywords are the same shape.
+
+    P2. ``str`` subclasses. ``_normalize_recipient`` calls ``strip`` and
+    ``casefold`` on the value it is given. A subclass that overrides those to
+    return a known contact, and ``__str__`` to return the attacker, shows the
+    gate one address and the application another.
+
+    P3. Unobservable declared parameters. ``def send(*args, **kw)`` with
+    ``recipient_parameter="to"`` declared: a positional call binds ``args``
+    and no ``to``, pipeline step 8 skips, and the declaration enforces
+    nothing. The declaration can never enforce for positional calls, so the
+    callable and the block are incompatible and the wrapper must say so.
+
+    XR1, XR2, XR5, XR6, XR7, XR8 and XR10 were marked ``xfail(strict=True)``
+    at freeze and measured failing against the wheel. XR3, XR4, XR9 and XR11
+    carry no marker: they passed at freeze and are the guards that the three
+    fixes must not break.
+    """
+
+    # -- P1: functools.partial -------------------------------------------
+
+    def test_xr1_sync_decorator_binds_through_a_partial(self):
+        """P1 through the sync ``@agentlock`` wrapper.
+
+        ``partial(send1, HOSTILE)`` called with ``to=CONTACT``: once the
+        partial is unwrapped, ``to`` is bound positionally to the attacker and
+        ``to=CONTACT`` lands in ``**extras``, which is the collision the 1.9.1
+        shadow rule already refuses. The call never reaches the gate.
+        """
+        import functools
+
+        from agentlock.decorators import agentlock as agentlock_decorator
+        from agentlock.exceptions import BindingError
+
+        calls = {"n": 0, "to": None}
+        gate = _gate()
+
+        def send1(to, /, **extras):
+            calls["n"] += 1
+            calls["to"] = to
+            return "sent"
+
+        loaded = functools.partial(send1, HOSTILE)
+        wrapped = agentlock_decorator(
+            gate, name="send_email", permissions=_perms()
+        )(loaded)
+
+        with pytest.raises(BindingError) as exc:
+            wrapped(to=CONTACT, _user_id="alice", _role="user")
+        assert "to" in str(exc.value)
+        assert calls["n"] == 0
+        assert calls["to"] is None
+
+    def test_xr2_async_decorator_binds_through_a_partial(self):
+        """P1 through the async wrapper. Same shape, same refusal."""
+        import functools
+
+        from agentlock.decorators import agentlock as agentlock_decorator
+        from agentlock.exceptions import BindingError
+
+        calls = {"n": 0, "to": None}
+        gate = _gate()
+
+        async def send1(to, /, **extras):
+            calls["n"] += 1
+            calls["to"] = to
+            return "sent"
+
+        loaded = functools.partial(send1, HOSTILE)
+        wrapped = agentlock_decorator(
+            gate, name="send_email", permissions=_perms()
+        )(loaded)
+
+        with pytest.raises(BindingError) as exc:
+            asyncio.run(wrapped(to=CONTACT, _user_id="alice", _role="user"))
+        assert "to" in str(exc.value)
+        assert calls["n"] == 0
+        assert calls["to"] is None
+
+    def test_xr3_a_partial_pre_binding_the_recipient_by_keyword_never_runs_hostile(self):
+        """P1's keyword shape, over the same positional only signature.
+
+        ``partial(send1, to=CONTACT)`` where ``to`` is positional only: the
+        pre-bound keyword can only ever reach ``**extras``, so the call is
+        refused whichever way it is read. At freeze the refusal came from
+        ``inspect.signature``, which rejects the partial outright; after the
+        unwrapping it comes from the shadow rule. Either is acceptable here.
+        The one thing that must not happen is execution with the attacker.
+        """
+        import functools
+
+        from agentlock.decorators import agentlock as agentlock_decorator
+        from agentlock.exceptions import BindingError
+
+        calls = {"n": 0, "to": None}
+        gate = _gate()
+
+        def send1(to, /, **extras):
+            calls["n"] += 1
+            calls["to"] = to
+            return "sent"
+
+        loaded = functools.partial(send1, to=CONTACT)
+
+        with pytest.raises((BindingError, TypeError)):
+            wrapped = agentlock_decorator(
+                gate, name="send_email", permissions=_perms()
+            )(loaded)
+            wrapped(to=HOSTILE, _user_id="alice", _role="user")
+
+        assert calls["n"] == 0
+        assert calls["to"] != HOSTILE
+
+    def test_xr4_a_pre_bound_keyword_reaches_the_returned_parameters(self):
+        """A partial's pre-bound keyword is part of the call and must be shown.
+
+        ``partial(deliver, body="loaded")`` called with the recipient
+        positionally: the gate sees both the recipient it was passed and the
+        body the partial supplied, and the reconstructed call runs with the
+        same two values.
+        """
+        import functools
+
+        from agentlock.binding import bind_call_parameters
+
+        def deliver(to, body=""):
+            return (to, body)
+
+        loaded = functools.partial(deliver, body="loaded")
+        params, bound = bind_call_parameters(loaded, (CONTACT,), {})
+
+        assert params == {"to": CONTACT, "body": "loaded"}
+        assert deliver(*bound.args, **bound.kwargs) == (CONTACT, "loaded")
+
+    # -- P2: str subclasses ------------------------------------------------
+
+    def test_xr5_a_lying_str_subclass_asserted_as_the_recipient_denies(self):
+        """P2 through the asserted ``recipient`` argument.
+
+        The value's data is the attacker; its ``strip`` and ``casefold`` say
+        the contact. The gate must enforce against the data.
+        """
+        gate = _gate()
+        gate.register_tool("send_email", _perms())
+
+        liar = _liar(CONTACT)(HOSTILE)
+        result = gate.authorize(
+            "send_email", user_id="alice", role="user", recipient=liar
+        )
+
+        assert result.allowed is False
+        assert result.decision.value == "deny"
+        assert result.denial is not None
+        assert result.denial["reason"] == "recipient_not_allowed"
+
+    def test_xr6_a_lying_str_subclass_in_the_declared_parameter_denies(self):
+        """P2 through the declared recipient parameter. Same value, same rule."""
+        gate = _gate()
+        gate.register_tool("send_email", _perms())
+
+        liar = _liar(CONTACT)(HOSTILE)
+        result = gate.authorize(
+            "send_email", user_id="alice", role="user", parameters={"to": liar}
+        )
+
+        assert result.allowed is False
+        assert result.decision.value == "deny"
+        assert result.denial is not None
+        assert result.denial["reason"] == "recipient_not_allowed"
+
+    def test_xr7_a_str_subclass_whose_data_is_a_contact_is_allowed(self):
+        """The rule is coercion, not a ban on subclasses.
+
+        This value's data is the known contact and its methods say the
+        attacker. Reading the data allows it, which is the same rule XR5 and
+        XR6 rely on, applied in the other direction.
+        """
+        gate = _gate()
+        gate.register_tool("send_email", _perms())
+
+        liar = _liar(HOSTILE)(CONTACT)
+        result = gate.authorize(
+            "send_email", user_id="alice", role="user", parameters={"to": liar}
+        )
+
+        assert result.decision.value == "allow"
+
+    # -- P3: unobservable declared parameters ------------------------------
+
+    def test_xr8_a_recipient_parameter_no_signature_can_carry_is_refused_at_wrap_time(self):
+        """P3 at wrap time.
+
+        ``def send(*args)`` has no ``to`` and no ``**kwargs`` for one to
+        arrive in, so a block declaring ``recipient_parameter="to"`` can never
+        be enforced over it. The wrapper refuses to be built.
+        """
+        from agentlock.decorators import agentlock as agentlock_decorator
+        from agentlock.exceptions import BindingError
+
+        gate = _gate()
+
+        with pytest.raises(BindingError) as exc:
+
+            @agentlock_decorator(gate, name="send_email", permissions=_perms())
+            def send(*args):
+                return "sent"
+
+        assert "to" in str(exc.value)
+
+    def test_xr9_a_var_keyword_can_carry_the_declared_parameter(self):
+        """``def send(*args, **kw)`` wraps: ``**kw`` can carry ``to``."""
+        from agentlock.decorators import agentlock as agentlock_decorator
+
+        gate = _gate()
+
+        @agentlock_decorator(gate, name="send_email", permissions=_perms())
+        def send(*args, **kw):
+            return "sent"
+
+        assert callable(send)
+
+    def test_xr10_a_positional_call_the_gate_cannot_name_is_refused_at_call_time(self):
+        """P3 at call time, on the callable XR9 allows to be wrapped.
+
+        ``send(HOSTILE)`` binds ``args=(HOSTILE,)`` and no ``to``. The gate
+        cannot name that argument, and a declared recipient parameter means it
+        must not guess, so the call is refused. The keyword routes are
+        unaffected: the attacker denies and the contact runs.
+        """
+        from agentlock.decorators import agentlock as agentlock_decorator
+        from agentlock.exceptions import BindingError
+
+        calls = {"n": 0}
+        gate = _gate()
+
+        @agentlock_decorator(gate, name="send_email", permissions=_perms())
+        def send(*args, **kw):
+            calls["n"] += 1
+            return "sent"
+
+        auth = {"_user_id": "alice", "_role": "user"}
+
+        with pytest.raises(BindingError) as exc:
+            send(HOSTILE, **auth)
+        assert "to" in str(exc.value)
+        assert calls["n"] == 0
+
+        with pytest.raises(DeniedError) as denial:
+            send(to=HOSTILE, **auth)
+        assert denial.value.reason == "recipient_not_allowed"
+        assert calls["n"] == 0
+
+        assert send(to=CONTACT, **auth) == "sent"
+        assert calls["n"] == 1
+
+    def test_xr11_no_declared_recipient_parameter_leaves_variadics_alone(self):
+        """A block that declares nothing constrains nothing.
+
+        The same ``def send(*args)`` XR8 refuses wraps and runs normally when
+        the block names no recipient parameter. The refusal is about the pair,
+        not about variadic signatures.
+        """
+        from agentlock.decorators import agentlock as agentlock_decorator
+
+        calls = {"n": 0}
+        gate = _gate()
+
+        @agentlock_decorator(
+            gate, name="send_email", permissions=_perms_without_recipient_parameter()
+        )
+        def send(*args):
+            calls["n"] += 1
+            return "sent"
+
+        assert send(HOSTILE, _user_id="alice", _role="user") == "sent"
+        assert calls["n"] == 1

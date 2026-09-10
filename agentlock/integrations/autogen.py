@@ -32,7 +32,11 @@ import functools
 from collections.abc import Callable
 from typing import Any
 
-from agentlock.binding import bind_call_parameters, ensure_bindable
+from agentlock.binding import (
+    bind_call_parameters,
+    ensure_bindable,
+    unwrap_partial,
+)
 from agentlock.gate import AuthorizationGate
 from agentlock.schema import AgentLockPermissions
 
@@ -101,20 +105,37 @@ class AgentLockFunctionMap:
 
             gate.register_tool(func_name, perms)
             self._protected_map[func_name] = self._wrap_function(
-                func_name, func
+                func_name, func, perms
             )
 
     def _wrap_function(
-        self, func_name: str, func: Callable[..., Any]
+        self,
+        func_name: str,
+        func: Callable[..., Any],
+        perms: AgentLockPermissions,
     ) -> Callable[..., Any]:
         """Create an authorization-guarded wrapper for a single function.
 
+        Args:
+            func_name: The tool name the gate knows this function by.
+            func: The function to guard.
+            perms: The block registered for it, read here for the recipient
+                parameter it declares.
+
         Raises:
             BindingError: ``func``'s signature cannot be read, so its calls
-                cannot be bound and cannot be gated.  Raised here, at wrap
+                cannot be bound and cannot be gated.  Or the block declares a
+                recipient parameter that signature can never carry, so the
+                policy would decide nothing.  Both are raised here, at wrap
                 time, so the map refuses to be built.
         """
-        ensure_bindable(func)
+        must_observe = perms.scope.recipient_parameter or None
+        ensure_bindable(func, must_observe=must_observe)
+
+        # P1 -- what runs is the callable underneath any functools.partial,
+        # because that is what each call is bound against.  Resolved once
+        # here: it does not vary per call.
+        target = unwrap_partial(func)
 
         gate = self._gate
         default_user = self._default_user_id
@@ -127,7 +148,9 @@ class AgentLockFunctionMap:
 
             # G1: bind after the reserved auth kwargs are removed, so the
             # gate sees the whole call and nothing that is not part of it.
-            params, bound = bind_call_parameters(func, args, kwargs)
+            params, bound = bind_call_parameters(
+                func, args, kwargs, must_observe=must_observe
+            )
 
             auth = gate.authorize(
                 func_name,
@@ -139,7 +162,7 @@ class AgentLockFunctionMap:
             assert auth.token is not None
 
             def _exec(**_p: Any) -> Any:
-                return func(*bound.args, **bound.kwargs)
+                return target(*bound.args, **bound.kwargs)
 
             return gate.execute(
                 func_name,
