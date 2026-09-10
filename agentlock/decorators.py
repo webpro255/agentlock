@@ -37,6 +37,7 @@ from agentlock.binding import (
     unwrap_partial,
 )
 from agentlock.gate import AuthorizationGate
+from agentlock.modify import apply_output_modifier
 from agentlock.schema import AgentLockPermissions
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -218,13 +219,12 @@ def agentlock(
 
                 # E1: the output modifier, in the same position
                 # ``gate.execute`` applies it: after the call, before
-                # redaction.
-                if (
-                    auth_result.modify_output_fn is not None
-                    and isinstance(captured_result, str)
-                ):
-                    captured_result = auth_result.modify_output_fn(
-                        captured_result
+                # redaction.  E11: through the walk, so the shape of the
+                # return does not decide whether a declared transformation
+                # runs.
+                if auth_result.modify_output_fn is not None:
+                    captured_result = apply_output_modifier(
+                        captured_result, auth_result.modify_output_fn
                     )
 
                 # Apply redaction if configured

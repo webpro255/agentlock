@@ -63,7 +63,7 @@ from agentlock.hardening import (
     HardeningSignal,
 )
 from agentlock.memory_gate import MemoryDecision, MemoryGate, MemoryStore
-from agentlock.modify import ModifyEngine
+from agentlock.modify import ModifyEngine, apply_output_modifier
 from agentlock.policy import (
     ActionFlags,
     PolicyEngine,
@@ -672,7 +672,15 @@ class AuthorizationGate:
         Args:
             tool_name: The tool being invoked.
             user_id: Authenticated caller identity.
-            role: Caller's role.  Auto-resolved from session if omitted.
+            role: Caller's role.  The AUTHENTICATED SESSION IS AUTHORITATIVE
+                (E10): if a session exists for ``user_id`` and this differs
+                from ``session.role``, the call is denied with
+                ``DenialReason.ROLE_MISMATCH`` before any policy step runs.
+                Omit it and the session's role is used.  With NO session there
+                is nothing to contradict, so the value is trusted as given,
+                which trusts the HOST to have authenticated the caller before
+                calling; a host that has not must not pass a role it did not
+                establish itself.
             parameters: Tool call parameters (for token binding).
             record_count: Number of records requested.
             recipient: Target recipient for outbound tools.
@@ -719,9 +727,12 @@ class AuthorizationGate:
             so the key is omitted from the record entirely."""
             return {"asserted_classes": list(_asserted)} if _asserted else None
 
-        # Resolve session ID for hardening signal tracking
-        _session = self._session_store.get_by_user(user_id) if user_id else None
-        hardening_session_id = _session.session_id if _session else (
+        # Resolve the session once.  E10: two lookups for the same caller ran
+        # here through 1.10.0, one for hardening and one for role resolution,
+        # and a rule about the session that lived at only one of them would be
+        # a rule with a hole in it.
+        session = self._session_store.get_by_user(user_id) if user_id else None
+        hardening_session_id = session.session_id if session else (
             metadata.get("session_id", "") if metadata else ""
         )
 
@@ -738,6 +749,56 @@ class AuthorizationGate:
             )
             for sig in combo_signals:
                 self._hardening_engine.record_signal(hardening_session_id, sig)
+
+        # E10: the session's role is authoritative over the caller's claim.
+        #
+        # Through 1.10.0 the session's role was consulted only when the caller
+        # supplied none, so a caller that supplied one was simply believed.
+        # The gate held two facts about the same principal, one authenticated
+        # out of band and one asserted in the request, and preferred the
+        # asserted one.  A client that could name alice could run an
+        # admin-only tool over her user session.
+        #
+        # This runs before the tool-existence guard as well as before every
+        # policy step: the contradiction is about the caller and is knowable
+        # without looking the tool up, and answering "no such tool" to a
+        # caller whose claimed identity has already failed would tell them
+        # something about the registry that they have not earned.  The
+        # velocity and combo signals above are telemetry, not a policy step,
+        # and still see the attempt.
+        if session is not None and role and role != session.role:
+            record = self._audit.log(
+                tool_name=tool_name,
+                user_id=user_id,
+                role=session.role,
+                action="denied",
+                reason=DenialReason.ROLE_MISMATCH.value,
+                risk_level=(
+                    permissions.risk_level.value if permissions else "unknown"
+                ),
+                metadata=_class_meta(),
+            )
+            return AuthResult(
+                allowed=False,
+                decision=DecisionType.DENY,
+                denial={
+                    "status": "denied",
+                    "reason": DenialReason.ROLE_MISMATCH.value,
+                    "detail": (
+                        f"The claimed role {role!r} does not match the "
+                        f"authenticated session for {user_id!r}, which holds "
+                        f"role {session.role!r}. The session decides."
+                    ),
+                    "required_role": session.role,
+                    "current_role": role,
+                    "suggestion": (
+                        "Omit the role and let the gate resolve it from the "
+                        "session, or send the role the session holds. A role "
+                        "change requires a new authenticated session."
+                    ),
+                },
+                audit_id=record.audit_id,
+            )
 
         # No permissions registered = denied (deny by default)
         if permissions is None:
@@ -761,8 +822,9 @@ class AuthorizationGate:
                 audit_id=record.audit_id,
             )
 
-        # Resolve session
-        session = self._session_store.get_by_user(user_id) if user_id else None
+        # Resolve the role and the boundary from the session.  E10 has already
+        # denied any claimed role that contradicts it, so by here the caller
+        # either supplied nothing or supplied what the session holds.
         if session and not role:
             role = session.role
         if session and data_boundary is None:
@@ -1807,9 +1869,11 @@ class AuthorizationGate:
             reported_by="gate",
         )
 
-        # Apply MODIFY output transformation (v1.2) -- runs before redaction
-        if modify_output_fn and isinstance(result, str):
-            modified = modify_output_fn(result)
+        # Apply MODIFY output transformation (v1.2), before redaction.
+        # E11: the walk, not an ``isinstance(result, str)`` guard, so a tool
+        # that returns a mapping or a sequence is transformed too.
+        if modify_output_fn:
+            modified = apply_output_modifier(result, modify_output_fn)
             if modified != result:
                 self._audit.log(
                     tool_name=tool_name,

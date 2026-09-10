@@ -35,6 +35,7 @@ from typing import Any
 
 from agentlock.exceptions import IntegrationUnsupportedError
 from agentlock.gate import AuthorizationGate
+from agentlock.modify import apply_output_modifier
 from agentlock.schema import AgentLockPermissions
 
 # The JSON-RPC method every MCP tool call arrives on, under both SDK majors.
@@ -391,14 +392,19 @@ class AgentLockMCPServer:
 
         Content models are rewritten in place where they allow it and copied
         where they do not, so a frozen SDK model is handled without assuming
-        which of the two the installed version is.  Anything without text is
-        returned untouched.
+        which of the two the installed version is.
+
+        E11: an item that is not a content model is handed to
+        ``apply_output_modifier``, so a handler that returns plain strings, a
+        mapping, or bytes rather than SDK content blocks is transformed on the
+        same terms as every other execution path.  The types that walk covers
+        are listed on it; anything outside them is returned untouched.
         """
 
         def rewrite(item: Any) -> Any:
             text = getattr(item, "text", None)
             if not isinstance(text, str):
-                return item
+                return apply_output_modifier(item, modify)
             new_text = modify(text)
             if new_text == text:
                 return item
@@ -418,17 +424,20 @@ class AgentLockMCPServer:
             return [rewrite(item) for item in result]
 
         content = getattr(result, "content", None)
-        if isinstance(content, list):
-            rewritten = [rewrite(item) for item in content]
-            if rewritten == content:
-                return result
-            try:
-                result.content = rewritten
-                return result
-            except Exception:
-                model_copy = getattr(result, "model_copy", None)
-                if callable(model_copy):
-                    return model_copy(update={"content": rewritten})
+        if not isinstance(content, list):
+            # E11: not a content-carrying model, so the walk decides.
+            return apply_output_modifier(result, modify)
+
+        rewritten = [rewrite(item) for item in content]
+        if rewritten == content:
+            return result
+        try:
+            result.content = rewritten
+            return result
+        except Exception:
+            model_copy = getattr(result, "model_copy", None)
+            if callable(model_copy):
+                return model_copy(update={"content": rewritten})
         return result
 
     async def _run_reported(

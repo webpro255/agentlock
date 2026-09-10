@@ -44,10 +44,69 @@ from agentlock.redaction import RedactionEngine
 __all__ = [
     "ModifyEngine",
     "ModifyResult",
+    "apply_output_modifier",
 ]
 
 # All PII types for the default redact_pii action
 _DEFAULT_PII_TYPES = ["ssn", "email", "phone", "credit_card", "api_key"]
+
+
+def apply_output_modifier(
+    value: Any, modify: Callable[[str], str]
+) -> Any:
+    """Apply an output transformation to every string a tool returned.
+
+    E11.  ``build_output_modifier`` produces a ``str -> str`` callable, and
+    every path that applied it did so behind ``isinstance(result, str)``.  A
+    tool that returns a mapping, a sequence, or bytes is the ordinary case
+    rather than the exotic one, so a declared transformation was inert for
+    most of the tools that declared it: the modifier reached the call and was
+    then dropped on the way back out.
+
+    The types covered, and they are the whole list:
+
+    * ``str``: modified.
+    * ``dict``, ``list``, ``tuple``: walked recursively; every ``str`` leaf is
+      modified and the container type is preserved, because a caller that
+      indexes or unpacks a tuple is as broken by getting a list back as by
+      getting the SSN.  Dictionary KEYS are not modified: a key is a field
+      name, changing it renames the field, and a transformation that renamed
+      fields would corrupt the payload it was asked to sanitize.  A NAMED
+      tuple is rebuilt through ``_make`` and keeps its own type; a ``dict`` or
+      ``list`` SUBCLASS is rebuilt as a plain ``dict`` or ``list``, because
+      there is no general way to call an arbitrary subclass's constructor.
+    * ``bytes``: decoded as UTF-8 with ``errors="replace"``, modified, and
+      re-encoded as UTF-8.  The replace is deliberate: a transformation that
+      cannot read the bytes must not be a reason to hand them back unread,
+      and undecodable input is not a shape a redaction pattern was going to
+      match anyway.
+    * anything else: returned unchanged, including ``bytearray``,
+      ``memoryview``, sets, and every custom object.  The engine does not
+      guess at a type it was not told how to rebuild.
+
+    A caller returning a shape this does not cover gets no transformation and
+    no error, which is why the list is stated rather than implied.
+
+    Args:
+        value: Whatever the tool returned.
+        modify: The ``str -> str`` transformation to apply to each leaf.
+
+    Returns:
+        The value with every covered string leaf transformed.
+    """
+    if isinstance(value, str):
+        return modify(value)
+    if isinstance(value, bytes):
+        return modify(value.decode("utf-8", errors="replace")).encode("utf-8")
+    if isinstance(value, dict):
+        return {k: apply_output_modifier(v, modify) for k, v in value.items()}
+    if isinstance(value, list):
+        return [apply_output_modifier(v, modify) for v in value]
+    if isinstance(value, tuple):
+        walked = [apply_output_modifier(v, modify) for v in value]
+        make = getattr(type(value), "_make", None)
+        return make(walked) if callable(make) else tuple(walked)
+    return value
 
 
 @dataclass

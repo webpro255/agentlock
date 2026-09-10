@@ -597,11 +597,11 @@ class TestRedPass:
     a guard rather than as an expected failure.  Which is which is stated on
     each case.
 
-    The ``xfail(strict=True)`` markers are the freeze: they are committed
-    before the code that satisfies them, so the before state is in the
-    history, and they are removed in the same commit that closes the finding.
-    A strict xfail that starts passing is a failure, so neither the marker nor
-    the fix can be left half applied.
+    Fifteen of these cases were committed as ``xfail(strict=True)`` before the
+    code that satisfies them, so the before state is in the history, and the
+    markers came off in the commit that closed the findings.  A strict xfail
+    that starts passing is a failure, so neither the marker nor the fix could
+    be left half applied.
     """
 
     # F1: caller role overrides the session role (REPRODUCED)
@@ -618,10 +618,6 @@ class TestRedPass:
         ))
         return gate
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="F1: authorize() takes the caller's role over the session's",
-    )
     def test_a_claimed_role_that_differs_from_the_session_is_denied(self):
         """E10.  alice is authenticated at ``user``.  The caller says
         ``admin``.  Through the branch wheel the claim wins, because
@@ -638,10 +634,6 @@ class TestRedPass:
         assert result.denial["reason"] == DenialReason.ROLE_MISMATCH.value
         assert "session" in result.denial["detail"].lower()
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="F1: the wire value does not exist on the enum yet",
-    )
     def test_role_mismatch_is_a_named_denial_reason(self):
         """E10: a new enum member, not a reused one.  A claimed role that
         contradicts an authenticated session is not the same finding as a role
@@ -675,10 +667,6 @@ class TestRedPass:
         gate.register_tool("admin_task", _perms(allowed_roles=["admin"]))
         assert gate.authorize("admin_task", user_id="bob", role="admin").allowed
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="F1: an mcp client's claimed role beats the host's session",
-    )
     def test_an_mcp_client_cannot_claim_a_role_over_a_session(self):
         """F1 through the real mcp 2.x hook with NO default configured.
 
@@ -687,10 +675,21 @@ class TestRedPass:
         deliberate, but it was never bounded by an authenticated session.  A
         client that names alice and claims ``admin`` therefore runs an
         admin-only tool over her user session.
+
+        Guarded on the 2.x ``Server`` constructor rather than only on the
+        package.  ``importorskip("mcp")`` guards the ABSENCE of the SDK, not
+        the presence of the wrong major, which is the distinction A1.2
+        recorded after the review's own file could not run against 1.30.0.
+        The 1.x hook carries the same case in the test below.
         """
         pytest.importorskip("mcp")
+        import inspect
+
         import mcp.types as mt
         from mcp.server import Server
+
+        if "on_call_tool" not in inspect.signature(Server.__init__).parameters:
+            pytest.skip("mcp 1.x Server has no on_call_tool constructor")
 
         from agentlock.integrations.mcp import AgentLockMCPServer
 
@@ -719,6 +718,39 @@ class TestRedPass:
             ))
         assert ran == []
 
+    def test_an_mcp_1x_client_cannot_claim_a_role_over_a_session(self):
+        """E10 over the 1.x ``call_tool`` hook, through the same
+        ``FakeServer`` the rest of this file uses.
+
+        The hook's 1.x branch is selected by the presence of ``call_tool``
+        rather than by the SDK version, so this runs at either major and is
+        what keeps the finding covered where only 1.x is installed.
+        """
+        pytest.importorskip("mcp")
+        from agentlock.integrations.mcp import AgentLockMCPServer
+
+        gate = AuthorizationGate()
+        gate.create_session(user_id="alice", role="user")
+        server = FakeServer()
+        ran = []
+        AgentLockMCPServer(
+            server, gate,
+            {"admin_task": _perms(requires_auth=True, allowed_roles=["admin"])},
+        )
+
+        @server.call_tool()
+        async def handler(name: str, arguments: dict) -> str:
+            ran.append("ADMIN_ACTION")
+            return "done"
+
+        with pytest.raises(DeniedError) as denied:
+            asyncio.run(server.handler("admin_task", {
+                "_agentlock_user_id": "alice",
+                "_agentlock_role": "admin",
+            }))
+        assert denied.value.reason == "role_mismatch"
+        assert ran == []
+
     # F2: output modification covers str returns only (REPRODUCED)
 
     RETURNS = {
@@ -736,10 +768,6 @@ class TestRedPass:
         gate.register_tool("task", perms)
         return gate, perms
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="F2: the modifier is applied only when the return is a str",
-    )
     @pytest.mark.parametrize("shape", sorted(RETURNS))
     def test_the_decorator_modifies_every_shape_of_return(self, shape):
         """E11.  E1 threaded the modifier onto every execution path, so it
@@ -756,10 +784,6 @@ class TestRedPass:
         )
         assert SSN not in repr(wrapped(_user_id="alice", _role="user"))
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="F2: the modifier is applied only when the return is a str",
-    )
     @pytest.mark.parametrize("shape", sorted(RETURNS))
     def test_gate_call_modifies_every_shape_of_return(self, shape):
         """E11 on the one-step path, which applies the modifier inside
@@ -771,10 +795,6 @@ class TestRedPass:
         )
         assert SSN not in repr(result)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="F2: bytes are not decoded, modified, and re-encoded",
-    )
     def test_bytes_come_back_as_bytes(self):
         """E11: the container type survives the walk.  A modifier that turned
         a bytes return into a str would break the caller as surely as one that
@@ -787,10 +807,6 @@ class TestRedPass:
         assert isinstance(result, bytes)
         assert SSN not in result.decode()
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="F2: containers are not walked, so the tuple is untouched",
-    )
     def test_a_tuple_comes_back_as_a_tuple(self):
         """E11: likewise for the sequence types, which are not interchangeable
         to a caller that indexes or unpacks them.
