@@ -34,7 +34,7 @@ Copyright 2026 David Grice
 SPDX-License-Identifier: AGPL-3.0-or-later
 """
 
-__version__ = "1.10.1"
+__version__ = "1.10.2"
 
 from agentlock.action_class_audit import (
     ActionClassAudit,
@@ -57,7 +57,11 @@ from agentlock.binding import bind_call_parameters, ensure_bindable
 from agentlock.chain import GENESIS_HASH, ChainedContextEntry, ContextChain
 from agentlock.context import ContextProvenance, ContextState, ContextTracker
 from agentlock.decorators import agentlock
-from agentlock.defer import DeferralManager, DeferralRecord
+from agentlock.defer import (
+    DeferralManager,
+    DeferralRecord,
+    is_denial_resolution,
+)
 from agentlock.exceptions import (
     AgentLockError,
     ApprovalRequiredError,
@@ -236,6 +240,7 @@ __all__ = [
     "DeferralManager",
     "DeferralRecord",
     "DeferredError",
+    "is_denial_resolution",
     # STEP_UP (v1.2)
     "StepUpManager",
     "StepUpRequest",

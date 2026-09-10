@@ -51,7 +51,7 @@ from agentlock.audit import (
     InMemoryAuditBackend,
 )
 from agentlock.context import ContextProvenance, ContextTracker
-from agentlock.defer import DeferralManager, DeferralRecord
+from agentlock.defer import DeferralManager, DeferralRecord, is_denial_resolution
 from agentlock.exceptions import (
     DeniedError,
     RateLimitedError,
@@ -2137,8 +2137,13 @@ class AuthorizationGate:
         # gate DENIED at commit, reported as executed, is not: it is the single
         # most serious thing this log can carry, and it gets its own action so
         # that no filter can mistake it for a routine execution.
+        # Both spellings.  ``check_timeouts`` writes "deny" and the commit
+        # queue's predicate branch writes "denied", and an execution reported
+        # against either is the same event.  Through 1.10.1 this compared
+        # against "denied" alone, so a timeout denial reported as executed
+        # fell through to the ordinary completion below.
         action_override = ""
-        if facts.get("resolution_at_commit") == "denied":
+        if is_denial_resolution(facts.get("resolution_at_commit")):
             action_override = "execution_after_denial"
 
         if action_override:
@@ -2156,7 +2161,9 @@ class AuthorizationGate:
                 metadata={
                     **meta_common,
                     "status": status,
-                    "resolution_at_commit": "denied",
+                    # The record's own string, not a canonical one: the log
+                    # still says which branch denied.
+                    "resolution_at_commit": facts["resolution_at_commit"],
                     "deferral_id": deferral_id,
                     **({"attempt_audit_id": attempt_audit_id}
                        if attempt_audit_id else {}),

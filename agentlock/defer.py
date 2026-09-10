@@ -25,7 +25,36 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:  # pragma: no cover - typing only, no runtime import cycle
     from agentlock.policy import ActionFlags
 
-__all__ = ["DeferralManager", "DeferralRecord"]
+__all__ = ["DeferralManager", "DeferralRecord", "is_denial_resolution"]
+
+#: The resolution strings that mean a deferral was DENIED.  There are two
+#: because two branches write one each: :meth:`DeferralManager.check_timeouts`
+#: takes a ``timeout_action`` defaulting to ``"deny"`` and writes it verbatim,
+#: while :meth:`DeferralManager.resolve_commit_queue` writes ``"denied"`` when
+#: its per-record predicate says so and ``"deny"`` on the expiry branch it
+#: enforces itself.  Callers must not tell them apart.
+_DENIAL_RESOLUTIONS = frozenset({"deny", "denied"})
+
+
+def is_denial_resolution(value: object) -> bool:
+    """Is ``value`` a deferral resolution that means DENIED?
+
+    True for ``"deny"`` and ``"denied"``, compared casefolded and stripped.
+
+    Read this rather than comparing against a literal.  Both spellings are
+    written by this module and neither is canonical, so a caller that tests
+    one spelling silently misreads every denial that took the other branch.
+    That is not hypothetical: through 1.10.1 ``confirm_execution`` compared
+    against ``"denied"`` alone, so an execution reported against an action the
+    gate had denied by TIMEOUT was classified as an ordinary completion, which
+    is the one classification that entry exists to make impossible.
+
+    Anything that is not a string is False, including ``None``, which is what
+    an unresolved record carries.
+    """
+    if not isinstance(value, str):
+        return False
+    return value.strip().casefold() in _DENIAL_RESOLUTIONS
 
 
 def _generate_deferral_id() -> str:

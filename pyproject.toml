@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentlock"
-version = "1.10.1"
+version = "1.10.2"
 description = "Authorization framework for AI agent tool calls. Your AI agent needs a login screen. AgentLock is that login screen."
 readme = "README.md"
 license = "AGPL-3.0-or-later"
@@ -50,7 +50,7 @@ dependencies = [
 autogen = ["pyautogen>=0.2,<0.10; python_version < '3.14'"]
 mcp = ["mcp>=1.0"]
 fastapi = ["fastapi>=0.100", "python-jose[cryptography]>=3.3"]
-flask = ["flask>=2.0"]
+flask = ["flask>=2.0", "python-jose[cryptography]>=3.3"]
 crypto = ["PyNaCl>=1.5.0"]
 all = [
     "pyautogen>=0.2,<0.10; python_version < '3.14'",
@@ -113,6 +113,14 @@ ignore = ["SIM108", "SIM114"]
 "tests/test_v110_system_review.py" = [
     "E402", "E501", "E701", "E702", "F811", "I001", "SIM105",
 ]
+# The second held-verbatim oracle, on the same terms.  The reviewer's 1.10.1
+# recheck came as a separate 31-case file rather than as an append, and it is
+# saved exactly as received, edited only to add the two pytest.importorskip
+# guards that let it be collected where mcp is absent.  Listed are the four
+# rules that file actually trips, not the seven the first one carries: an
+# ignore is a statement about a file, and copying a longer list than the file
+# needs would hide a rule starting to fire.
+"tests/test_v1101_system_followup.py" = ["E501", "E701", "I001", "SIM105"]
 
 [tool.coverage.run]
 source = ["agentlock"]

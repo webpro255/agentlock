@@ -314,6 +314,7 @@ changelog. That is how we intend to keep working.
 
 | version | highlights | tests |
 |---------|-----------|-------|
+| 1.10.2  | verified identity and one denial predicate: a bearer token carries identity only once it has been verified against a configured key, a token that fails verification is refused rather than falling back to the identity headers, and a configured key refuses a request that presents no token at all rather than identifying it by header; an execution reported after a TIMEOUT denial is classified as one rather than as an ordinary completion | 1746 with the `crypto` and `mcp` extras plus `fastapi`, `flask` and `python-jose`, 9 skipped |
 | 1.10.1  | recheck: the reviewer re-ran the oracle against the published 1.10.0 wheel and added 32 cases; resolved path containment resolves before it normalizes and returns the path it checked; one MCP payload walker serving both the declared transformation and the data policy, covering embedded resources; recipient restriction parses the whole value rather than its first address | 1688 with the `crypto` and `mcp` extras plus `fastapi` and `flask`, 9 skipped |
 | 1.10.0  | integration hardening: one execution contract, so a declared transformation reaches the tool and the caller on every path, in every shape it returns and in both payloads of an MCP result; the authenticated session's role authoritative over the caller's claim; resolved path containment; server identity and route mapping authoritative over the client; parameter and novel lineage re-checked at deferred commit; terminal deferral states; tokens consumed before async calls | 1616 with the `crypto` and `mcp` extras plus `fastapi` and `flask`, 9 skipped |
 | 1.9.1   | binding completeness: a `**kwargs` key that names another parameter is refused rather than flattened over it; partials bound through to the function underneath; recipients read for the characters they hold; an unobservable declared recipient parameter refused | 1520 with the `crypto` and `mcp` extras, 9 skipped |
@@ -374,6 +375,23 @@ Without `mcp`, and with `fastapi`, `flask` and PyNaCl still present but no
 release and all 19 are guarded on `mcp`, being 10 oracle cases and 9 engine
 cases. Nothing fails.
 
+For 1.10.2 it is 1746 passing and 9 skipped on CPython 3.14.6 with `mcp
+2.2.0`, `fastapi` 0.141.1, `flask` 3.1.3, `python-jose` 3.5.0 and PyNaCl
+present, the 58 added tests being the 31 cases the reviewer added in their
+1.10.1 recheck, which arrived as a second oracle file rather than as an append
+and brings the two files to 96 between them, and the 27 engine tests covering
+what those 31 reach from outside cannot: both spellings of a denied deferral
+through `confirm_execution`; the verified, unverified, wrong key, expired and
+no key states of bearer identity over both HTTP adapters and both flask entry
+points; the absent, differently spelled and non bearer forms of the
+`Authorization` header under a configured key; and a configured key paired with
+a disabled token path, which is refused when the dependency is built. Without
+`mcp` and without `python-jose`, and with `fastapi`, `flask` and PyNaCl still
+present, it is 1685 passing and 70 skipped; 25 of the 70 are new in this
+release, being 9 oracle cases guarded on `mcp` and 16 engine cases guarded on
+`python-jose`, which is the verification backend and cannot be faked. Nothing
+fails.
+
 The 1.9.0 argument binding, and the 1.9.1 binding rules that refuse a
 `**kwargs` key naming another parameter, bind through a `functools.partial` to
 the function underneath, read a recipient for the characters it holds rather
@@ -404,6 +422,27 @@ MCP call runs under when the host configured one, and which tool an HTTP
 request is judged against when the route mapping names one. None of this
 reaches the standalone adapters, which ship separately and apply no declared
 transformation at all.
+
+Over HTTP, 1.10.2 finishes the identity half of that, because 1.10.0 promoted a
+claim it had never checked. Both adapters read a bearer token's payload without
+verifying its signature, and E5 then made those claims outrank the
+`X-AgentLock-*` identity headers, so a token any client could type outranked a
+header a deployment could strip at its edge. Verification is now opt in and the
+two states are exhaustive. Configure `jwt_key` and the verified bearer token is
+the ONLY identity: it is checked with expiry enforced and `"none"` refused as an
+algorithm however `jwt_algorithms` is written, the scheme is matched case
+insensitively so `bearer` and `Bearer` are the same credential, a token that
+verifies is authoritative, one that does not is 401 with reason `jwt_invalid`,
+and a request carrying no bearer credential at all is 401 with reason
+`jwt_required`. The identity headers are not consulted in any of those cases,
+because a request shape that reaches them is a request shape a caller can aim
+for, and the first draft of this fix left two of them: an absent header and a
+scheme spelled another way both reached the headers under a configured key.
+Leave `jwt_key` unset, the default, and a bearer token carries no identity at
+all and the headers are the identity input. They are trusted-upstream inputs
+either way: they prove nothing on their own, and a deployment facing untrusted
+clients directly has to strip client-supplied `X-AgentLock-*` at its edge or
+authenticate by verified token instead.
 
 The contract every wrapper now follows is one sentence long: `authorize()`
 returns the parameters the call will actually run with and the transformation

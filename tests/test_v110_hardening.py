@@ -280,8 +280,21 @@ class TestFlaskToolSelection:
         assert response.status_code == 403
         assert ran == []
 
-    def test_a_bearer_token_beats_the_identity_headers(self):
-        """E5: a caller cannot present a token and then override it."""
+    def test_an_unverified_bearer_token_is_not_identity(self):
+        """Was ``test_a_bearer_token_beats_the_identity_headers``, and E5's
+        rule when it was written: an unverified payload naming a subject
+        outranked the identity headers, so this token's ``role: user`` beat
+        the ``admin`` header and the admin tool was refused.
+
+        1.10.2 removed the unverified read entirely.  This app configures no
+        ``jwt_key``, so the token is ignored for identity and the headers
+        apply: a role and no user id, which the gate refuses as
+        ``not_authenticated``.  The 403 is therefore unchanged and its REASON
+        is not, which is why the reason is now pinned.  Left asserting only
+        the status, this case would stand green while saying nothing, and
+        would go on passing if the unverified read ever came back, since a
+        role header alone cannot authorize either way.
+        """
         import base64
         import json
 
@@ -295,6 +308,7 @@ class TestFlaskToolSelection:
             "X-AgentLock-Role": "admin",
         })
         assert response.status_code == 403
+        assert response.get_json()["detail"]["reason"] == "not_authenticated"
         assert ran == []
 
 
@@ -1765,3 +1779,499 @@ class TestBranchWheelRedPass:
         assert result.meta == {"note": SSN}
         assert result._meta == {"note": SSN}
         assert SSN not in result.content[0].text
+
+
+class TestJwtAndAudit:
+    """1.10.2: J1, one denial predicate, and J2, verified JWT identity.
+
+    J1 came from the external reviewer's 1.10.1 recheck and J2 from a
+    pre-release check against the published 1.10.1 wheel.  The reviewer's
+    file pins J1 for the timeout spelling only, because that is the spelling
+    that was broken; both spellings are pinned here, since the whole point of
+    the fix is that a caller cannot tell them apart.
+    """
+
+    # -- J1: a denial is a denial in either spelling --------------------
+
+    @staticmethod
+    def _denied_deferral(spelling: str):
+        """A resolved deferral whose resolution is ``spelling``.
+
+        ``"deny"`` is what ``check_timeouts`` and the commit queue's expiry
+        branch write; ``"denied"`` is what its predicate branch writes.  The
+        expiry path is driven the way the oracle drives it, by ageing the
+        record rather than by waiting, and the predicate path by letting
+        untrusted content into the session so the commit-time re-decision
+        denies on lineage.
+        """
+        gate = AuthorizationGate()
+        session_id = gate.create_session(
+            user_id="alice", role="user").session_id
+        gate.register_tool("task", _perms(
+            lineage_policy=LineagePolicyConfig(enabled=True, decision="deny"),
+            action_class=ActionClassConfig(is_deletion=True),
+        ))
+        record = gate.defer_consequential(
+            session_id, "task", {}, is_deletion=True, record_action_flags=True)
+        if spelling == "deny":
+            record.created_at -= 1000  # expiry, without waiting for it
+        else:
+            content = "Untrusted retrieved page"
+            gate.notify_context_write(
+                session_id, ContextSource.WEB_CONTENT,
+                hashlib.sha256(content.encode()).hexdigest(), content=content)
+        resolved = gate.resolve_deferred_commits(session_id)
+        assert len(resolved) == 1
+        assert resolved[0].resolution == spelling
+        return gate, record
+
+    @pytest.mark.parametrize("spelling", ["deny", "denied"])
+    def test_an_execution_reported_after_a_denial_is_flagged(self, spelling):
+        """J1.  Through 1.10.1 ``confirm_execution`` compared the resolution
+        against ``"denied"`` alone, so a host reporting that it executed an
+        action the gate had denied by TIMEOUT was logged as an ordinary
+        completed call: the one classification that entry exists to make
+        impossible.  The lineage denial took the other branch and was flagged
+        correctly, which is why every test that denied through policy passed
+        while the default timeout path was silently misfiled.
+        """
+        gate, record = self._denied_deferral(spelling)
+        audit = gate.confirm_execution(
+            "task", deferral_id=record.deferral_id,
+            parameters={}, status="succeeded")
+        assert audit.action == "execution_after_denial"
+        assert audit.reason == "executed_despite_denial"
+
+    @pytest.mark.parametrize("spelling", ["deny", "denied"])
+    def test_the_flagged_record_keeps_the_resolution_it_was_given(self, spelling):
+        """The classification is unified; the evidence is not.  The metadata
+        carries the record's OWN string, so the log still says which branch
+        denied.  Through 1.10.1 this field was the literal ``"denied"``, which
+        would have made a timeout denial unreadable as one even once the
+        classification was fixed.
+        """
+        gate, record = self._denied_deferral(spelling)
+        audit = gate.confirm_execution(
+            "task", deferral_id=record.deferral_id,
+            parameters={}, status="succeeded")
+        assert audit.metadata["resolution_at_commit"] == spelling
+
+    # -- J2: a bearer token is identity only once verified ---------------
+
+    KEY = "synthetic-signing-key-for-this-test"
+    OTHER_KEY = "a-different-synthetic-key"
+    # An identity that cannot reach the admin tool, sent on every request so
+    # that a token being honored or ignored is visible in the outcome.
+    HEADERS = {
+        "X-AgentLock-User-Id": "mallory",
+        "X-AgentLock-Role": "guest",
+    }
+    # An identity that CAN reach the admin tool, for the J3 cases, where what
+    # has to be visible is a header being consulted rather than ignored.
+    ADMIN_HEADERS = {
+        "X-AgentLock-User-Id": "alice",
+        "X-AgentLock-Role": "admin",
+    }
+
+    @staticmethod
+    def _forged_token() -> str:
+        """``"alg": "none"``, ``sub`` alice, and bytes that are not a
+        signature.  This is the whole attack: on the published 1.10.1 wheel it
+        authenticates as alice on both adapters.
+        """
+        import base64
+        import json
+
+        def seg(obj):
+            return base64.urlsafe_b64encode(
+                json.dumps(obj, separators=(",", ":")).encode()
+            ).rstrip(b"=").decode()
+
+        signature = base64.urlsafe_b64encode(
+            b"not-a-signature").rstrip(b"=").decode()
+        return (
+            f"{seg({'alg': 'none', 'typ': 'JWT'})}."
+            f"{seg({'sub': 'alice', 'role': 'admin'})}.{signature}"
+        )
+
+    @classmethod
+    def _signed_token(cls, key: str = "", exp: int | None = None) -> str:
+        from jose import jwt
+
+        claims: dict = {"sub": "alice", "role": "admin"}
+        if exp is not None:
+            claims["exp"] = exp
+        return jwt.encode(claims, key or cls.KEY, algorithm="HS256")
+
+    @staticmethod
+    def _gate_with_admin_tool() -> AuthorizationGate:
+        gate = AuthorizationGate()
+        gate.register_tool("admin_task", _perms(allowed_roles=["admin"]))
+        return gate
+
+    @classmethod
+    def _fastapi_call(cls, token, jwt_key, *, scheme="Bearer", identity=None):
+        pytest.importorskip("fastapi")
+        import fastapi
+        from fastapi.testclient import TestClient
+
+        from agentlock.integrations.fastapi import AgentLockMiddleware
+
+        app = fastapi.FastAPI()
+        ran = []
+
+        @app.post("/admin")
+        async def admin():
+            ran.append("ADMIN_ACTION")
+            return {"ok": True}
+
+        app.add_middleware(
+            AgentLockMiddleware, gate=cls._gate_with_admin_tool(),
+            tool_name_from_path=lambda method, path: "admin_task",
+            jwt_key=jwt_key,
+        )
+        headers = dict(cls.HEADERS if identity is None else identity)
+        if token:
+            headers["Authorization"] = f"{scheme} {token}"
+        return TestClient(app).post("/admin", headers=headers), ran
+
+    @classmethod
+    def _flask_call(cls, token, jwt_key, *, decorator=False,
+                    scheme="Bearer", identity=None):
+        """The extension hook by default, the route decorator on request.
+
+        Both grew the same two arguments and both have to enforce the same
+        rule, so the decorator is not left to a docstring.
+        """
+        flask = pytest.importorskip("flask")
+        from agentlock.integrations.flask import (
+            AgentLockFlask,
+            agentlock_required,
+        )
+
+        gate = cls._gate_with_admin_tool()
+        app = flask.Flask(f"{__name__}.jwt")
+        ran = []
+
+        if decorator:
+            @app.post("/admin")
+            @agentlock_required(gate, "admin_task", jwt_key=jwt_key)
+            def admin():
+                ran.append("ADMIN_ACTION")
+                return {"ok": True}
+        else:
+            @app.post("/admin")
+            def admin():
+                ran.append("ADMIN_ACTION")
+                return {"ok": True}
+
+            AgentLockFlask(
+                app, gate,
+                tool_name_from_endpoint=lambda e, m, p: "admin_task",
+                jwt_key=jwt_key,
+            )
+
+        headers = dict(cls.HEADERS if identity is None else identity)
+        if token:
+            headers["Authorization"] = f"{scheme} {token}"
+        return app.test_client().post("/admin", headers=headers), ran
+
+    def test_fastapi_a_forged_unsigned_token_is_refused(self):
+        """J2 as reported, on fastapi.  On the published 1.10.1 wheel this
+        request is 200 with ``ADMIN_ACTION`` executed, because the payload was
+        base64 decoded without a signature check and 1.10.0 made those claims
+        outrank the identity headers.  The forged claims must not be read, and
+        the headers must not be consulted as a fallback either: this returns
+        401, not the 403 the ``mallory``/``guest`` headers would produce.
+        """
+        pytest.importorskip("jose")
+        response, ran = self._fastapi_call(self._forged_token(), self.KEY)
+        assert response.status_code == 401
+        assert response.json()["detail"]["reason"] == "jwt_invalid"
+        assert ran == []
+
+    def test_flask_a_forged_unsigned_token_is_refused(self):
+        """J2 as reported, on flask.  Same wheel behavior, same fix."""
+        pytest.importorskip("jose")
+        response, ran = self._flask_call(self._forged_token(), self.KEY)
+        assert response.status_code == 401
+        assert response.get_json()["detail"]["reason"] == "jwt_invalid"
+        assert ran == []
+
+    def test_fastapi_a_verified_token_carries_the_identity(self):
+        """The positive half, and the E5 rule restated as it now holds: a
+        token signed with the configured key IS authoritative, and the
+        contradicting ``mallory``/``guest`` headers are ignored rather than
+        merged with it.  Without this case the fix could be "reject
+        everything" and still pass the rejection cases.
+        """
+        pytest.importorskip("jose")
+        response, ran = self._fastapi_call(self._signed_token(), self.KEY)
+        assert response.status_code == 200
+        assert ran == ["ADMIN_ACTION"]
+
+    def test_flask_a_verified_token_carries_the_identity(self):
+        """The same, through the route decorator rather than the hook."""
+        pytest.importorskip("jose")
+        response, ran = self._flask_call(
+            self._signed_token(), self.KEY, decorator=True)
+        assert response.status_code == 200
+        assert ran == ["ADMIN_ACTION"]
+
+    def test_fastapi_a_token_signed_with_another_key_is_refused(self):
+        """A real signature, over the right claims, by the wrong signer."""
+        pytest.importorskip("jose")
+        response, ran = self._fastapi_call(
+            self._signed_token(self.OTHER_KEY), self.KEY)
+        assert response.status_code == 401
+        assert response.json()["detail"]["reason"] == "jwt_invalid"
+        assert ran == []
+
+    def test_flask_a_token_signed_with_another_key_is_refused(self):
+        pytest.importorskip("jose")
+        response, ran = self._flask_call(
+            self._signed_token(self.OTHER_KEY), self.KEY)
+        assert response.status_code == 401
+        assert response.get_json()["detail"]["reason"] == "jwt_invalid"
+        assert ran == []
+
+    def test_fastapi_an_expired_token_is_refused(self):
+        """Expiry is enforced, so a token that was genuinely issued to alice
+        stops being alice.  A verification that checks the signature and not
+        the clock turns every leaked token into a permanent credential.
+        """
+        pytest.importorskip("jose")
+        import time
+
+        response, ran = self._fastapi_call(
+            self._signed_token(exp=int(time.time()) - 60), self.KEY)
+        assert response.status_code == 401
+        assert response.json()["detail"]["reason"] == "jwt_invalid"
+        assert ran == []
+
+    def test_flask_an_expired_token_is_refused(self):
+        pytest.importorskip("jose")
+        import time
+
+        response, ran = self._flask_call(
+            self._signed_token(exp=int(time.time()) - 60), self.KEY)
+        assert response.status_code == 401
+        assert response.get_json()["detail"]["reason"] == "jwt_invalid"
+        assert ran == []
+
+    def test_fastapi_without_a_key_the_token_is_ignored_and_headers_apply(self):
+        """The default state.  With nothing to verify against, the token is
+        not read for identity at all, so the forged ``alice``/``admin`` claims
+        do not reach the gate and the ``mallory``/``guest`` headers decide.
+        403 for the wrong role, not 200 from the forged claim and not 401,
+        because no verification was asked for and none failed.
+        """
+        response, ran = self._fastapi_call(self._forged_token(), None)
+        assert response.status_code == 403
+        assert response.json()["detail"]["reason"] == "insufficient_role"
+        assert ran == []
+
+    def test_flask_without_a_key_the_token_is_ignored_and_headers_apply(self):
+        response, ran = self._flask_call(self._forged_token(), None)
+        assert response.status_code == 403
+        assert response.get_json()["detail"]["reason"] == "insufficient_role"
+        assert ran == []
+
+    def test_fastapi_a_key_without_the_verification_backend_fails_to_build(
+        self, monkeypatch
+    ):
+        """An adapter configured to verify and unable to verify fails at
+        CONSTRUCTION.  One that discovered this at its first request would
+        have to choose, under load, between refusing every request and
+        reading the token anyway, and the second choice is how this finding
+        happened the first time.
+        """
+        pytest.importorskip("fastapi")
+        import builtins
+
+        from agentlock.exceptions import IntegrationUnsupportedError
+        from agentlock.integrations.fastapi import AgentLockMiddleware
+
+        real_import = builtins.__import__
+
+        def no_jose(name, *args, **kwargs):
+            if name == "jose" or name.startswith("jose."):
+                raise ImportError("No module named 'jose'")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", no_jose)
+        with pytest.raises(IntegrationUnsupportedError):
+            AgentLockMiddleware(
+                None, self._gate_with_admin_tool(), jwt_key=self.KEY)
+
+    def test_flask_a_key_without_the_verification_backend_fails_to_build(
+        self, monkeypatch
+    ):
+        pytest.importorskip("flask")
+        import builtins
+
+        from agentlock.exceptions import IntegrationUnsupportedError
+        from agentlock.integrations.flask import AgentLockFlask
+
+        real_import = builtins.__import__
+
+        def no_jose(name, *args, **kwargs):
+            if name == "jose" or name.startswith("jose."):
+                raise ImportError("No module named 'jose'")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", no_jose)
+        with pytest.raises(IntegrationUnsupportedError):
+            AgentLockFlask(
+                None, self._gate_with_admin_tool(), jwt_key=self.KEY)
+
+    # -- J3: a configured key makes the token the only identity ----------
+
+    @staticmethod
+    def _basic_credentials() -> str:
+        """A Basic scheme value, so the scheme under test is a real one that
+        an ordinary deployment might put in front of this and not a string
+        invented to fail a prefix check.
+        """
+        import base64
+
+        return base64.b64encode(b"alice:not-a-password").decode()
+
+    def test_fastapi_a_configured_key_refuses_a_request_carrying_no_token(self):
+        """J3.  Verification is switched ON and the request presents nothing
+        to verify.  Through 1.10.2 as released that reached the identity
+        headers, so a client that simply omitted the ``Authorization`` header
+        was identified by ``X-AgentLock-User-Id`` and ``X-AgentLock-Role`` and
+        the admin route ran: verification was enforced only on clients that
+        chose to present a token.  A configured key means the token is the
+        identity, so a request without one is 401 ``jwt_required`` and the
+        headers are not read at all.
+        """
+        pytest.importorskip("jose")
+        response, ran = self._fastapi_call(
+            None, self.KEY, identity=self.ADMIN_HEADERS)
+        assert response.status_code == 401
+        assert response.json()["detail"]["reason"] == "jwt_required"
+        assert ran == []
+
+    def test_flask_a_configured_key_refuses_a_request_carrying_no_token(self):
+        """The same on flask, through the extension hook."""
+        pytest.importorskip("jose")
+        response, ran = self._flask_call(
+            None, self.KEY, identity=self.ADMIN_HEADERS)
+        assert response.status_code == 401
+        assert response.get_json()["detail"]["reason"] == "jwt_required"
+        assert ran == []
+
+    def test_fastapi_a_lowercase_bearer_scheme_is_verified(self):
+        """RFC 7235 makes the auth scheme case insensitive, and 1.10.2 as
+        released matched it with ``startswith("Bearer ")``.  A token spelled
+        ``bearer`` was therefore invisible: not a bad token, no token, so the
+        identity headers decided.  Here the token is real and signed with the
+        configured key while the headers name a guest, so the case fails if
+        the token is thrown away for its spelling.
+        """
+        pytest.importorskip("jose")
+        response, ran = self._fastapi_call(
+            self._signed_token(), self.KEY, scheme="bearer")
+        assert response.status_code == 200
+        assert ran == ["ADMIN_ACTION"]
+
+    def test_flask_a_lowercase_bearer_scheme_is_verified(self):
+        """The same on flask, through the extension hook."""
+        pytest.importorskip("jose")
+        response, ran = self._flask_call(
+            self._signed_token(), self.KEY, scheme="bearer")
+        assert response.status_code == 200
+        assert ran == ["ADMIN_ACTION"]
+
+    def test_fastapi_a_lowercase_bearer_scheme_with_a_forged_token_is_refused(self):
+        """The other half of the same rule, and the half that makes it a
+        finding rather than an inconvenience.  A forged token under a
+        lowercase scheme was not merely ignored: it carried the request past
+        the token path entirely and onto the identity headers, which name an
+        admin here.  Parsing the scheme case insensitively means this is now
+        a bad token, which is 401 ``jwt_invalid``.
+        """
+        pytest.importorskip("jose")
+        response, ran = self._fastapi_call(
+            self._forged_token(), self.KEY, scheme="bearer",
+            identity=self.ADMIN_HEADERS)
+        assert response.status_code == 401
+        assert response.json()["detail"]["reason"] == "jwt_invalid"
+        assert ran == []
+
+    def test_flask_a_lowercase_bearer_scheme_with_a_forged_token_is_refused(self):
+        """The same on flask, through the extension hook."""
+        pytest.importorskip("jose")
+        response, ran = self._flask_call(
+            self._forged_token(), self.KEY, scheme="bearer",
+            identity=self.ADMIN_HEADERS)
+        assert response.status_code == 401
+        assert response.get_json()["detail"]["reason"] == "jwt_invalid"
+        assert ran == []
+
+    def test_fastapi_a_basic_scheme_does_not_reach_the_identity_headers(self):
+        """A scheme that is not bearer at all, which is the general form of
+        the same door: any ``Authorization`` value the adapter declines to
+        read as a token used to mean no token, and no token used to mean the
+        headers decide.  Under a configured key there is no such state.  401
+        ``jwt_required``, and the admin headers are not consulted.
+        """
+        pytest.importorskip("jose")
+        response, ran = self._fastapi_call(
+            self._basic_credentials(), self.KEY, scheme="Basic",
+            identity=self.ADMIN_HEADERS)
+        assert response.status_code == 401
+        assert response.json()["detail"]["reason"] == "jwt_required"
+        assert ran == []
+
+    def test_flask_a_basic_scheme_does_not_reach_the_identity_headers(self):
+        """The same through the flask route decorator rather than the hook.
+        Both entry points call the one identity function and both have to
+        refuse, so the decorator is not left to a docstring.
+        """
+        pytest.importorskip("jose")
+        response, ran = self._flask_call(
+            self._basic_credentials(), self.KEY, scheme="Basic",
+            identity=self.ADMIN_HEADERS, decorator=True)
+        assert response.status_code == 401
+        assert response.get_json()["detail"]["reason"] == "jwt_required"
+        assert ran == []
+
+    def test_a_key_with_the_token_path_disabled_is_refused_at_build_time(self):
+        """``require_agentlock`` takes ``use_jwt``, and with a key configured
+        and ``use_jwt=False`` the two arguments contradict: verify tokens with
+        this key, and do not read tokens.  Honoring either one silently
+        produces the J3 shape, a configured key whose requests are identified
+        by header.  The dependency refuses to build instead, at build time
+        rather than at the first request, for the same reason a missing
+        verification backend does.
+        """
+        pytest.importorskip("fastapi")
+        from agentlock.integrations.fastapi import require_agentlock
+
+        with pytest.raises(ValueError):
+            require_agentlock(
+                self._gate_with_admin_tool(), "admin_task",
+                use_jwt=False, jwt_key=self.KEY)
+
+    def test_fastapi_without_a_key_the_headers_are_still_the_identity(self):
+        """The guard on the unchanged half.  J3 is about what a CONFIGURED
+        key does; with no key there is nothing to verify and nothing to
+        require, so a request carrying no token at all is identified by its
+        headers exactly as it was before this fix and before 1.10.0.  This
+        case passes both before and after and is here to say that the fix did
+        not close the default path along with the door.
+        """
+        response, ran = self._fastapi_call(
+            None, None, identity=self.ADMIN_HEADERS)
+        assert response.status_code == 200
+        assert ran == ["ADMIN_ACTION"]
+
+    def test_flask_without_a_key_the_headers_are_still_the_identity(self):
+        """The same guard on flask."""
+        response, ran = self._flask_call(
+            None, None, identity=self.ADMIN_HEADERS)
+        assert response.status_code == 200
+        assert ran == ["ADMIN_ACTION"]
