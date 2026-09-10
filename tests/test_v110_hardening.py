@@ -959,7 +959,6 @@ class TestRedPass:
     def _structured_result_perms() -> AgentLockPermissions:
         return _perms(modify_policy=_redact("output"))
 
-    @pytest.mark.xfail(strict=True, reason="F4: structured content is not modified")
     def test_mcp_2x_structured_content_is_modified(self):
         """F4 through the real mcp 2.x hook.
 
@@ -1009,7 +1008,6 @@ class TestRedPass:
         assert SSN not in result.content[0].text
         assert SSN not in repr(result.structured_content)
 
-    @pytest.mark.xfail(strict=True, reason="F4: structured content is not modified")
     def test_mcp_1x_structured_content_is_modified(self):
         """F4 over the 1.x ``call_tool`` hook, through ``FakeServer``.
 
@@ -1103,7 +1101,6 @@ class TestRedPass:
 
     # F5: the walk does not cover set or frozenset (REPRODUCED)
 
-    @pytest.mark.xfail(strict=True, reason="F5: sets are not walked")
     def test_a_set_return_is_modified(self):
         """E16.  E11 named the types it covers and returned everything else
         unchanged, and a ``set`` was one of the things it named as uncovered.
@@ -1117,7 +1114,6 @@ class TestRedPass:
         assert isinstance(result, set)
         assert SSN not in repr(result)
 
-    @pytest.mark.xfail(strict=True, reason="F5: sets are not walked")
     def test_a_frozenset_return_is_modified(self):
         """E16, and the container identity half of it: a ``frozenset`` is not
         interchangeable with a ``set`` to a caller that puts it in another set

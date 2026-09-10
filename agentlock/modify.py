@@ -75,17 +75,45 @@ def apply_output_modifier(
       tuple is rebuilt through ``_make`` and keeps its own type; a ``dict`` or
       ``list`` SUBCLASS is rebuilt as a plain ``dict`` or ``list``, because
       there is no general way to call an arbitrary subclass's constructor.
+    * ``set``, ``frozenset``: members are walked and the type is rebuilt, so a
+      ``set`` comes back a ``set`` and a ``frozenset`` comes back a
+      ``frozenset``.  E16.  A set of strings is an ordinary return for a tool
+      that answers with distinct values, and naming it as uncovered, which is
+      what this docstring did through the first red pass, documented a leak
+      rather than bounding one.  A SUBCLASS of either is rebuilt as the plain
+      type, on the same reasoning as ``dict`` and ``list`` above.
     * ``bytes``: decoded as UTF-8 with ``errors="replace"``, modified, and
       re-encoded as UTF-8.  The replace is deliberate: a transformation that
       cannot read the bytes must not be a reason to hand them back unread,
       and undecodable input is not a shape a redaction pattern was going to
       match anyway.
     * anything else: returned unchanged, including ``bytearray``,
-      ``memoryview``, sets, and every custom object.  The engine does not
-      guess at a type it was not told how to rebuild.
+      ``memoryview``, and every custom object, whatever its ``__str__`` says.
+      The engine does not guess at a type it was not told how to rebuild, and
+      it does not mutate one it was handed.
 
     A caller returning a shape this does not cover gets no transformation and
     no error, which is why the list is stated rather than implied.
+
+    **What this does not modify.** Three limits, stated here because a limit a
+    caller has to discover for itself is a limit that leaks:
+
+    * **Dictionary KEYS.**  A key is a field name.  Renaming fields would
+      corrupt the payload the transformation was asked to sanitize, so the
+      walk descends into values only.  A mapping keyed by secret material is
+      naming its records after the secret.
+    * **Objects.**  A custom object is returned as it came, and an object
+      whose ``__str__`` or ``__repr__`` carries the secret carries it out.
+    * **Bytes that are not valid UTF-8.**  The undecodable sequences are
+      replaced with U+FFFD before the transformation ever sees them, so the
+      transformation cannot match on that part, and what comes back is a UTF-8
+      re-encoding rather than the original bytes.  The readable part of such a
+      value IS transformed; the unreadable part is neither transformed nor
+      preserved.
+
+    A host that returns any of those three has to redact it itself.  The gate
+    cannot do it here without either renaming the caller's fields or guessing
+    at a type it was not told how to rebuild.
 
     Args:
         value: Whatever the tool returned.
@@ -106,6 +134,9 @@ def apply_output_modifier(
         walked = [apply_output_modifier(v, modify) for v in value]
         make = getattr(type(value), "_make", None)
         return make(walked) if callable(make) else tuple(walked)
+    if isinstance(value, (set, frozenset)):
+        members = {apply_output_modifier(v, modify) for v in value}
+        return frozenset(members) if isinstance(value, frozenset) else set(members)
     return value
 
 

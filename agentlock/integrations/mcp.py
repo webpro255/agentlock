@@ -41,6 +41,13 @@ from agentlock.schema import AgentLockPermissions
 # The JSON-RPC method every MCP tool call arrives on, under both SDK majors.
 _CALL_TOOL_METHOD = "tools/call"
 
+# The structured payload of a tool result, under both SDK majors.  mcp 1.x
+# spells the attribute ``structuredContent``; mcp 2.x spells it
+# ``structured_content`` and carries the camelCase form as a serialization
+# alias, which attribute access does not see.  One applier serves both hooks,
+# so it has to know both names.
+_STRUCTURED_FIELDS = ("structured_content", "structuredContent")
+
 
 def _mcp_version() -> str:
     """Installed MCP SDK version, for the message when neither hook fits."""
@@ -71,6 +78,26 @@ def _import_mcp_types() -> Any:
         return mcp_types
     except ImportError:
         return None
+
+
+def _set_field(obj: Any, name: str, value: Any) -> Any:
+    """Write ``value`` to ``obj.name``, copying the model if it will not take it.
+
+    Content models are rewritten in place where they allow it and copied where
+    they do not, so a frozen SDK model is handled without assuming which of the
+    two the installed version is.  An object that is neither settable nor
+    copyable is returned unchanged rather than raising: a transformation is not
+    a reason to fail a call the gate already authorized and the tool already
+    ran.
+    """
+    try:
+        setattr(obj, name, value)
+        return obj
+    except Exception:
+        model_copy = getattr(obj, "model_copy", None)
+        if callable(model_copy):
+            return model_copy(update={name: value})
+    return obj
 
 
 class AgentLockMCPServer:
@@ -399,6 +426,14 @@ class AgentLockMCPServer:
         mapping, or bytes rather than SDK content blocks is transformed on the
         same terms as every other execution path.  The types that walk covers
         are listed on it; anything outside them is returned untouched.
+
+        E15: a ``CallToolResult`` carries TWO payloads, and the content blocks
+        are only one of them.  ``structured_content`` is the machine-readable
+        answer, which is what a client reads it for, and through the first red
+        pass this method stopped at the content list and never looked at it.  A
+        handler putting the same value in both returned one copy redacted and
+        the other intact.  The structured payload now goes through the same
+        walk, under either SDK major's spelling of the field.
         """
 
         def rewrite(item: Any) -> Any:
@@ -408,14 +443,7 @@ class AgentLockMCPServer:
             new_text = modify(text)
             if new_text == text:
                 return item
-            try:
-                item.text = new_text
-                return item
-            except Exception:
-                model_copy = getattr(item, "model_copy", None)
-                if callable(model_copy):
-                    return model_copy(update={"text": new_text})
-                return item
+            return _set_field(item, "text", new_text)
 
         if isinstance(result, str):
             return modify(result)
@@ -425,19 +453,34 @@ class AgentLockMCPServer:
 
         content = getattr(result, "content", None)
         if not isinstance(content, list):
-            # E11: not a content-carrying model, so the walk decides.
+            # E11: not a content-carrying model, so the walk decides.  E15: a
+            # plain mapping or sequence return, which the 1.x handler contract
+            # allows, is walked on exactly these terms and nothing more is
+            # needed for it.
             return apply_output_modifier(result, modify)
 
         rewritten = [rewrite(item) for item in content]
-        if rewritten == content:
-            return result
-        try:
-            result.content = rewritten
-            return result
-        except Exception:
-            model_copy = getattr(result, "model_copy", None)
-            if callable(model_copy):
-                return model_copy(update={"content": rewritten})
+        if rewritten != content:
+            result = _set_field(result, "content", rewritten)
+        # E15: the content blocks are not the whole result.
+        return AgentLockMCPServer._modify_structured_content(result, modify)
+
+    @staticmethod
+    def _modify_structured_content(result: Any, modify: Callable[[str], str]) -> Any:
+        """Apply the walk to a result's structured payload, if it has one.
+
+        E15.  Both field names are tried because the two SDK majors spell it
+        differently and one applier serves both hooks.  A payload that is
+        ``None`` is left alone: absent is not the same as empty, and writing a
+        walked ``None`` back would be a change with nothing behind it.
+        """
+        for name in _STRUCTURED_FIELDS:
+            structured = getattr(result, name, None)
+            if structured is None:
+                continue
+            walked = apply_output_modifier(structured, modify)
+            if walked != structured:
+                result = _set_field(result, name, walked)
         return result
 
     async def _run_reported(
