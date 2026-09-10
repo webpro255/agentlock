@@ -743,7 +743,6 @@ class TestBindingRedPass:
 
     # -- P1: functools.partial -------------------------------------------
 
-    @pytest.mark.xfail(strict=True, reason="P1: the partial's pre-bound positional is invisible")
     def test_xr1_sync_decorator_binds_through_a_partial(self):
         """P1 through the sync ``@agentlock`` wrapper.
 
@@ -776,7 +775,6 @@ class TestBindingRedPass:
         assert calls["n"] == 0
         assert calls["to"] is None
 
-    @pytest.mark.xfail(strict=True, reason="P1: the partial's pre-bound positional is invisible")
     def test_xr2_async_decorator_binds_through_a_partial(self):
         """P1 through the async wrapper. Same shape, same refusal."""
         import functools
@@ -860,7 +858,6 @@ class TestBindingRedPass:
 
     # -- P2: str subclasses ------------------------------------------------
 
-    @pytest.mark.xfail(strict=True, reason="P2: the gate reads the overridden methods")
     def test_xr5_a_lying_str_subclass_asserted_as_the_recipient_denies(self):
         """P2 through the asserted ``recipient`` argument.
 
@@ -875,10 +872,11 @@ class TestBindingRedPass:
             "send_email", user_id="alice", role="user", recipient=liar
         )
 
+        assert result.allowed is False
         assert result.decision.value == "deny"
-        assert result.reason == "recipient_not_allowed"
+        assert result.denial is not None
+        assert result.denial["reason"] == "recipient_not_allowed"
 
-    @pytest.mark.xfail(strict=True, reason="P2: the gate reads the overridden methods")
     def test_xr6_a_lying_str_subclass_in_the_declared_parameter_denies(self):
         """P2 through the declared recipient parameter. Same value, same rule."""
         gate = _gate()
@@ -889,10 +887,11 @@ class TestBindingRedPass:
             "send_email", user_id="alice", role="user", parameters={"to": liar}
         )
 
+        assert result.allowed is False
         assert result.decision.value == "deny"
-        assert result.reason == "recipient_not_allowed"
+        assert result.denial is not None
+        assert result.denial["reason"] == "recipient_not_allowed"
 
-    @pytest.mark.xfail(strict=True, reason="P2: the gate reads the overridden methods")
     def test_xr7_a_str_subclass_whose_data_is_a_contact_is_allowed(self):
         """The rule is coercion, not a ban on subclasses.
 
@@ -912,7 +911,6 @@ class TestBindingRedPass:
 
     # -- P3: unobservable declared parameters ------------------------------
 
-    @pytest.mark.xfail(strict=True, reason="P3: the declaration is accepted and enforces nothing")
     def test_xr8_a_recipient_parameter_no_signature_can_carry_is_refused_at_wrap_time(self):
         """P3 at wrap time.
 
@@ -945,7 +943,6 @@ class TestBindingRedPass:
 
         assert callable(send)
 
-    @pytest.mark.xfail(strict=True, reason="P3: a positional call skips step 8 entirely")
     def test_xr10_a_positional_call_the_gate_cannot_name_is_refused_at_call_time(self):
         """P3 at call time, on the callable XR9 allows to be wrapped.
 

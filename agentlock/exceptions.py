@@ -261,19 +261,41 @@ class BindingError(AgentLockError):
     """A call's arguments cannot be bound to parameter names, so it cannot be
     gated.
 
-    Two reasons, raised at two different moments.
+    Four reasons.  Two are properties of the callable and the block it is
+    gated with, and are raised at wrap time, so the wrapper refuses to be
+    built rather than gating less than it advertises.  Two are properties of
+    one call, and are raised at call time, from inside the binding and before
+    the gate is asked anything, so nothing is authorized and nothing runs.
 
-    The callable's signature cannot be read.  Raised at wrap time: a wrapper
-    that cannot bind a call's arguments cannot show the gate what the call
-    carries, so it refuses to be built rather than gating a subset of the
-    arguments and letting the rest through.
+    At wrap time:
 
-    Or the call's ``**kwargs`` mapping carries a key that names another
-    parameter of the same callable.  Raised at call time, from inside the
-    binding and before the gate is asked anything: flattening such a key over
-    the parameter it names would show the gate one value while the function
-    ran with the other, so the call is refused instead.  A key equal to the
-    ``**kwargs`` parameter's own name shadows nothing and is bound normally.
+    The callable's signature cannot be read.  A wrapper that cannot bind a
+    call's arguments cannot show the gate what the call carries, so it gates a
+    subset of the arguments and lets the rest through.  Partials are unwrapped
+    first, so it is the signature underneath that has to be readable.
+
+    Or the permission block declares a recipient parameter the signature can
+    never carry: no parameter of that name, and no ``**kwargs`` for one to
+    arrive in.  Recipient policy would be declared and would decide nothing,
+    which is worse than declaring none, so the pair is refused where it is
+    made.
+
+    At call time:
+
+    The call's ``**kwargs`` mapping carries a key that names another parameter
+    of the same callable.  Flattening such a key over the parameter it names
+    would show the gate one value while the function ran with the other, so
+    the call is refused instead.  A key equal to the ``**kwargs`` parameter's
+    own name shadows nothing and is bound normally.  A partial's own arguments
+    reach this rule too, because they are collapsed into the call before it is
+    bound.
+
+    Or a recipient parameter is declared, the call carries no argument of that
+    name, and it does carry positional arguments that landed in ``*args``,
+    where they have no names.  The gate does not guess which unnamed argument
+    was meant to be the recipient.  A call with no positional extras is not
+    this case: the declared parameter is simply absent and the gate's existing
+    skip applies.
     """
 
 

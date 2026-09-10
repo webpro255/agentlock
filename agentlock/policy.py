@@ -172,9 +172,30 @@ class ActionFlags:
     is_membership_change: bool = False
 
 
+def _coerce_recipient(value: str) -> str:
+    """Return the value's own string data, ignoring any subclass overrides.
+
+    Every recipient the gate is handed arrives as a ``str``, and a ``str``
+    subclass is a ``str``: it satisfies every ``isinstance`` check on the way
+    here while answering ``strip``, ``casefold`` and ``__str__`` with whatever
+    it likes.  A subclass whose methods name a known contact and whose data
+    names somewhere else would be enforced against the contact and delivered
+    to the data, because an application sends to ``str(value)``.
+
+    ``str.__str__`` is the slot itself rather than the instance's override, so
+    it returns a plain ``str`` holding the value's own characters.  Subclasses
+    are not rejected; they are read for what they hold.
+    """
+    return str.__str__(value)
+
+
 def _normalize_recipient(value: str) -> str:
-    """Normalize a recipient or allowlist entry: strip, then casefold."""
-    return value.strip().casefold()
+    """Normalize a recipient or allowlist entry: coerce, strip, then casefold.
+
+    The coercion comes first so the ``strip`` and ``casefold`` that follow are
+    the ones ``str`` defines and not ones a subclass supplied.
+    """
+    return _coerce_recipient(value).strip().casefold()
 
 
 def _recipient_domain(value: str) -> str:

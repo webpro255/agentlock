@@ -314,7 +314,7 @@ changelog. That is how we intend to keep working.
 
 | version | highlights | tests |
 |---------|-----------|-------|
-| 1.9.1   | binding collision: a `**kwargs` key that names another parameter is refused rather than flattened over it | 1509 with the `crypto` and `mcp` extras, 9 skipped |
+| 1.9.1   | binding completeness: a `**kwargs` key that names another parameter is refused rather than flattened over it; partials bound through to the function underneath; recipients read for the characters they hold; an unobservable declared recipient parameter refused | 1520 with the `crypto` and `mcp` extras, 9 skipped |
 | 1.9.0   | enforcement completeness: all call arguments reach the gate, tokens bind the empty call, MCP wrapper fails closed and supports both SDK majors | 1503 with the `crypto` and `mcp` extras, 9 skipped |
 | 1.8.0   | recipient policy enforcement at pipeline Step 8; declared recipient parameter read from the trusted permission block; recipient sets | 1495 with the `crypto` and `mcp` extras, 8 skipped |
 | 1.7.0   | cross-hop provenance linking; parent attribution at ingestion by whole-content carriage; taint-reachability walk at decision time | 1418 with optional extras, 7 skipped |
@@ -337,16 +337,18 @@ only on Python below 3.14; a bare install runs 1479 passed and 24
 skipped. For 1.9.0 it is 1503 passing and 9 skipped under `mcp 2.x`, the
 9 being those 8 plus the mcp 1.x test, which selects on the installed
 SDK major; under `mcp 1.x` it is 1502 passing and 10 skipped, the two 2.x
-tests taking the place of the 1.x one. For 1.9.1 it is 1509 passing and 9
-skipped under `mcp 2.x` and 1508 passing and 10 skipped under `mcp 1.x`, the
-six added tests being the binding collision class, none of which is guarded by
-an extra; a bare install runs 1504 passed and 14 skipped. Nothing fails in any
-of these environments.
+tests taking the place of the 1.x one. For 1.9.1 it is 1520 passing and 9
+skipped under `mcp 2.x` and 1519 passing and 10 skipped under `mcp 1.x`, the
+seventeen added tests being the binding collision class and the binding red
+pass class, none of which is guarded by an extra; a bare install runs 1515
+passed and 14 skipped. Nothing fails in any of these environments.
 
-The 1.9.0 argument binding, and the 1.9.1 rule that refuses a `**kwargs` key
-naming another parameter rather than flattening it over one, cover the
-engine's own decorators and in-repo integrations, which is the whole of what
-those two releases change. The standalone adapters ship from their own
+The 1.9.0 argument binding, and the 1.9.1 binding rules that refuse a
+`**kwargs` key naming another parameter, bind through a `functools.partial` to
+the function underneath, read a recipient for the characters it holds rather
+than for what its methods say, and refuse a declared recipient parameter the
+signature can never carry, cover the engine's own decorators and in-repo
+integrations, which is the whole of what those two releases change. The standalone adapters ship from their own
 repositories and are updated separately. At their current releases,
 `crewai-agentlock` 0.2.0 and `langchain-agentlock` 0.1.0 authorize keyword
 arguments only, and of those two only `crewai-agentlock` carries positional
@@ -355,7 +357,7 @@ arguments past the gate into the wrapped call; `mcp-agentlock` 0.2.1,
 argument mapping they hand the tool and have no positional route. No standalone
 adapter applies the wrapped function's defaults, so a parameter the caller
 omits and the function defaults is not seen by the gate in any of them, and
-none of them refuses a shadowing `**kwargs` key. 1.9.0 also makes an execution
+none of them carries any of the 1.9.1 binding rules. 1.9.0 also makes an execution
 token bind the empty call: the parameters passed to `execute()` must be the
 parameters passed to `authorize()`, and `None` and `{}` are the same call.
 

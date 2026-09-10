@@ -68,6 +68,7 @@ from agentlock.policy import (
     ActionFlags,
     PolicyEngine,
     RequestContext,
+    _coerce_recipient,
     _normalize_recipient,
     active_lineage_policy,
     lineage_gated_action,
@@ -856,6 +857,15 @@ class AuthorizationGate:
         resolved_recipients: tuple[str, ...] = ()
         recipient_fault = ""
         _rp = permissions.scope.recipient_parameter
+        # P2 -- a ``str`` subclass passes every ``isinstance`` check below
+        # while answering ``strip``, ``casefold`` and ``__str__`` with
+        # anything it likes.  Every string that becomes a recipient is coerced
+        # to its own data here, so no subclass instance reaches
+        # ``RequestContext`` and no later comparison can be steered by an
+        # override.  The asserted recipient is coerced for the same reason:
+        # it is one of the two recipient fields the context carries.
+        if isinstance(recipient, str):
+            recipient = _coerce_recipient(recipient)
         if _v15 and _rp and isinstance(parameters, dict) and _rp in parameters:
             _raw = parameters[_rp]
             if (
@@ -867,11 +877,11 @@ class AuthorizationGate:
                 # parameter, and not a fault.  D12's skip is preserved.
                 pass
             elif isinstance(_raw, str):
-                resolved_recipients = (_raw,)
+                resolved_recipients = (_coerce_recipient(_raw),)
             elif isinstance(_raw, list | tuple) and all(
                 isinstance(x, str) for x in _raw
             ):
-                resolved_recipients = tuple(_raw)
+                resolved_recipients = tuple(_coerce_recipient(x) for x in _raw)
             else:
                 recipient_fault = "malformed_parameter"
 

@@ -30,7 +30,11 @@ import time
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-from agentlock.binding import bind_call_parameters, ensure_bindable
+from agentlock.binding import (
+    bind_call_parameters,
+    ensure_bindable,
+    unwrap_partial,
+)
 from agentlock.gate import AuthorizationGate
 from agentlock.schema import AgentLockPermissions
 
@@ -82,14 +86,6 @@ def agentlock(
     """
 
     def decorator(func: F) -> F:
-        # Fail closed at wrap time.  A callable whose signature cannot be read
-        # cannot have its arguments bound, so the gate would only ever see the
-        # part of each call the caller passed by keyword.  Refuse to build the
-        # wrapper rather than ship one that gates a subset.
-        ensure_bindable(func)
-
-        tool_name = name or func.__name__
-
         # Build permissions
         if permissions is not None:
             if isinstance(permissions, dict):
@@ -117,6 +113,23 @@ def agentlock(
                 perms_dict["session"] = session
             perms = AgentLockPermissions(**perms_dict)
 
+        # Fail closed at wrap time, twice.  A callable whose signature cannot
+        # be read cannot have its arguments bound, so the gate would only ever
+        # see the part of each call the caller passed by keyword.  And a block
+        # that declares a recipient parameter the signature can never carry
+        # would have that policy silently decide nothing.  Refuse to build the
+        # wrapper in either case, before the tool is registered.
+        must_observe = perms.scope.recipient_parameter or None
+        ensure_bindable(func, must_observe=must_observe)
+
+        tool_name = name or func.__name__
+
+        # P1 -- what runs is the callable underneath any functools.partial,
+        # because that is what the binding below is taken against.  Calling
+        # the partial with that binding would apply its own arguments twice.
+        # Resolved once here: it does not vary per call.
+        target = unwrap_partial(func)
+
         # Register with gate
         gate.register_tool(tool_name, perms)
 
@@ -133,7 +146,9 @@ def agentlock(
                 # defaults included, not just what arrived by keyword.  The
                 # reserved auth kwargs are removed first so they are never
                 # part of what is authorized.
-                params, bound = bind_call_parameters(func, args, kwargs)
+                params, bound = bind_call_parameters(
+                    func, args, kwargs, must_observe=must_observe
+                )
 
                 # Authorize through the gate
                 auth_result = gate.authorize(
@@ -162,7 +177,9 @@ def agentlock(
                 )
                 started = time.time()
                 try:
-                    captured_result = await func(*bound.args, **bound.kwargs)
+                    captured_result = await target(
+                        *bound.args, **bound.kwargs
+                    )
                 except BaseException as exc:
                     gate.confirm_execution(
                         tool_name,
@@ -215,11 +232,13 @@ def agentlock(
                 # G1, as above.  The gate is handed the bound call; the
                 # function is invoked from the same binding, so what was
                 # authorized and what runs cannot drift apart.
-                params, bound = bind_call_parameters(func, args, kwargs)
+                params, bound = bind_call_parameters(
+                    func, args, kwargs, must_observe=must_observe
+                )
 
                 return gate.call(
                     tool_name,
-                    lambda **_p: func(*bound.args, **bound.kwargs),
+                    lambda **_p: target(*bound.args, **bound.kwargs),
                     user_id=user_id,
                     role=role,
                     parameters=params,
