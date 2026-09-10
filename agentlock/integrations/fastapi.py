@@ -31,10 +31,10 @@ Requires: ``fastapi`` and ``starlette`` (``pip install fastapi``)
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable, Sequence
 from typing import Any
 
+from agentlock.exceptions import IntegrationUnsupportedError
 from agentlock.gate import AuthorizationGate, AuthResult
 
 
@@ -75,37 +75,130 @@ HEADER_SESSION_ID = "X-AgentLock-Session-Id"
 
 
 # ---------------------------------------------------------------------------
-# JWT helper
+# JWT verification
 # ---------------------------------------------------------------------------
+#
+# Through 1.10.1 this section held ``_extract_jwt_claims``, which base64
+# decoded a bearer token's payload and returned it as identity WITHOUT
+# checking a signature.  1.10.0 then made those claims authoritative over the
+# identity headers, so a token anyone could type outranked a header a
+# deployment could strip at its edge: presenting ``{"sub": "alice"}`` with
+# ``"alg": "none"`` and arbitrary signature bytes was authenticating as alice.
+# The helper is gone rather than deprecated, because a function whose only
+# behavior is to return unverified claims has no correct caller.
+#
+# Verification is now opt in, and a bearer token carries no identity at all
+# unless the deployment configured a key to check it against.
 
-def _extract_jwt_claims(authorization: str) -> dict[str, Any]:
-    """Best-effort JWT claim extraction without verification.
+#: Used when the caller configured a key but named no algorithms.
+_DEFAULT_JWT_ALGORITHMS = ("HS256",)
 
-    Full verification should be performed by upstream middleware or an
-    auth provider.  This helper decodes the payload for extracting
-    ``sub`` (user_id) and ``role`` claims.
 
-    Returns an empty dict if decoding fails.
+class _JwtInvalidError(Exception):
+    """A bearer token was presented under a configured key and did not verify.
+
+    Carries no claims by construction: there is nothing trustworthy in a token
+    that failed verification, including the reason it names for itself.
+    """
+
+
+def _import_jose() -> Any:
+    """Lazily import python-jose, the verification backend.
+
+    Raises ``IntegrationUnsupportedError`` rather than ``ImportError`` so that
+    an adapter configured to verify and unable to verify fails at
+    CONSTRUCTION.  An adapter that discovers at its first request that it
+    cannot check a signature is an adapter that fails open under load.
+    """
+    try:
+        from jose import jwt as jose_jwt
+        return jose_jwt
+    except ImportError as exc:
+        raise IntegrationUnsupportedError(
+            "jwt_key was configured but python-jose is not installed, so this "
+            "integration cannot verify bearer tokens. Install it with: "
+            "pip install 'agentlock[fastapi]' (or pip install "
+            "'python-jose[cryptography]'), or leave jwt_key unset, in which "
+            "case bearer tokens are ignored for identity entirely."
+        ) from exc
+
+
+def _permitted_algorithms(jwt_algorithms: Sequence[str] | None) -> list[str]:
+    """The algorithms a token may be signed with.
+
+    ``"none"`` is dropped whatever the caller passed, in any casing.  The
+    unsecured JWS algorithm means "this token is not signed", so accepting it
+    under a configured key would restore precisely the bypass this section
+    exists to close, by request rather than by oversight.  A list that names
+    nothing else falls back to the default rather than to jose's, so the
+    outcome of asking for ``["none"]`` is HS256 and never no check at all.
+    """
+    named = [
+        algorithm
+        for algorithm in (jwt_algorithms or ())
+        if algorithm.strip().casefold() != "none"
+    ]
+    return named or list(_DEFAULT_JWT_ALGORITHMS)
+
+
+def _verify_jwt_claims(
+    authorization: str,
+    jwt_key: str | bytes,
+    jwt_algorithms: Sequence[str] | None,
+) -> dict[str, Any] | None:
+    """Verify a bearer token and return its claims.
+
+    Returns ``None`` when the request carries no bearer token, which is not a
+    failure: a deployment may authorize some routes by token and others by
+    trusted-upstream header.
+
+    Raises :class:`_JwtInvalidError` when a bearer token IS present and does not
+    verify: bad signature, disallowed or unsecured algorithm, expired, or
+    malformed.  The caller must refuse the request rather than fall back to
+    the identity headers, because falling back on a bad token hands a forger
+    the identity the token was there to gate.
     """
     if not authorization.startswith("Bearer "):
-        return {}
-    token = authorization[7:]
-    parts = token.split(".")
-    if len(parts) != 3:
-        return {}
-    try:
-        import base64
+        return None
+    token = authorization[7:].strip()
+    if not token:
+        raise _JwtInvalidError("empty bearer token")
 
-        # Pad the base64 segment
-        payload_b64 = parts[1]
-        padding = 4 - len(payload_b64) % 4
-        if padding != 4:
-            payload_b64 += "=" * padding
-        payload_bytes = base64.urlsafe_b64decode(payload_b64)
-        result: dict[str, Any] = json.loads(payload_bytes)
-        return result
-    except Exception:
-        return {}
+    jose_jwt = _import_jose()
+    try:
+        claims: dict[str, Any] = jose_jwt.decode(
+            token,
+            jwt_key,
+            algorithms=_permitted_algorithms(jwt_algorithms),
+            # Expiry is enforced.  Audience is not, because this integration
+            # configures none: a token that carries ``aud`` would otherwise be
+            # rejected for naming an audience nobody asked about.
+            options={"verify_exp": True, "verify_aud": False},
+        )
+    except Exception as exc:  # jose raises several unrelated types
+        raise _JwtInvalidError(str(exc)) from exc
+    return claims
+
+
+def _jwt_denial(detail: str) -> dict[str, Any]:
+    """The 401 body for a bearer token that did not verify."""
+    return {
+        "error": "agentlock_denied",
+        "detail": {
+            "status": "denied",
+            "reason": "jwt_invalid",
+            "detail": (
+                f"The bearer token did not verify against the configured "
+                f"jwt_key: {detail}. The identity headers are not consulted "
+                f"as a fallback for a token that failed verification."
+            ),
+            "suggestion": (
+                "Present a token signed with the configured key and a "
+                "permitted algorithm, or send no bearer token at all."
+            ),
+        },
+        "audit_id": "",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -138,10 +231,34 @@ class AgentLockMiddleware:
     admin route could name a low-risk tool in the header and be judged against
     that tool's block while the admin handler ran.
 
-    Identity (E5).  When the request carries a bearer JWT whose payload
-    supplies a subject, its claims are authoritative and the
-    ``X-AgentLock-User-Id`` / ``X-AgentLock-Role`` headers are ignored.  A
-    caller cannot present a token and then override the identity in it.
+    Identity.  Verification is opt in, and what a bearer token means depends
+    entirely on whether this middleware was given a key to check it against:
+
+    * **``jwt_key`` set.** A bearer token is VERIFIED, with expiry enforced
+      and ``"none"`` refused as an algorithm however ``jwt_algorithms`` is
+      written.  A token that verifies is authoritative: its ``sub`` and
+      ``role`` claims are the identity and the ``X-AgentLock-User-Id`` /
+      ``X-AgentLock-Role`` headers are ignored, so a caller cannot present a
+      token and then override the identity inside it.  A token that does NOT
+      verify is **401** with reason ``jwt_invalid``, and the identity headers
+      are not consulted as a fallback, because falling back on a bad token
+      hands a forger the identity the token existed to gate.
+    * **``jwt_key`` unset, the default.** A bearer token is ignored for
+      identity ENTIRELY, and the identity headers apply exactly as they did
+      before 1.10.0.
+
+    Through 1.10.1 there was no third state: the token's payload was base64
+    decoded WITHOUT any signature check and 1.10.0 made those claims
+    authoritative over the headers, so any party that could set one request
+    header could authenticate as anyone.  That is closed in 1.10.2, and the
+    change is not additive for a deployment that was relying on unverified
+    claims being read.
+
+    The identity headers are TRUSTED-UPSTREAM inputs in either state.  They
+    carry no proof of anything, and a deployment that exposes this middleware
+    directly to untrusted clients has to strip client-supplied
+    ``X-AgentLock-*`` at its edge, or configure ``jwt_key`` and authenticate
+    by token instead.
 
     If a request does not map to a tool, it passes through unmodified.
 
@@ -151,6 +268,14 @@ class AgentLockMiddleware:
         tool_name_from_path: Optional callback ``(method, path) -> tool_name``
             to derive the tool name from the request path.
         exclude_paths: Paths to skip (e.g., ``["/health", "/docs"]``).
+        jwt_key: Key or secret bearer tokens are verified against.  ``None``,
+            the default, means bearer tokens carry no identity.
+        jwt_algorithms: Permitted signing algorithms.  Defaults to
+            ``["HS256"]``.  ``"none"`` is dropped if listed.
+
+    Raises:
+        IntegrationUnsupportedError: if ``jwt_key`` is set and python-jose is
+            not installed.  Raised at construction, not at the first request.
     """
 
     def __init__(
@@ -159,12 +284,18 @@ class AgentLockMiddleware:
         gate: AuthorizationGate,
         tool_name_from_path: Callable[[str, str], str | None] | None = None,
         exclude_paths: Sequence[str] | None = None,
+        jwt_key: str | bytes | None = None,
+        jwt_algorithms: list[str] | None = None,
     ) -> None:
         _import_starlette()  # Validate availability
         self.app = app
         self.gate = gate
         self.tool_name_from_path = tool_name_from_path
         self.exclude_paths = set(exclude_paths or [])
+        self.jwt_key = jwt_key
+        self.jwt_algorithms = jwt_algorithms
+        if jwt_key is not None:
+            _import_jose()  # Fail here, not at the first request.
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         """ASGI interface."""
@@ -223,11 +354,26 @@ class AgentLockMiddleware:
             await self.app(scope, receive, send)
             return
 
-        # Extract identity (E5): a bearer JWT that names a subject is
-        # authoritative, and the identity headers are then ignored entirely
-        # rather than merged with it.
-        claims = _extract_jwt_claims(request.headers.get("authorization", ""))
-        if claims.get("sub"):
+        # Extract identity.  A VERIFIED bearer token is authoritative and the
+        # identity headers are then ignored entirely rather than merged with
+        # it.  With no key configured there is nothing to verify against, so
+        # the token is not read for identity at all.
+        claims: dict[str, Any] | None = None
+        if self.jwt_key is not None:
+            try:
+                claims = _verify_jwt_claims(
+                    request.headers.get("authorization", ""),
+                    self.jwt_key,
+                    self.jwt_algorithms,
+                )
+            except _JwtInvalidError as exc:
+                response = json_response_cls(
+                    status_code=401, content=_jwt_denial(str(exc)),
+                )
+                await response(scope, receive, send)
+                return
+
+        if claims is not None and claims.get("sub"):
             user_id = claims.get("sub", "")
             role = claims.get("role", "")
         else:
@@ -281,6 +427,8 @@ def require_agentlock(
     user_id_header: str = HEADER_USER_ID,
     role_header: str = HEADER_ROLE,
     use_jwt: bool = True,
+    jwt_key: str | bytes | None = None,
+    jwt_algorithms: list[str] | None = None,
 ) -> Callable[..., Any]:
     """Create a FastAPI ``Depends()`` dependency that enforces AgentLock.
 
@@ -301,11 +449,34 @@ def require_agentlock(
         tool_name: The tool to authorize.
         user_id_header: Header name for user identity.
         role_header: Header name for user role.
-        use_jwt: Whether to fall back to JWT ``Authorization`` header.
+        use_jwt: Whether the ``Authorization`` header is read at all.  Only
+            consulted when ``jwt_key`` is set; with no key there is no token
+            identity to suppress.
+        jwt_key: Key or secret bearer tokens are verified against.  ``None``,
+            the default, means bearer tokens carry no identity and the
+            identity headers apply.
+        jwt_algorithms: Permitted signing algorithms.  Defaults to
+            ``["HS256"]``.  ``"none"`` is dropped if listed.
+
+    Identity follows the same rule as :class:`AgentLockMiddleware`, and for
+    the same reason: a bearer token is authoritative only once it has been
+    VERIFIED against a configured key, a token that fails verification is
+    **401** with reason ``jwt_invalid`` and does NOT fall back to the identity
+    headers, and with no key configured the token is ignored for identity
+    entirely.  The identity headers are trusted-upstream inputs in either
+    state.  Through 1.10.1 this dependency read unverified claims and
+    preferred them over the headers.
 
     Returns:
         A FastAPI dependency callable.
+
+    Raises:
+        IntegrationUnsupportedError: if ``jwt_key`` is set and python-jose is
+            not installed.  Raised when the dependency is built, not when a
+            request arrives.
     """
+    if jwt_key is not None:
+        _import_jose()  # Fail here, not at the first request.
 
     async def dependency(**kwargs: Any) -> AuthResult:
         fastapi_mod = _import_fastapi()
@@ -319,14 +490,22 @@ def require_agentlock(
                 detail="AgentLock dependency requires a Request object.",
             )
 
-        # E5, as in the middleware: a bearer JWT naming a subject is
-        # authoritative and the identity headers are ignored.
-        claims = (
-            _extract_jwt_claims(request.headers.get("authorization", ""))
-            if use_jwt
-            else {}
-        )
-        if claims.get("sub"):
+        # As in the middleware: a VERIFIED bearer token is authoritative and
+        # the identity headers are ignored.  Unverified, it is not identity.
+        claims: dict[str, Any] | None = None
+        if use_jwt and jwt_key is not None:
+            try:
+                claims = _verify_jwt_claims(
+                    request.headers.get("authorization", ""),
+                    jwt_key,
+                    jwt_algorithms,
+                )
+            except _JwtInvalidError as exc:
+                raise fastapi_mod.HTTPException(
+                    status_code=401, detail=_jwt_denial(str(exc)),
+                ) from exc
+
+        if claims is not None and claims.get("sub"):
             user_id = claims.get("sub", "")
             role = claims.get("role", "")
         else:
