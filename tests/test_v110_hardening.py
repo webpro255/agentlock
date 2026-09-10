@@ -602,6 +602,15 @@ class TestRedPass:
     markers came off in the commit that closed the findings.  A strict xfail
     that starts passing is a failure, so neither the marker nor the fix could
     be left half applied.
+
+    A SECOND red pass, against the wheel built from ``33d0386``
+    (sha256 ``b72739f9``), found three more, and they are carried in the same
+    class from the block marked ``Red pass 2`` onward.  F4, MCP structured
+    content left unmodified, and F5, sets not walked, reproduce and close
+    under E15 and E16 on the same four-xfail-before-the-fix terms.  F6,
+    dictionary keys and arbitrary objects not walked, reproduces and is
+    STATED rather than closed, so its two cases assert the leak: a limit that
+    is pinned is a limit that cannot drift.
     """
 
     # F1: caller role overrides the session role (REPRODUCED)
@@ -941,3 +950,220 @@ class TestRedPass:
         })
         assert response.status_code == 200
         assert ran == ["ADMIN_ACTION"]
+
+    # Red pass 2, against the wheel built from 33d0386 (sha256 b72739f9).
+    # F4 and F5 reproduce and are closed by E15 and E16; F6 reproduces and is
+    # stated rather than closed, so its cases are guards on the limit.
+
+    @staticmethod
+    def _structured_result_perms() -> AgentLockPermissions:
+        return _perms(modify_policy=_redact("output"))
+
+    @pytest.mark.xfail(strict=True, reason="F4: structured content is not modified")
+    def test_mcp_2x_structured_content_is_modified(self):
+        """F4 through the real mcp 2.x hook.
+
+        E11 taught the MCP applier to walk a result that is not a
+        content-carrying model, and taught it to rewrite the ``text`` of every
+        content block in one that is.  A 2.x ``CallToolResult`` is both: it
+        carries ``content`` AND it carries ``structured_content``, a mapping
+        the client reads as the tool's real answer.  The applier stops at the
+        first of those, so a handler that puts the SSN in both gets one copy
+        redacted and hands the other one over intact.
+
+        Guarded on the 2.x ``Server`` constructor rather than only on the
+        package, per A1.2: ``importorskip("mcp")`` guards the ABSENCE of the
+        SDK and not the presence of the wrong major.  The 1.x hook carries the
+        same finding in the test below, under the SDK's own spelling of the
+        field.
+        """
+        pytest.importorskip("mcp")
+        import inspect
+
+        import mcp.types as mt
+        from mcp.server import Server
+
+        if "on_call_tool" not in inspect.signature(Server.__init__).parameters:
+            pytest.skip("mcp 1.x Server has no on_call_tool constructor")
+
+        from agentlock.integrations.mcp import AgentLockMCPServer
+
+        async def handler(ctx, params):
+            return mt.CallToolResult(
+                content=[mt.TextContent(type="text", text=SECRET)],
+                structured_content={"note": SECRET},
+            )
+
+        gate = AuthorizationGate()
+        server = Server("local-probe", on_call_tool=handler)
+        AgentLockMCPServer(
+            server, gate, {"task": self._structured_result_perms()},
+        )
+        result = asyncio.run(server.get_request_handler("tools/call").handler(
+            None,
+            mt.CallToolRequestParams(name="task", arguments={
+                "_agentlock_user_id": "alice",
+                "_agentlock_role": "user",
+            }),
+        ))
+        assert SSN not in result.content[0].text
+        assert SSN not in repr(result.structured_content)
+
+    @pytest.mark.xfail(strict=True, reason="F4: structured content is not modified")
+    def test_mcp_1x_structured_content_is_modified(self):
+        """F4 over the 1.x ``call_tool`` hook, through ``FakeServer``.
+
+        The 1.x SDK spells the field ``structuredContent``, the 2.x SDK spells
+        it ``structured_content``, and the applier is one function serving both
+        hooks, so it has to know both names.  This case is what covers the
+        camelCase name, and it is what keeps the finding covered in an
+        environment where only the 1.x SDK is installed and the case above
+        skips.
+        """
+        pytest.importorskip("mcp")
+        from agentlock.integrations.mcp import AgentLockMCPServer
+
+        class Text:
+            def __init__(self, text):
+                self.text = text
+
+        class Result:
+            def __init__(self, content, structured):
+                self.content = content
+                self.structuredContent = structured  # noqa: N815
+
+        gate = AuthorizationGate()
+        server = FakeServer()
+        AgentLockMCPServer(
+            server, gate, {"task": self._structured_result_perms()},
+        )
+
+        @server.call_tool()
+        async def handler(name: str, arguments: dict):
+            return Result([Text(SECRET)], {"note": SECRET})
+
+        result = asyncio.run(server.handler("task", {
+            "_agentlock_user_id": "alice", "_agentlock_role": "user",
+        }))
+        assert SSN not in result.content[0].text
+        assert SSN not in repr(result.structuredContent)
+
+    def test_mcp_1x_a_list_return_is_walked(self):
+        """Control, passing today.  E15 says a result that is a plain sequence
+        rather than a content-carrying model is walked on the same terms.  The
+        1.x handler contract allows a bare list of content items, and that
+        shape is already covered; it is pinned here so the structured content
+        change cannot quietly cost it.
+        """
+        pytest.importorskip("mcp")
+        from agentlock.integrations.mcp import AgentLockMCPServer
+
+        class Text:
+            def __init__(self, text):
+                self.text = text
+
+        gate = AuthorizationGate()
+        server = FakeServer()
+        AgentLockMCPServer(
+            server, gate, {"task": self._structured_result_perms()},
+        )
+
+        @server.call_tool()
+        async def handler(name: str, arguments: dict):
+            return [Text(SECRET)]
+
+        result = asyncio.run(server.handler("task", {
+            "_agentlock_user_id": "alice", "_agentlock_role": "user",
+        }))
+        assert SSN not in result[0].text
+
+    def test_mcp_1x_a_mapping_return_is_walked(self):
+        """Control, passing today: the other half of E15's second sentence.
+        A handler returning a plain mapping has no ``content`` list, so the
+        applier hands it to the walk, which is the behavior E11 added and this
+        change must leave alone.
+        """
+        pytest.importorskip("mcp")
+        from agentlock.integrations.mcp import AgentLockMCPServer
+
+        gate = AuthorizationGate()
+        server = FakeServer()
+        AgentLockMCPServer(
+            server, gate, {"task": self._structured_result_perms()},
+        )
+
+        @server.call_tool()
+        async def handler(name: str, arguments: dict):
+            return {"note": SECRET}
+
+        result = asyncio.run(server.handler("task", {
+            "_agentlock_user_id": "alice", "_agentlock_role": "user",
+        }))
+        assert SSN not in repr(result)
+
+    # F5: the walk does not cover set or frozenset (REPRODUCED)
+
+    @pytest.mark.xfail(strict=True, reason="F5: sets are not walked")
+    def test_a_set_return_is_modified(self):
+        """E16.  E11 named the types it covers and returned everything else
+        unchanged, and a ``set`` was one of the things it named as uncovered.
+        A set of strings is an ordinary return for a tool that answers with
+        distinct values, so naming it as uncovered documented a leak rather
+        than bounding one.  The member type is what the walk rebuilds, so the
+        return has to come back a ``set``.
+        """
+        gate, _ = self._modifying_gate()
+        result = gate.call("task", lambda: {SECRET}, user_id="alice", role="user")
+        assert isinstance(result, set)
+        assert SSN not in repr(result)
+
+    @pytest.mark.xfail(strict=True, reason="F5: sets are not walked")
+    def test_a_frozenset_return_is_modified(self):
+        """E16, and the container identity half of it: a ``frozenset`` is not
+        interchangeable with a ``set`` to a caller that puts it in another set
+        or uses it as a key, so the walk rebuilds the type it was given.
+        """
+        gate, _ = self._modifying_gate()
+        result = gate.call(
+            "task", lambda: frozenset({SECRET}), user_id="alice", role="user",
+        )
+        assert isinstance(result, frozenset)
+        assert SSN not in repr(result)
+
+    # F6: dict keys and objects are not walked (REPRODUCED, STATED NOT FIXED)
+
+    def test_a_dict_key_is_not_modified(self):
+        """F6, pinned as a limit rather than closed.  A key is a field name.
+        A transformation that renamed fields would corrupt the payload it was
+        asked to sanitize, which is the reason A2.6 already gave for descending
+        into values only.  A host that puts secret material in a key is naming
+        its records after the secret, and it has to redact that itself.
+
+        This case asserts the leak, so the limit is pinned rather than
+        implied: if the walk ever starts modifying keys, this fails and the
+        decision gets re-argued instead of drifting.
+        """
+        gate, _ = self._modifying_gate()
+        result = gate.call(
+            "task", lambda: {SECRET: "value"}, user_id="alice", role="user",
+        )
+        assert list(result) == [SECRET]
+
+    def test_an_object_return_is_not_modified(self):
+        """F6's other half.  An arbitrary object is returned unchanged even
+        when its ``__str__`` carries the secret, because the walk does not
+        know how to rebuild a type it was not told about and will not mutate
+        one it was handed.  Same conclusion: the host redacts it.
+        """
+
+        class Carrier:
+            def __str__(self):
+                return SECRET
+
+            __repr__ = __str__
+
+        carrier = Carrier()
+        gate, _ = self._modifying_gate()
+        result = gate.call("task", lambda: carrier, user_id="alice", role="user")
+        assert result is carrier
+        assert str(result) == SECRET

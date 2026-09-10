@@ -1217,3 +1217,362 @@ exit=0
 
 The oracle, copied outside the checkout and run against that same wheel:
 `33 passed, 4 warnings in 0.49s`.
+
+---
+
+# RED PASS 2 FREEZE (2026-09-10)
+
+Appended after AMENDMENT 2 and before any code that closes the findings below.
+Everything above, sections 1 through 5, AMENDMENT 1, the RED PASS FREEZE and
+AMENDMENT 2, is left exactly as it was written.
+
+A second pre-release red pass was run against the branch wheel,
+`agentlock-1.10.0-py3-none-any.whl`, sha256
+`b72739f9b49122e6f52bcfa7bf075ab62222aa1d014e343e0fff2d2bbd0c1c2e`, built from
+`33d0386`. That is the wheel AMENDMENT 2 recorded rebuilding at A2.7, and it is
+a different artifact from the one the first red pass ran against
+(`0d793500`, built from `4bd3998`). 1.10.0 is still unreleased, so these
+findings close on this branch as the first three did, and not in a patch
+release.
+
+The wheel was verified to be the tree the same way: `agentlock/modify.py`,
+`agentlock/integrations/mcp.py`, `agentlock/gate.py`,
+`agentlock/decorators.py` and `agentlock/types.py` were unzipped from the
+artifact and compared byte for byte against the checkout at `33d0386`. All five
+are identical. Every reproduction below is therefore a measurement of the
+shipped artifact.
+
+Nothing in this section describes code written on this branch after `33d0386`.
+
+## S1. The three findings, reproduced
+
+All three findings are in the same place: the output modification path that E1
+threaded onto every execution route and E11 taught to walk a return value. The
+first red pass closed the question of whether the modifier ARRIVES. This one is
+about what it does once it is there.
+
+**F4. mcp structured content is not modified. REPRODUCED, on both SDK majors.**
+
+An MCP `CallToolResult` carries two payloads, not one. `content` is the list of
+content blocks, and `structured_content` is a mapping the client reads as the
+tool's machine-readable answer. `agentlock/integrations/mcp.py:382-441`,
+`_modify_text_content`, handles the first and never looks at the second: it
+rewrites the `text` of every content block, and where the result is not a
+content-carrying model at all it hands the whole thing to
+`apply_output_modifier`. A result that IS a content-carrying model and ALSO
+carries structured content takes the first branch and returns with the second
+untouched.
+
+Measured against the wheel in `/tmp/al18-extras` (mcp 2.2.0), a handler
+returning both payloads carrying the same SSN under a declared `redact_pii` on
+`output`:
+
+```
+F4 mcp2 content   : Customer SSN [REDACTED:ssn]
+F4 mcp2 structured: leaked=True {'note': 'Customer SSN 123-45-6789'}
+```
+
+One copy redacted, the other handed over intact, in the same return value. A
+client reading the structured payload, which is what a client reads it for,
+sees the unredacted answer.
+
+The field is spelled differently by the two SDK majors, and the applier is one
+function serving both hooks:
+
+```
+mcp 2.2.0   structured_content   (alias structuredContent)
+mcp 1.30.0  structuredContent
+```
+
+Through the 1.x `call_tool` hook, against a result object carrying a content
+list and a `structured_content` mapping:
+
+```
+F4 mcp1 content   : Customer SSN [REDACTED:ssn]
+F4 mcp1 structured: leaked=True {'note': 'Customer SSN 123-45-6789'}
+```
+
+Both models are settable in place at the versions installed here, measured
+directly, so neither hook needs the `model_copy` fallback today. The fallback
+is written anyway, because `_modify_text_content` already carries one for
+`content` and an SDK that freezes one field is an SDK that can freeze the
+other.
+
+**Not reproduced, and stated because E15's second sentence covers it.** E15
+also says that a result which is a plain mapping or sequence rather than a
+`CallToolResult` is walked the same way. Measured against the wheel, it already
+is, on both shapes the 1.x handler contract allows:
+
+```
+F4 mcp1 list      : leaked=False [Text('Customer SSN [REDACTED:ssn]')]
+F4 mcp1 mapping   : leaked=False {'note': 'Customer SSN [REDACTED:ssn]'}
+```
+
+The list goes through the `isinstance(result, list)` branch and the mapping
+falls to `apply_output_modifier`, both of which E11 put there. Neither is
+marked as an expected failure. Both are pinned as guards, for the reason R1
+gave under F3: fastapi had a correct branch with no test and it came back as a
+reported defect.
+
+**F5. The walk does not cover `set` or `frozenset`. REPRODUCED.**
+
+`agentlock/modify.py:87-101` covers `str`, `bytes`, `dict`, `list` and `tuple`
+and returns everything else unchanged, and its docstring names sets among the
+things returned unchanged. Naming an uncovered type documents a leak; it does
+not bound one. A set of strings is an ordinary return for a tool that answers
+with distinct values. Measured against the wheel through `gate.call`:
+
+```
+F5 set       : leaked=True type=set {'Customer SSN 123-45-6789'}
+F5 frozenset : leaked=True type=frozenset frozenset({'Customer SSN 123-45-6789'})
+```
+
+**F6. Dict keys and arbitrary objects are not walked. REPRODUCED, and to be
+stated rather than closed.**
+
+```
+F6 dict-key  : leaked=True type=dict {'Customer SSN 123-45-6789': 'v'}
+F6 object    : leaked=True type=Obj Obj('Customer SSN 123-45-6789')
+```
+
+Both are deliberate and both stay. A key is a field name, and A2.6 already
+recorded why renaming fields would corrupt the payload a transformation was
+asked to sanitize. An arbitrary object is a type the walk was not told how to
+rebuild and will not mutate in place. The decision is to say so in the
+docstring and to pin the limit with cases that assert the leak, so that a
+future change to either rule fails a test and gets argued rather than drifting.
+
+## S2. Decisions of record
+
+Restated as received, so this document is readable without the instruction that
+produced it.
+
+**E15. Structured content is modified.** In both MCP hooks, when the result
+object has a `structured_content` (or `structuredContent`) attribute that is
+not `None`, the E11 walker is applied to it and the result set back. When the
+result is a plain mapping or sequence rather than a `CallToolResult`, which the
+1.x handler contract allows, it is walked the same way.
+
+**E16. The walker covers sets.** `set` and `frozenset` are handled by walking
+their members and rebuilding the same type. The docstring states explicitly
+that dictionary keys, objects, and non-UTF-8 bytes are not modified, and that a
+host returning those types must redact them itself.
+
+**E17. Files.** `agentlock/modify.py`, `agentlock/integrations/mcp.py`,
+`CHANGELOG.md` (one line each under the existing 1.10.0 Security section),
+`README.md` if counts change, `tests/test_v110_hardening.py` (`TestRedPass`
+gains the cases), `docs/PREDICTIONS_v110_hardening.md` (append only). Nothing
+else.
+
+### E16 amended before the build: the bytes clause is false of the engine
+
+E16 asks the docstring to state that non-UTF-8 bytes "are not modified". That
+is measured to be false, and stating it would have put a false claim about the
+engine's behavior into the engine's own documentation, which is the failure
+mode the standing rule about verifying a claim against the artifact exists to
+prevent. Recorded here, before the build, rather than discovered afterwards.
+
+Measured against the wheel, a latin-1 payload holding an ASCII SSN and two
+undecodable bytes, under a declared `redact_pii` on `output`:
+
+```
+in : b'Customer SSN 123-45-6789 \xff\xfe'
+out: b'Customer SSN [REDACTED:ssn] \xef\xbf\xbd\xef\xbf\xbd'
+unchanged: False | ssn present: False
+```
+
+Non-UTF-8 bytes are modified twice over. The readable part IS redacted, which
+is the behavior E11 chose `errors="replace"` for and argued for in writing:
+"a transformation that cannot read the bytes must not be a reason to hand them
+back unread". The unreadable part is replaced with U+FFFD and re-encoded, so
+the caller gets back neither the original bytes nor a faithful sanitization of
+them.
+
+E16's first sentence is a behavior directive and its second is a docstring
+directive. Nothing in the three findings covers bytes, so the second sentence
+is read as documentation and not as authority to overturn E11's choice. The
+behavior is therefore UNCHANGED and the docstring states what is true instead:
+that a byte string which is not valid UTF-8 is decoded lossily before the
+transformation sees it, that the transformation cannot match on the part it
+could not read, that the value returned is a UTF-8 re-encoding rather than the
+original bytes, and that a host returning non-UTF-8 bytes must redact them
+itself.
+
+**This is flagged for a decision rather than settled here.** If the intent of
+E16's bytes clause was that non-UTF-8 bytes should pass through untouched, that
+is a behavior change to a decision of record from the previous pass, it belongs
+in its own finding with its own freeze, and it is not made on this pass. It is
+named here so it cannot be lost.
+
+## S3. Existing tests that assert the old behavior
+
+Predicted before editing: **zero** edits to existing test files.
+
+Measured rather than read, the same way R3 was. A pytest plugin wrapped
+`agentlock.modify.apply_output_modifier` and
+`AgentLockMCPServer._modify_text_content` at `33d0386` and recorded, with the
+test id, every call the E15 and E16 changes would reach: for E16, every walk of
+a `set` or `frozenset`; for E15, every result carrying a non-`None`
+`structured_content` or `structuredContent`. The whole suite was run under it.
+
+| Change | Calls reached | Outside `TestRedPass` |
+|---|---|---|
+| E16 (`/tmp/al18-extras`) | 0 | 0 |
+| E15 (`/tmp/al18-extras`) | 2 | 0 |
+| E16 (`/tmp/al19-mcp1`) | 0 | 0 |
+| E15 (`/tmp/al19-mcp1`) | 1 | 0 |
+
+Every E15 hit is one of the new expected-failure cases this freeze adds, which
+is why the count is 2 where both SDK majors' cases can run and 1 where only the
+1.x companion can. Nothing else in 1612 passing tests returns a set, and
+nothing else returns a result carrying structured content.
+
+`build_output_modifier` keeps its `Callable[[str], str]` signature and both
+changes are made beside it, so `tests/test_modify.py::TestBuildOutputModifier`
+is untouched by construction rather than by luck, exactly as at the last pass.
+
+## S4. STEP 0 measurements
+
+### S4.1 Baselines at `33d0386`, before the new cases
+
+| Environment | Suite |
+|---|---|
+| `/tmp/al18-extras` (py3.14.6, mcp 2.2.0, fastapi 0.141.1, Flask 3.1.3) | `1608 passed, 9 skipped` |
+| checkout venv (py3.14.6, no mcp, fastapi 0.135.3, Flask 3.1.3) | `1591 passed, 26 skipped` |
+| `/tmp/al19-mcp1` (py3.13.14, mcp 1.30.0, no fastapi, no flask), 4 deselected per K2c | `1588 passed, 25 skipped, 4 deselected` |
+| `/tmp/al18-probe313` (py3.13.14, mcp 2.2.0, fastapi, flask) | `1609 passed, 8 skipped` |
+
+All four reconcile with AMENDMENT 2 section A2.7 exactly.
+
+Oracle alone, `/tmp/al18-extras`: `33 passed, 4 warnings in 0.44s`.
+
+### S4.2 With the new cases added
+
+`TestRedPass` goes from 25 cases to **33**: 8 added, 4 of them strict xfails and
+4 of them plain guards.
+
+| Environment | Suite |
+|---|---|
+| `/tmp/al18-extras` | `1612 passed, 9 skipped, 4 xfailed` |
+| checkout venv | `1593 passed, 30 skipped, 2 xfailed` |
+| `/tmp/al19-mcp1` (4 deselected) | `1592 passed, 26 skipped, 4 deselected, 3 xfailed` |
+| `/tmp/al18-probe313` | `1613 passed, 8 skipped, 4 xfailed` |
+
+Every arithmetic difference from S4.1 is accounted for. `/tmp/al18-extras` and
+`/tmp/al18-probe313` have both a 2.x SDK and both frameworks, so all 8 cases
+run: 4 passes and 4 xfails. `/tmp/al19-mcp1` has a 1.x SDK, so the 2.x
+structured content case skips on the constructor guard: 4 passes, 3 xfails, 1
+new skip. The checkout venv has no `mcp` at all, so the two structured content
+cases and the two 1.x guards skip: 2 passes, 2 xfails, 4 new skips.
+
+**No xfail XPASSes in any environment.** F4 and F5 are red in exactly the shape
+E15 and E16 will turn green, and F6 is not marked xfail at all, because F6 is
+not being closed.
+
+`TestRedPass` alone, `/tmp/al18-extras`: `29 passed, 4 xfailed`.
+
+### S4.3 The marker inventory
+
+The 4 strict xfails, all removed by the fix:
+
+* F4 through the real mcp 2.x SDK: 1. Guarded on `importorskip("mcp")` AND on
+  `on_call_tool` being in the `Server.__init__` signature, per A1.2, so it
+  skips against a 1.x SDK rather than failing on the SDK's own constructor.
+* F4 through the 1.x `call_tool` hook and the `FakeServer` fixture: 1. This is
+  the case that covers the camelCase spelling, and it is what keeps the finding
+  covered in the environment where the case above skips. Same companion
+  pattern A2.2 established for E10.
+* F5 through `gate.call`: 2, one for `set` and one for `frozenset`. Each
+  asserts the container type as well as the absence of the SSN, because a walk
+  that turned a `frozenset` into a `set` would break a caller that puts it in
+  another set.
+
+The 4 plain guards, passing now and required to keep passing:
+
+* E15's second sentence: 2. The 1.x bare list return and the 1.x plain mapping
+  return are already walked, and the structured content change must not cost
+  either.
+* F6, the limit pinned: 2. A dict keyed by the secret comes back with the key
+  intact, and an object whose `__str__` carries the secret comes back as the
+  same object. Both assert the leak on purpose.
+
+### S4.4 Lint, types, style
+
+`ruff check .`: **All checks passed.** No new `per-file-ignores` entry. One
+`noqa: N815` sits on the deliberately camelCase attribute of the 1.x result
+stub, which is the SDK's own spelling and is the point of that case.
+
+Style scan of the added test content: `emdash: 0 double-hyphen: 0`.
+
+`mypy` at `33d0386`, both invocations, recorded so the prediction has a
+baseline. The flagged invocation is the project's, per A2.3:
+
+```
+mypy agentlock/ --ignore-missing-imports
+  /tmp/al18-extras    Success: no issues found in 34 source files
+  /tmp/al18-probe313  Success: no issues found in 34 source files
+  /tmp/al19-mcp1      Success: no issues found in 34 source files
+
+mypy agentlock/
+  /tmp/al18-extras    Found 1 error in 1 file (checked 34 source files)
+  /tmp/al18-probe313  Found 1 error in 1 file (checked 34 source files)
+  /tmp/al19-mcp1      Found 3 errors in 3 files (checked 34 source files)
+```
+
+Every finding of the bare invocation is a missing third-party stub for an
+optional integration dependency, and none is in a file this pass edits.
+
+## S5. Frozen predictions
+
+Stated before any implementation code is written. A MISMATCH on any of these is
+a STOP: no commit, report, and amend the failed prediction in place, dated,
+before proceeding.
+
+**Q1.** Every one of the 4 `xfail(strict=True)` markers is removed, and all 33
+`TestRedPass` cases pass in every environment where their framework and SDK
+major are present. No marker is left in place, and no case is deleted or
+weakened. Measured expectation: `33 passed` in `/tmp/al18-extras` and
+`/tmp/al18-probe313`, `27 passed, 6 skipped` in `/tmp/al19-mcp1` (the four F3
+cases, the 2.x MCP role case, and the 2.x structured content case), and
+`29 passed, 4 skipped` in the checkout venv.
+
+**Q2.** Full suite, per environment, equal to the S4.2 figure with every xfail
+turned into a pass and zero failures:
+
+* `/tmp/al18-extras`: **1616 passed, 9 skipped, 0 failed, 0 xfailed**.
+* checkout venv: **1595 passed, 30 skipped, 0 failed**.
+* `/tmp/al19-mcp1`, 4 deselected: **1595 passed, 26 skipped, 0 failed**.
+* `/tmp/al18-probe313`: **1617 passed, 8 skipped, 0 failed**.
+
+**Q3.** `mypy agentlock/ --ignore-missing-imports` is clean in all three
+environments and the bare invocation's output is unchanged from the S4.4
+baseline, with **zero findings in `agentlock/modify.py` and
+`agentlock/integrations/mcp.py`**. `ruff check .` is clean with no new
+`per-file-ignores` entry. The diff contains **0** em dashes and **0** ASCII
+double hyphens outside the one CHANGELOG flag A2.5 already declared, and the
+corpus grep over the diff returns **0**.
+
+**Q4.** Files touched are **exactly E17 or a proper subset of it**, and nothing
+outside it. Specifically predicted: `agentlock/gate.py`,
+`agentlock/decorators.py`, `agentlock/types.py`,
+`agentlock/integrations/fastapi.py` and `agentlock/integrations/flask.py` are
+**not** touched. E15 names the MCP applier and E16 names the walker, and every
+other execution path reaches the walker through `agentlock/modify.py`, so
+`agentlock/gate.py` and `agentlock/decorators.py` get sets and frozensets for
+free. That is the same call-graph argument A2.4 had to make after the fact, made
+here before the fact instead.
+
+**Q5.** Zero edits to existing test files, including
+`tests/test_v110_system_review.py`, and the oracle still reports **33 passed**
+in `/tmp/al18-extras`.
+
+**Q6.** Rebuild: `twine check dist/*` **PASSED** on both artifacts, metadata
+**Version 1.10.0**, no version bump. The wheel's sha256 changes, because the
+tree changed. A fresh venv holding only the rebuilt wheel runs a reproduction
+script from outside the checkout and reports F4 closed on both SDK majors, F5
+closed for `set` and `frozenset` with the container type preserved, and F6
+unchanged at the stated limit.
+
+**Q7.** `README.md` counts move to the Q2 figures and the CHANGELOG's 1.10.0
+suite sentence moves with them. The added-test count in the README's Versions
+prose moves from 88 to 96 and `TestRedPass` from 25 to 33.
