@@ -1206,3 +1206,204 @@ previously saw execution. That is the fix. C3, where there is nothing to
 shadow, is untouched and stays allowed.
 
 Everything after this line is append only.
+
+---
+
+## AMENDMENT 3 (2026-09-10): v1.9.1 built, every prediction matched
+
+Measured on `v1.9.1-binding-collision` at
+`92abeae fix: reject variadic keyword names that collide with bound parameters`,
+which is the build commit, on top of the freeze commit
+`d3aa20a docs: freeze 1.9.1 binding collision, reproductions as strict xfails`.
+`/tmp/al18-extras` was reinstalled with `pip install -e ".[dev,crypto,mcp]"`
+against the built tree before measuring. No merge, no tag, no push, no upload.
+The two restatements recorded in the freeze, S1 and S2, are what the build
+follows; Y1 to Y4 are otherwise unchanged.
+
+### Scoreboard
+
+| Prediction | Verdict | Evidence |
+|---|---|---|
+| Z1 | MATCH | The four strict xfail markers came off XC1 to XC4 and all four pass. No test reports XPASS or failure in any of the four environments. XC5 and XC6 passed at freeze and pass after the build, unmarked throughout. The class is 6 passed, 0 skipped, in every environment. |
+| Z2 | MATCH | checkout `1504 passed, 14 skipped, 0 failed`; `/tmp/al18-extras` `1509 passed, 9 skipped, 0 failed`; `/tmp/al19-mcp1` `1508 passed, 10 skipped, 0 failed`. Each is the freeze environment's pre-class figure plus exactly 6, the six new tests, none of which is guarded by an optional extra. Suite lines below. |
+| Z3 | MATCH | `mypy agentlock/ --ignore-missing-imports` reports `Success: no issues found in 34 source files`. `ruff check .` reports `All checks passed!`. The legacy-name grep over `agentlock tests schema` returns 0. |
+| Z4 | MATCH | Nine paths across the three commits, the eight of Y4 plus `agentlock/exceptions.py` per S1. `git show --stat` for both code commits below. Nothing else. |
+| Z5 | MATCH | `twine check` PASSED on both artifacts. Wheel METADATA carries `Metadata-Version: 2.4` and `Version: 1.9.1`. `/tmp/al191-wheel`, a fresh venv, installed the wheel and prints 1.9.1. `/tmp/al191_wheel_repro.py`, written outside the repository and run from `/tmp`, reports `15 passed, 0 failed`: C1 and C2 raise `BindingError` and C3 is allowed, against the installed wheel only. |
+
+Five predictions, five MATCH, 0 MISMATCH.
+
+### The four suite lines
+
+```
+$ python3 -m pytest -q                              # checkout, CPython 3.14.6, no mcp
+1504 passed, 14 skipped, 19 warnings in 3.15s
+
+$ /tmp/al18-extras/bin/python -m pytest -q          # CPython 3.14.6, mcp 2.2.0
+1509 passed, 9 skipped, 19 warnings in 3.29s
+
+$ /tmp/al19-mcp1/bin/python -m pytest -q            # CPython 3.13.14, mcp 1.30.0
+1508 passed, 10 skipped in 2.88s
+
+$ /tmp/al18-probe313/bin/python -m pytest -q        # CPython 3.13.14, mcp 2.2.0, pyautogen 0.9.0
+1510 passed, 8 skipped in 3.30s
+```
+
+`/tmp/al18-probe313` is not scored by Z2 and is recorded because XC3 runs there
+against a real `pyautogen 0.9.0` rather than under the monkeypatched import
+check. Its figure is the freeze environment's 1504 plus the same 6.
+
+Every environment's delta from its own pre-class figure is exactly 6, and every
+environment's delta from its own freeze figure is exactly the four xfails
+turning into passes.
+
+### Per test, after the build
+
+```
+$ /tmp/al18-extras/bin/python -m pytest tests/test_v19_enforcement_gaps.py -q -rs
+SKIPPED [1] tests/test_v19_enforcement_gaps.py:329: needs the mcp 1.x SDK
+========================= 14 passed, 1 skipped in 0.32s ========================
+
+$ python3 -m pytest "tests/test_v19_enforcement_gaps.py::TestBindingCollision" -q
+============================== 6 passed in 0.01s ===============================
+```
+
+### Z3 verbatim
+
+```
+$ /tmp/al18-extras/bin/mypy agentlock/ --ignore-missing-imports
+Success: no issues found in 34 source files
+
+$ /tmp/al18-extras/bin/ruff check .
+All checks passed!
+```
+
+The source file count stays 34: the release adds no module.
+
+### Z4 verbatim
+
+```
+$ git show --stat --name-only --format= d3aa20a
+docs/PREDICTIONS_v19_enforcement.md
+tests/test_v19_enforcement_gaps.py
+
+$ git show --stat --name-only --format= 92abeae
+CHANGELOG.md
+CITATION.cff
+README.md
+agentlock/__init__.py
+agentlock/binding.py
+agentlock/exceptions.py
+pyproject.toml
+tests/test_v19_enforcement_gaps.py
+```
+
+Nine distinct paths, the eight Y4 names plus `agentlock/exceptions.py`, which
+S1 added to the list before the build for one edit: the `BindingError`
+docstring. `agentlock/decorators.py` and `agentlock/integrations/autogen.py`
+are not touched. All three call sites reach `bind_call_parameters`, so the rule
+lands on all three from the one place, which is why Y1 puts it there.
+
+### S1 and S2 closed
+
+S1: `agentlock/exceptions.py` now states both reasons `BindingError` is raised
+and where each is raised from. The wrap-time reason, an unreadable signature,
+is unchanged and still described as wrap time. The call-time reason is new and
+is described as call time, raised from inside the binding and before the gate
+is asked anything.
+
+S2: the README per-version count paragraph gained one 1.9.1 sentence in the
+form the sentences before it use, so its last entry is the current release
+rather than the previous one. The versions table gained its row. A third edit,
+not required by S1 or S2 and made for the same reason both exist, extends the
+adapter scoping paragraph: the standalone adapters do not carry the collision
+rule either, and a paragraph that enumerates what they do and do not cover
+would otherwise be read as saying they do.
+
+### Z5 verbatim
+
+```
+$ /tmp/al18-extras/bin/twine check dist/*
+Checking dist/agentlock-1.9.1-py3-none-any.whl: PASSED
+Checking dist/agentlock-1.9.1.tar.gz: PASSED
+```
+
+Wheel `agentlock-1.9.1.dist-info/METADATA`, first three lines:
+
+```
+Metadata-Version: 2.4
+Name: agentlock
+Version: 1.9.1
+```
+
+`pyproject.toml:2` still reads `requires = ["hatchling<1.30"]` and the build
+resolved `hatchling==1.29.0`.
+
+Artifacts, `sha256sum dist/*`:
+
+```
+026c785d827c2fd579e5a4e444ee924a5aff36bf50c9f08a64321cfc316e677c  dist/agentlock-1.9.1-py3-none-any.whl
+82cbcd6c16210177ccae8cf68cd5993274f571a9e107b2024e63c5c118e984f1  dist/agentlock-1.9.1.tar.gz
+```
+
+Neither artifact is uploaded and neither is committed. `dist/` is ignored.
+
+The wheel reproduction, run from `/tmp` against a fresh venv on CPython 3.14.6.
+The script guards its own premise and exits before testing anything if the
+resolved `agentlock` package is not under the venv's `purelib`.
+
+```
+$ /tmp/al191-wheel/bin/python /tmp/al191_wheel_repro.py
+agentlock 1.9.1 from /tmp/al191-wheel/lib/python3.14/site-packages/agentlock/__init__.py
+
+(a) C1 through the sync and async decorators
+  PASS  sync call raises BindingError
+  PASS  the error names the colliding key
+  PASS  the error names the function
+  PASS  async call raises BindingError
+  PASS  neither body ran
+
+(a2) C1 through the AutoGen function map
+  PASS  autogen call raises BindingError
+  PASS  the autogen body never ran
+
+(b) C2, a variadic key shadowing *args
+  PASS  C2 raises BindingError
+  PASS  the error names 'args'
+
+(c) C3, a key equal to the variadic's own name, still allowed
+  PASS  C3 binds
+  PASS  the function receives the same mapping
+
+(d) the 1.9.0 binding shapes, unchanged
+  PASS  all three hostile routes deny
+  PASS  no body ran
+  PASS  a known contact executes
+  PASS  the counter is 1
+
+15 passed, 0 failed
+ALL PASS
+```
+
+Section (d) is not required by Z5 and is there because Z1 pairs XC6 with the
+XC tests for the same reason: the collision rule sits in the same function the
+1.9.0 argument binding sits in, and a rule that closed C1 by breaking G1's fix
+would be a worse release than no rule. The wheel carries both.
+
+### What is left for the manual step
+
+1. Merge, tag `v1.9.1`, and push. Nothing here merged, tagged or pushed.
+2. Upload `dist/agentlock-1.9.1-py3-none-any.whl` and
+   `dist/agentlock-1.9.1.tar.gz`, whose hashes are recorded above, after the
+   push. Nothing here uploaded.
+3. After Zenodo mints the 1.9.1 version DOI from the GitHub release, add it to
+   `CITATION.cff` as a second `identifiers` entry and to the README's software
+   archive line, in a follow-up docs commit. Both places still say the version
+   DOI is minted at publication rather than naming a stale one, which is the
+   state AMENDMENT 2 left them in and the state this release keeps.
+
+The standalone adapters are the fourth thing and are not part of this release.
+None of the five carries the collision rule, which is stated in the CHANGELOG
+and the README rather than left for a reader to discover. They are fixed in
+their own repositories, on their own releases.
+
+Everything after this line is append only.
