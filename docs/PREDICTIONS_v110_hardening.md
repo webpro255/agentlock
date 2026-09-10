@@ -3746,3 +3746,517 @@ satisfying their predictions and R9 said so before the edit rather than after
 it. `dist/` holds the two artifacts digested above and is left in place for the
 maintainer; publishing them, and removing them afterwards, is a manual step
 this session does not take.
+
+# 1.10.2 FREEZE (2026-09-10)
+
+Appended after AMENDMENT 7. Everything above, sections 1 through 5,
+AMENDMENT 1, the RED PASS FREEZE, AMENDMENT 2, the RED PASS 2 FREEZE,
+AMENDMENT 3, the RELEASE FREEZE, AMENDMENT 4, the 1.10.1 FREEZE, AMENDMENT 5,
+the 1.10.1 RED PASS FREEZE, AMENDMENT 6, the 1.10.1 RELEASE FREEZE and
+AMENDMENT 7, is left exactly as it was written.
+
+Date: 2026-09-10
+Branch: `v1.10.2-jwt-and-audit`, cut from `main` at the 1.10.1 tag.
+HEAD: `3d95406`.
+Working tree at measurement time: clean apart from the reviewer's new file,
+which is untracked and is the subject of section W3.
+
+This is 1.10.2. Two findings. The first comes from the external reviewer's
+second recheck of 1.10.1: 65 prior cases pass, so 1.10.1 held, and of the 31
+cases they added, 30 pass and 1 fails. The second comes from a pre-release
+check against the published 1.10.1 wheel and is the more serious of the two by
+some distance: it was filed as a documented limitation and it is not one.
+
+Both findings are in code this arc wrote or last touched. The first is in the
+audit classification 1.5 added and 1.9.2 extended. The second is in an identity
+path 1.10.0 promoted to authoritative without ever checking that what it was
+promoting had been verified.
+
+No merge, no tag, no push, no upload.
+
+## W1. The two findings, reproduced
+
+### J1. A timeout denial is audited as an ordinary completion
+
+`DeferralManager` writes two different strings for a denial and the gate reads
+one of them.
+
+`check_timeouts` takes a `timeout_action` that defaults to `"deny"` and assigns
+it verbatim (`agentlock/defer.py:398`), and `resolve_commit_queue` assigns
+`"deny"` on the expiry branch it enforces itself (`agentlock/defer.py:334`) and
+`"denied"` on the branch where the per-record predicate says so
+(`agentlock/defer.py:339`). Both are denials. Nothing downstream distinguishes
+them, and nothing was ever meant to.
+
+`confirm_execution` classifies a reported execution against that string, and
+tests exactly one spelling:
+
+```python
+if facts.get("resolution_at_commit") == "denied":
+    action_override = "execution_after_denial"
+```
+
+That is `agentlock/gate.py:2141`. A host that reports it executed an action the
+gate denied by TIMEOUT therefore does not get `execution_after_denial`. It
+falls through to `log_execution_completion` and is recorded as a routine
+finished call, with the true resolution preserved only as a metadata field that
+no filter looking for the serious action will read. The comment eight lines
+above it states the intent that the code then fails to carry out: an action the
+gate denied at commit, reported as executed, "is the single most serious thing
+this log can carry, and it gets its own action so that no filter can mistake it
+for a routine execution."
+
+The reviewer's case pins both halves. It builds a deferral, ages it past its
+timeout, resolves the queue, asserts the resolution is one of the two spellings
+rather than picking one, and then asserts the classification:
+
+```python
+resolved = g.resolve_deferred_commits(sid)
+assert len(resolved) == 1 and resolved[0].resolution in ('deny', 'denied')
+audit = g.confirm_execution('task', deferral_id=record.deferral_id,
+    parameters={}, status='succeeded')
+assert audit.action == 'execution_after_denial', (record.resolution, audit.action, audit.reason)
+```
+
+Measured at HEAD in `/tmp/al18-extras`, verbatim:
+
+```
+E   AssertionError: ('deny', 'execution_completed', 'succeeded')
+E   assert 'execution_completed' == 'execution_after_denial'
+E     
+E     - execution_after_denial
+E     + execution_completed
+```
+
+The parametrized `lineage` sibling of that case passes, because the lineage
+denial goes through the predicate branch and lands on `"denied"`. So the bug is
+invisible to every test that denies through policy and visible only to one that
+denies through expiry, which is the branch a timeout defaults to and the branch
+least likely to be exercised by hand.
+
+The reviewer's assertion pins `record.resolution` in the tuple it reports, and
+their first assertion accepts both spellings deliberately. The string
+`"deny"` is therefore load bearing for the oracle and is NOT renamed. The fix
+is on the reading side.
+
+### J2. An unverified bearer token is authoritative identity
+
+`agentlock/integrations/fastapi.py:81` and `agentlock/integrations/flask.py:96`
+each base64 decode the middle segment of a bearer token and return it as
+claims. Neither checks a signature. Both say so in their own docstrings, in
+the same words: "Best effort JWT claim extraction without verification", and
+"Full verification should be performed by upstream middleware or an auth
+provider."
+
+Through 1.9.1 that was a documented weakness of a fallback. 1.10.0's E5 made it
+the top of the identity precedence order. Both call sites now read:
+
+```python
+claims = _extract_jwt_claims(request.headers.get("authorization", ""))
+if claims.get("sub"):
+    user_id = claims.get("sub", "")
+    role = claims.get("role", "")
+else:
+    ...headers...
+```
+
+with the class docstring stating the rule: "When the request carries a bearer
+JWT whose payload supplies a subject, its claims are authoritative and the
+`X-AgentLock-User-Id` / `X-AgentLock-Role` headers are ignored. A caller cannot
+present a token and then override the identity in it."
+
+Read against an unverified decode, that sentence inverts. A caller cannot
+override the identity in a token, so the fastest way to become anyone is to put
+them in a token. The header path at least has the honest defence that a
+deployment is expected to strip client supplied `X-AgentLock-*` at its edge.
+There is no edge behaviour that makes an unverified `sub` claim safe, because
+the token is not a claim the edge is expected to strip; it is the thing the
+edge is expected to have checked, and nothing here checks that it did.
+
+The reproduction forges a token with `"alg": "none"`, a payload of
+`{"sub": "alice", "role": "admin"}`, and fifteen bytes of base64 that are not a
+signature, and sends it to an admin route alongside CONTRADICTING identity
+headers naming `mallory` with role `guest`. Run from `/tmp` against the
+checkout in `/tmp/al18-extras`, verbatim:
+
+```
+A fastapi  forged alg none token + contradicting headers: status=200 ran=['ADMIN_ACTION'] -> OPEN
+B fastapi  headers alone, no token:                      status=403 ran=[] -> control
+A flask    forged alg none token + contradicting headers: status=200 ran=['ADMIN_ACTION'] -> OPEN
+B flask    headers alone, no token:                      status=403 ran=[] -> control
+OPEN probes: 2
+EXIT=1
+```
+
+The control is the point. The same request WITHOUT the token is denied 403 and
+the handler does not run. Adding a token that anyone can type turns the denial
+into a 200 with `ADMIN_ACTION` executed, on both adapters. This is not a
+degraded check. It is an authorization bypass reachable by any party that can
+set one request header, and 1.10.0 is what made it reachable at the top of the
+precedence order rather than at the bottom.
+
+The report filed this as a documented limitation, on the grounds that the
+docstrings disclose it. They do. A docstring disclosing that the gate accepts
+forged identity does not make the gate accept forged identity less. AgentLock's
+first design principle is deny by default and its third is that credentials are
+handled out of band; a bearer path that trusts whatever it is handed violates
+both, and "we wrote it down" is not an enforcement layer. It is treated as a
+finding.
+
+The dependency is already declared and already unused. `pyproject.toml` line 52
+puts `python-jose[cryptography]>=3.3` in the `fastapi` extra and line 58 puts it
+in `all`. Nothing in `agentlock/` imports `jose`. The library needed to verify
+the token has been shipped with the adapter that does not verify it since the
+extra was written.
+
+## W2. Decisions of record
+
+**D1. One denial predicate, read side only.** `agentlock/defer.py` exports
+`is_denial_resolution(value) -> bool`, true for `"deny"` and `"denied"`,
+casefolded and stripped. Every comparison of a deferral resolution against a
+denial string in `gate.py` and `defer.py` goes through it. `confirm_execution`
+flags `execution_after_denial` for both spellings. The metadata field keeps
+whatever string the record actually carries, so the log still says which branch
+denied; only the classification is unified. Neither assignment site changes,
+because the oracle pins `record.resolution == "deny"` after `check_timeouts`
+and a rename would break the file that defines done. Measured scope: `gate.py`
+has exactly one such comparison, at line 2141, plus the hardcoded `"denied"` it
+writes into that record's metadata at line 2159, which becomes the record's own
+string. `defer.py` has no such comparison today and gains the predicate for the
+callers that do. `gate.py:2681` compares against `"committed"` and falls
+through to `deferred_denied`, which is already correct for both spellings and
+is not a comparison against a denial string, so it is left alone.
+
+**D2. JWT verification is opt in, and absent it a bearer token carries no
+identity.** `AgentLockMiddleware`, `require_agentlock`, `agentlock_required`
+and `AgentLockFlask` gain `jwt_key: str | bytes | None = None` and
+`jwt_algorithms: list[str] | None = None`.
+
+* When `jwt_key` is set, the bearer token is verified with
+  `jose.jwt.decode(token, jwt_key, algorithms=jwt_algorithms)` with expiry
+  enforced. `"none"` is never accepted as an algorithm even if a caller lists
+  it in `jwt_algorithms`. A verification failure is **401** with reason
+  `jwt_invalid`, and the identity headers are NOT consulted as a fallback,
+  because falling back to headers on a bad token hands the forger the thing
+  the token was supposed to gate.
+* When `jwt_key` is None, a bearer token is ignored for identity ENTIRELY. The
+  identity headers apply exactly as they did before 1.10.0, and the docstring
+  states in those words that they are trusted upstream inputs.
+* The old unverified decode helpers are removed rather than deprecated. A
+  helper whose only behaviour is to return unverified claims has no correct
+  caller.
+* `jose` is imported lazily inside the verification path. If `jwt_key` is
+  configured and `jose` cannot be imported, construction raises
+  `IntegrationUnsupportedError`, which is the exception this project already
+  uses for an adapter that would otherwise appear to protect something and not.
+  Failing at construction rather than at request time is the whole point: an
+  adapter that discovers at the first request that it cannot verify is an
+  adapter that fails open under load.
+
+**D3. E5's sentence now means a VERIFIED token.** The 1.10.0 claim that a
+configured JWT overrides the identity headers is kept and qualified: it
+overrides them when it has been verified against a configured key, and it
+overrides nothing otherwise. `CHANGELOG.md` states plainly that 1.10.1 and
+earlier accepted unverified bearer claims, and that this change is NOT additive
+for any deployment relying on that.
+
+**D4. Release front matter.** Version 1.10.2 in `pyproject.toml` and
+`agentlock/__init__.py`. A `CHANGELOG.md` Security section covering J1 and J2,
+crediting **"the external reviewer's 1.10.1 recheck"** for J1 and **"a
+pre-release check against the published 1.10.1 wheel"** for J2. `README.md`
+gains its Versions row and its environments figures, and the paragraph on HTTP
+identity is rewritten to state D2 rather than the 1.10.0 rule. `CITATION.cff`
+version and date.
+
+**D5. Files.** `agentlock/defer.py`, `agentlock/gate.py`,
+`agentlock/integrations/fastapi.py`, `agentlock/integrations/flask.py`,
+`agentlock/__init__.py`, `pyproject.toml`, `CHANGELOG.md`, `README.md`,
+`CITATION.cff`, `tests/test_v1101_system_followup.py` (guards only),
+`tests/test_v110_hardening.py` (the new class), and this document. Nothing
+else.
+
+`agentlock/exceptions.py` was listed conditionally, on a new reason being
+needed. **It is not needed and the file is not touched.**
+`IntegrationUnsupportedError` already exists at `agentlock/exceptions.py:302`
+with a docstring that describes this case exactly, and `jwt_invalid` is a
+denial reason string in a JSON body, not a `DenialReason` enum member: the
+adapters already emit `tool_selection_conflict` the same way.
+
+Three decisions had to be added at freeze time, before any code was written,
+because the frozen predictions as briefed cannot all hold.
+
+**D6. The held verbatim oracle gets a `per-file-ignores` entry, and the
+standing "no new ignores" prediction is amended here rather than after the
+fact.** `ruff check .` at HEAD is NOT clean: it reports 11 errors, all 11 in
+`tests/test_v1101_system_followup.py`, and every one of them is the reviewer's
+formatting rather than a defect. The rules are `I001` four times, `E501` four
+times, `E701` twice and `SIM105` once. That set is a strict SUBSET of the
+entry `pyproject.toml` already carries for the first oracle file, which reads
+`E402, E501, E701, E702, F811, I001, SIM105` under a comment explaining that
+the file is held verbatim because rewriting the artifact that defines done
+would make it a restatement rather than an independent check. The same reason
+applies unchanged to the second oracle file. So the new entry lists exactly
+the four codes that file actually trips, not the seven the first one carries,
+and the prediction becomes "no new ignore for engine code or for any file this
+project authored". This is stated before the edit, not discovered during it.
+
+**D7. Exactly one existing test is edited, and it is named here with its
+assertion quoted.** The brief predicted zero and asked that any test asserting
+the unverified decode behaviour be listed first. One does:
+`tests/test_v110_hardening.py:283`, in `TestFlaskToolSelection`.
+
+```python
+    def test_a_bearer_token_beats_the_identity_headers(self):
+        """E5: a caller cannot present a token and then override it."""
+        import base64
+        import json
+
+        pytest.importorskip("flask")
+        payload = base64.urlsafe_b64encode(
+            json.dumps({"sub": "alice", "role": "user"}).encode()
+        ).decode().rstrip("=")
+        app, ran = self._app(lambda endpoint, method, path: "admin_task")
+        response = app.test_client().post("/admin", headers={
+            "Authorization": f"Bearer header.{payload}.signature",
+            "X-AgentLock-Role": "admin",
+        })
+        assert response.status_code == 403
+        assert ran == []
+```
+
+Measured, not assumed: its two assertions still hold after D2. The app it
+builds configures no `jwt_key`, so the token is ignored, the headers apply, and
+the headers carry a role but no user id. `gate.authorize("admin_task",
+user_id="", role="admin")` returns `allowed=False` with reason
+`not_authenticated`, so the response is still 403 and `ran` is still empty.
+
+The assertions surviving is exactly why this needs an edit rather than being
+left alone. After D2 the case passes for a reason unrelated to its name: it
+would be a test called "a bearer token beats the identity headers" standing
+green in a codebase where a bearer token beats nothing, and it would go on
+passing if the token path were reintroduced tomorrow, because a role header
+alone cannot authorize either way. So its name and docstring are rewritten to
+state the D2 rule, and its 403 is pinned to `not_authenticated` so that it
+fails if the forged claims ever come back. The prediction is therefore **one**
+existing test edited, this one, and no other.
+
+**D8. The `flask` extra gains `python-jose[cryptography]`.** D2 gives the flask
+adapter a verification path with the same dependency the fastapi adapter
+already declares, and `pyproject.toml` line 53 currently declares `flask` alone.
+Leaving it means a deployment that installs `agentlock[flask]` and configures
+`jwt_key` as the changelog tells it to gets `IntegrationUnsupportedError` at
+construction, which is the correct failure for a broken install and the wrong
+one for a documented feature. `all` already carries jose and does not change.
+
+## W3. STEP 0 measurements
+
+### W3.1 (0a) The reviewer's file, and the two guards
+
+`sha256sum tests/test_v1101_system_followup.py` at receipt:
+
+```
+74e924251eebf8887e478adba59c3cb1bc1432675942118bac79382ea85c6aed
+```
+
+which is the expected digest. 168 lines, 31 cases.
+
+The file imports `mcp` inside two functions, so on an interpreter without the
+SDK it errors on collection instead of skipping. The same two guards the first
+oracle file carries are inserted, in the same idiom and at the same
+indentation, and nothing else is touched:
+
+```diff
+--- a/tests/test_v1101_system_followup.py
++++ b/tests/test_v1101_system_followup.py
+@@ -48,6 +48,7 @@
+         f = agentlock(g, name='task', permissions=p)(run)
+         result = asyncio.run(f(supplied, _user_id='alice', _role='user'))
+     else:
++        pytest.importorskip("mcp")
+         from mcp.server import Server
+         import mcp.types as mt
+         from agentlock.integrations.mcp import AgentLockMCPServer
+@@ -108,6 +109,7 @@
+ @pytest.mark.parametrize('policy', ['none', 'modify', 'data_policy', 'both'])
+ @pytest.mark.parametrize('late_registration', [False, True])
+ def test_mcp_mixed_payloads_and_policy_combinations(policy, late_registration):
++    pytest.importorskip("mcp")
+     from mcp.server import Server
+     import mcp.types as mt
+     from agentlock.integrations.mcp import AgentLockMCPServer
+```
+
+Reconstructing the pre edit file by deleting those two lines and hashing it
+returns `74e9242...` again, which is the check that the diff is those two lines
+and no others.
+
+### W3.2 (0b) The reviewer's file, run
+
+`/tmp/al18-extras`, the file alone:
+
+```
+collected 31 items
+tests/test_v1101_system_followup.py ..............................F      [100%]
+FAILED tests/test_v1101_system_followup.py::test_reported_execution_after_denial_is_flagged[timeout]
+=================== 1 failed, 30 passed, 3 warnings in 0.35s ===================
+```
+
+30 passed and 1 failed, the timeout case, which is the expected result.
+
+The first oracle file, unchanged, in the same environment: `65 passed, 13
+warnings in 0.45s`. All 65 prior cases pass, so 1.10.1 held.
+
+### W3.3 (0c) J2 reproduced against the checkout
+
+`/tmp/al1102_jwt_repro.py`, run from `/tmp` so it cannot pick the tree up by
+accident, against `/tmp/al18-extras` whose `agentlock` is the checkout. Output
+is quoted verbatim in W1 under J2. Two probes OPEN, exit 1. The script prints
+OPEN or CLOSED per probe and exits nonzero if any probe is OPEN, which is the
+shape the red pass scripts of this arc already use, so it can be rerun
+unchanged against the built wheel at measure time.
+
+### W3.4 (0d) The suite, per environment, at HEAD
+
+With the reviewer's file present and guarded, and no fix applied:
+
+```
+/tmp/al18-extras   1 failed, 1718 passed, 9 skipped, 47 warnings in 4.31s
+checkout venv      1 failed, 1673 passed, 54 skipped, 46 warnings in 3.49s
+```
+
+Both reconcile with AMENDMENT 7 section A7.6 by construction. `/tmp/al18-extras`
+was 1688 passing and 9 skipped; the new file adds 31 collected, of which 30
+pass and 1 fails, and 1688 plus 30 is 1718 with the skip count unmoved because
+that environment has `mcp`. The checkout venv was 1652 passing and 45 skipped;
+of the 31 new cases 9 are guarded on `mcp` and skip, leaving 22 of which 21
+pass, and 1652 plus 21 is 1673 while 45 plus 9 is 54.
+
+Environments, read out of each interpreter rather than remembered:
+
+```
+/tmp/al18-extras   CPython 3.14.6, mcp 2.2.0, fastapi 0.141.1, flask 3.1.3, python-jose 3.5.0
+checkout venv      CPython 3.14.6, mcp absent, fastapi 0.135.3, flask 3.1.3, python-jose absent
+```
+
+The jose split is new and it matters for the counts in W4: the checkout venv
+cannot run any case that signs or verifies a token, so the eight such cases are
+guarded and skip there.
+
+Types and lint at HEAD:
+
+```
+mypy agentlock/ --ignore-missing-imports   Success: no issues found in 34 source files
+ruff check .                               Found 11 errors
+```
+
+The 11 are D6's, all in the reviewer's file, none in engine code.
+
+`dist/` still holds the 1.10.1 artifacts AMENDMENT 7 left:
+
+```
+16d2fd4e433f2b639054faff6aad56c76bb044f74a75f15ef4df7b76b92f16f5  dist/agentlock-1.10.1-py3-none-any.whl
+8cb91bd996628a7861ebc430d9a7cb39ddd723b61e049ad98e2e408306cbdf23  dist/agentlock-1.10.1.tar.gz
+```
+
+The wheel digest is A7.6's. The sdist digest is not, for the reason A7.2 gave
+about sdist reproducibility; the wheel is the artifact the reproduction scripts
+are run against and it has not moved.
+
+### W3.5 (0e) Hygiene
+
+`~/agentlock-hygiene.sh` run with the repo path. Both corpus name greps 0,
+Co-Authored-By trailers in the last 20 commits 0, and the em dash count 1. The
+single em dash is `docs/PREDICTIONS_v18_recipient.md:900`, which is a
+predictions document quoting the character itself in order to name it as
+prohibited. That is the documented exception this arc has carried since 1.8 and
+it is not introduced by this session.
+
+## W4. Frozen predictions
+
+**P1.** Both oracle files pass in full: `tests/test_v110_system_review.py`
+**65 passed**, `tests/test_v1101_system_followup.py` **31 passed**, 0 failed
+and 0 xfailed in `/tmp/al18-extras`. The timeout case passes because of D1 and
+not because the reviewer's file was edited: the only edit to that file is the
+two guards of W3.1 and its digest reconstruction check still holds.
+
+**P2.** `TestJwtAndAudit` in `tests/test_v110_hardening.py` adds **exactly 14
+cases**, named here so the arithmetic below is a commitment rather than a
+guess. Two for J1 with no framework: a timeout denial reported as executed, and
+a commit denial reported as executed, flagged `execution_after_denial` for
+`"deny"` and `"denied"` alike, with the metadata carrying the record's own
+string in each. Six for J2 over fastapi and six over flask, matching case for
+case: a forged `"alg": "none"` token rejected 401 with reason `jwt_invalid`; an
+HS256 token signed with the configured key accepted with identity taken from
+its claims; the same token rejected under a wrong key; an expired token
+rejected; `jwt_key` None with a forged token, headers used and token ignored;
+and `jwt_key` configured with `jose` absent by monkeypatch, construction
+raising `IntegrationUnsupportedError`. The flask six cover both the extension
+hook and the route decorator. **Eight of the 14 are guarded on `jose`**, being
+the four signing or verifying cases on each adapter.
+
+**P3.** Suite per environment, 0 failed in both:
+
+* `/tmp/al18-extras`: **1733 passed, 9 skipped**. That is 1718 plus the timeout
+  case turning green, plus 14 new, none of which skips where `mcp`, both web
+  frameworks and `jose` are all present.
+* checkout venv: **1680 passed, 62 skipped**. That is 1673 plus the timeout
+  case, plus the 6 of the 14 that do not need `jose`, with the other 8 joining
+  the 54 skips.
+
+**P4.** `mypy agentlock/ --ignore-missing-imports` reports **0 errors**.
+`ruff check .` is **clean**, with exactly one new `per-file-ignores` entry,
+`tests/test_v1101_system_followup.py` listing exactly `E501`, `E701`, `I001`
+and `SIM105`, under a comment naming it the second held verbatim oracle. **No
+new ignore for engine code or for any file this project authored.**
+
+**P5.** `~/agentlock-hygiene.sh` returns all zeros except the em dash count,
+which stays at **1** and stays the `docs/PREDICTIONS_v18_recipient.md` line
+W3.5 names. Added lines carry **0** em dashes, and the only ASCII double
+hyphens on added lines are the declared ones: the `--ignore-missing-imports`
+flag inside backticks, which A2.5 declared for exactly this use, and this
+document quoting it; and the file header of the unified diff W3.1 quotes inside
+a fence, which is the artifact's own syntax rather than this document's prose.
+
+**P6.** Files in commit B are **exactly D5's list**: `agentlock/defer.py`,
+`agentlock/gate.py`, `agentlock/integrations/fastapi.py`,
+`agentlock/integrations/flask.py`, `agentlock/__init__.py`, `pyproject.toml`,
+`CHANGELOG.md`, `README.md`, `CITATION.cff`,
+`tests/test_v1101_system_followup.py` and `tests/test_v110_hardening.py`.
+`agentlock/exceptions.py` is **not** among them, per D5. **Exactly one existing
+test is edited**, the one D7 quotes, and no other. No schema field is added or
+altered.
+
+**P7.** Version `1.10.2` in `pyproject.toml` and `agentlock/__init__.py`, and
+no other current version string anywhere in the tree says 1.10.1.
+`CITATION.cff` reads `version: 1.10.2` and `date-released: 2026-09-10` and
+`yaml.safe_load` parses it. `CHANGELOG.md` gains a `[1.10.2] - 2026-09-10`
+heading with a Security section covering both findings, both credit phrases of
+D4 present verbatim, the not additive statement of D3 present, and the per
+environment figures of P3 with interpreter, `mcp` and `python-jose` versions.
+`README.md` gains its 1.10.2 Versions row and environments figures, and its
+HTTP identity paragraph states D2.
+
+**P8.** Rebuild in `/tmp/al18-extras` after `rm -rf dist build`: `twine check
+dist/*` **PASSED** for both artifacts, wheel METADATA reporting
+`Metadata-Version: 2.4` and `Version: 1.10.2`.
+
+**P9.** A fresh venv holding only the built wheel with the `crypto`, `mcp`,
+`fastapi` and `flask` extras, exercised from outside the checkout so it cannot
+resolve the source tree, prints **1.10.2**; both oracle files copied to `/tmp`
+run **96 passed** against site packages; and `/tmp/al1102_jwt_repro.py`, plus a
+second script covering the D2 positive path, together report J2 **CLOSED**:
+forged token 401, token signed with the configured key accepted, and headers
+unaffected and authoritative when no key is configured. Both exit 0. The two
+red pass scripts of the 1.10 arc, `/tmp/al110_redpass_repro.py` and
+`/tmp/al110_redpass2_repro.py`, still exit 0 against the 1.10.2 wheel.
+
+## W5. Commit plan
+
+* **A**: `docs: freeze 1.10.2, audit denial predicate and verified JWT identity`.
+  This section, append only, and the two guards of W3.1.
+* **B**: `fix: shared denial predicate for audit classification, JWT identity
+  requires verification`. D1 through D4, the new test class, the one existing
+  test edit of D7, and the release front matter.
+* **C**: AMENDMENT 8, the measured results against W4.
+
+No merge, no tag, no push, no upload.
