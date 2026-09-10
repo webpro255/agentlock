@@ -1866,6 +1866,12 @@ class TestJwtAndAudit:
         "X-AgentLock-User-Id": "mallory",
         "X-AgentLock-Role": "guest",
     }
+    # An identity that CAN reach the admin tool, for the J3 cases, where what
+    # has to be visible is a header being consulted rather than ignored.
+    ADMIN_HEADERS = {
+        "X-AgentLock-User-Id": "alice",
+        "X-AgentLock-Role": "admin",
+    }
 
     @staticmethod
     def _forged_token() -> str:
@@ -1904,7 +1910,7 @@ class TestJwtAndAudit:
         return gate
 
     @classmethod
-    def _fastapi_call(cls, token, jwt_key):
+    def _fastapi_call(cls, token, jwt_key, *, scheme="Bearer", identity=None):
         pytest.importorskip("fastapi")
         import fastapi
         from fastapi.testclient import TestClient
@@ -1924,13 +1930,14 @@ class TestJwtAndAudit:
             tool_name_from_path=lambda method, path: "admin_task",
             jwt_key=jwt_key,
         )
-        headers = dict(cls.HEADERS)
+        headers = dict(cls.HEADERS if identity is None else identity)
         if token:
-            headers["Authorization"] = f"Bearer {token}"
+            headers["Authorization"] = f"{scheme} {token}"
         return TestClient(app).post("/admin", headers=headers), ran
 
     @classmethod
-    def _flask_call(cls, token, jwt_key, *, decorator=False):
+    def _flask_call(cls, token, jwt_key, *, decorator=False,
+                    scheme="Bearer", identity=None):
         """The extension hook by default, the route decorator on request.
 
         Both grew the same two arguments and both have to enforce the same
@@ -1964,9 +1971,9 @@ class TestJwtAndAudit:
                 jwt_key=jwt_key,
             )
 
-        headers = dict(cls.HEADERS)
+        headers = dict(cls.HEADERS if identity is None else identity)
         if token:
-            headers["Authorization"] = f"Bearer {token}"
+            headers["Authorization"] = f"{scheme} {token}"
         return app.test_client().post("/admin", headers=headers), ran
 
     def test_fastapi_a_forged_unsigned_token_is_refused(self):
@@ -2117,3 +2124,172 @@ class TestJwtAndAudit:
         with pytest.raises(IntegrationUnsupportedError):
             AgentLockFlask(
                 None, self._gate_with_admin_tool(), jwt_key=self.KEY)
+
+    # -- J3: a configured key makes the token the only identity ----------
+
+    @staticmethod
+    def _basic_credentials() -> str:
+        """A Basic scheme value, so the scheme under test is a real one that
+        an ordinary deployment might put in front of this and not a string
+        invented to fail a prefix check.
+        """
+        import base64
+
+        return base64.b64encode(b"alice:not-a-password").decode()
+
+    @pytest.mark.xfail(
+        strict=True, reason="J3, closed when a configured key is the only identity")
+    def test_fastapi_a_configured_key_refuses_a_request_carrying_no_token(self):
+        """J3.  Verification is switched ON and the request presents nothing
+        to verify.  Through 1.10.2 as released that reached the identity
+        headers, so a client that simply omitted the ``Authorization`` header
+        was identified by ``X-AgentLock-User-Id`` and ``X-AgentLock-Role`` and
+        the admin route ran: verification was enforced only on clients that
+        chose to present a token.  A configured key means the token is the
+        identity, so a request without one is 401 ``jwt_required`` and the
+        headers are not read at all.
+        """
+        pytest.importorskip("jose")
+        response, ran = self._fastapi_call(
+            None, self.KEY, identity=self.ADMIN_HEADERS)
+        assert response.status_code == 401
+        assert response.json()["detail"]["reason"] == "jwt_required"
+        assert ran == []
+
+    @pytest.mark.xfail(
+        strict=True, reason="J3, closed when a configured key is the only identity")
+    def test_flask_a_configured_key_refuses_a_request_carrying_no_token(self):
+        """The same on flask, through the extension hook."""
+        pytest.importorskip("jose")
+        response, ran = self._flask_call(
+            None, self.KEY, identity=self.ADMIN_HEADERS)
+        assert response.status_code == 401
+        assert response.get_json()["detail"]["reason"] == "jwt_required"
+        assert ran == []
+
+    @pytest.mark.xfail(
+        strict=True, reason="J3, closed when the scheme match is case insensitive")
+    def test_fastapi_a_lowercase_bearer_scheme_is_verified(self):
+        """RFC 7235 makes the auth scheme case insensitive, and 1.10.2 as
+        released matched it with ``startswith("Bearer ")``.  A token spelled
+        ``bearer`` was therefore invisible: not a bad token, no token, so the
+        identity headers decided.  Here the token is real and signed with the
+        configured key while the headers name a guest, so the case fails if
+        the token is thrown away for its spelling.
+        """
+        pytest.importorskip("jose")
+        response, ran = self._fastapi_call(
+            self._signed_token(), self.KEY, scheme="bearer")
+        assert response.status_code == 200
+        assert ran == ["ADMIN_ACTION"]
+
+    @pytest.mark.xfail(
+        strict=True, reason="J3, closed when the scheme match is case insensitive")
+    def test_flask_a_lowercase_bearer_scheme_is_verified(self):
+        """The same on flask, through the extension hook."""
+        pytest.importorskip("jose")
+        response, ran = self._flask_call(
+            self._signed_token(), self.KEY, scheme="bearer")
+        assert response.status_code == 200
+        assert ran == ["ADMIN_ACTION"]
+
+    @pytest.mark.xfail(
+        strict=True, reason="J3, closed when the scheme match is case insensitive")
+    def test_fastapi_a_lowercase_bearer_scheme_with_a_forged_token_is_refused(self):
+        """The other half of the same rule, and the half that makes it a
+        finding rather than an inconvenience.  A forged token under a
+        lowercase scheme was not merely ignored: it carried the request past
+        the token path entirely and onto the identity headers, which name an
+        admin here.  Parsing the scheme case insensitively means this is now
+        a bad token, which is 401 ``jwt_invalid``.
+        """
+        pytest.importorskip("jose")
+        response, ran = self._fastapi_call(
+            self._forged_token(), self.KEY, scheme="bearer",
+            identity=self.ADMIN_HEADERS)
+        assert response.status_code == 401
+        assert response.json()["detail"]["reason"] == "jwt_invalid"
+        assert ran == []
+
+    @pytest.mark.xfail(
+        strict=True, reason="J3, closed when the scheme match is case insensitive")
+    def test_flask_a_lowercase_bearer_scheme_with_a_forged_token_is_refused(self):
+        """The same on flask, through the extension hook."""
+        pytest.importorskip("jose")
+        response, ran = self._flask_call(
+            self._forged_token(), self.KEY, scheme="bearer",
+            identity=self.ADMIN_HEADERS)
+        assert response.status_code == 401
+        assert response.get_json()["detail"]["reason"] == "jwt_invalid"
+        assert ran == []
+
+    @pytest.mark.xfail(
+        strict=True, reason="J3, closed when a configured key is the only identity")
+    def test_fastapi_a_basic_scheme_does_not_reach_the_identity_headers(self):
+        """A scheme that is not bearer at all, which is the general form of
+        the same door: any ``Authorization`` value the adapter declines to
+        read as a token used to mean no token, and no token used to mean the
+        headers decide.  Under a configured key there is no such state.  401
+        ``jwt_required``, and the admin headers are not consulted.
+        """
+        pytest.importorskip("jose")
+        response, ran = self._fastapi_call(
+            self._basic_credentials(), self.KEY, scheme="Basic",
+            identity=self.ADMIN_HEADERS)
+        assert response.status_code == 401
+        assert response.json()["detail"]["reason"] == "jwt_required"
+        assert ran == []
+
+    @pytest.mark.xfail(
+        strict=True, reason="J3, closed when a configured key is the only identity")
+    def test_flask_a_basic_scheme_does_not_reach_the_identity_headers(self):
+        """The same through the flask route decorator rather than the hook.
+        Both entry points call the one identity function and both have to
+        refuse, so the decorator is not left to a docstring.
+        """
+        pytest.importorskip("jose")
+        response, ran = self._flask_call(
+            self._basic_credentials(), self.KEY, scheme="Basic",
+            identity=self.ADMIN_HEADERS, decorator=True)
+        assert response.status_code == 401
+        assert response.get_json()["detail"]["reason"] == "jwt_required"
+        assert ran == []
+
+    @pytest.mark.xfail(
+        strict=True, reason="J3, closed when a configured key is the only identity")
+    def test_a_key_with_the_token_path_disabled_is_refused_at_build_time(self):
+        """``require_agentlock`` takes ``use_jwt``, and with a key configured
+        and ``use_jwt=False`` the two arguments contradict: verify tokens with
+        this key, and do not read tokens.  Honoring either one silently
+        produces the J3 shape, a configured key whose requests are identified
+        by header.  The dependency refuses to build instead, at build time
+        rather than at the first request, for the same reason a missing
+        verification backend does.
+        """
+        pytest.importorskip("fastapi")
+        from agentlock.integrations.fastapi import require_agentlock
+
+        with pytest.raises(ValueError):
+            require_agentlock(
+                self._gate_with_admin_tool(), "admin_task",
+                use_jwt=False, jwt_key=self.KEY)
+
+    def test_fastapi_without_a_key_the_headers_are_still_the_identity(self):
+        """The guard on the unchanged half.  J3 is about what a CONFIGURED
+        key does; with no key there is nothing to verify and nothing to
+        require, so a request carrying no token at all is identified by its
+        headers exactly as it was before this fix and before 1.10.0.  This
+        case passes both before and after and is here to say that the fix did
+        not close the default path along with the door.
+        """
+        response, ran = self._fastapi_call(
+            None, None, identity=self.ADMIN_HEADERS)
+        assert response.status_code == 200
+        assert ran == ["ADMIN_ACTION"]
+
+    def test_flask_without_a_key_the_headers_are_still_the_identity(self):
+        """The same guard on flask."""
+        response, ran = self._flask_call(
+            None, None, identity=self.ADMIN_HEADERS)
+        assert response.status_code == 200
+        assert ran == ["ADMIN_ACTION"]

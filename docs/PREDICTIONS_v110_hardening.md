@@ -5036,3 +5036,479 @@ side is not: a deployment that was relying on unverified bearer claims is
 failing closed as of this release, which is correct and is also an outage until
 it either configures `jwt_key` or accepts the headers as its identity input. The
 changelog now states both of those options under a heading that says so.
+
+# 1.10.2 J3 FREEZE (2026-09-10)
+
+Appended after AMENDMENT 9. Everything above, sections 1 through 5, AMENDMENT 1,
+the RED PASS FREEZE, AMENDMENT 2, the RED PASS 2 FREEZE, AMENDMENT 3, the
+RELEASE FREEZE, AMENDMENT 4, the 1.10.1 FREEZE, AMENDMENT 5, the 1.10.1 RED
+PASS FREEZE, AMENDMENT 6, the 1.10.1 RELEASE FREEZE, AMENDMENT 7, the 1.10.2
+FREEZE, AMENDMENT 8, the 1.10.2 RELEASE FREEZE and AMENDMENT 9, is left exactly
+as it was written.
+
+Date: 2026-09-10
+Branch: `v1.10.2-jwt-and-audit`.
+HEAD: `050afc5`, the AMENDMENT 9 commit.
+Working tree at measurement time: clean.
+
+1.10.2 is not released. It is built, digested and sitting in `dist/`, and the
+maintainer has not published it. That is what makes this session possible at
+all: the finding below is in the fix that 1.10.2 exists to carry, and it was
+measured by the release session itself and written down as a documented limit
+rather than recognised as a gap. Section N3 of the 1.10.2 RELEASE FREEZE
+measured it on both adapters, printed the two lines that show it, reasoned about
+why the behavior was deliberate, and filed it under `### Limits`. The reasoning
+was wrong in one specific place, and this section is where that is stated and
+closed.
+
+Prediction letters here are T1 to T8 and the section numbers are Q1 to Q5.
+Both are reused from earlier freezes in this document, as every letter in it is;
+the freeze a prediction sits in is what identifies it.
+
+No merge, no tag, no push, no upload.
+
+## Q1. The finding, reproduced
+
+### J3. Under a configured key, a request that presents no token is identified by its headers
+
+D2 gave the two states of bearer identity and called them exhaustive: with
+`jwt_key` set the token is verified and the identity headers are ignored, and
+with `jwt_key` unset the token is ignored and the headers apply. The first of
+those is not what either adapter does. What both do is verify a token when one
+is presented in a form they recognise, and fall through to the identity headers
+when one is not.
+
+`_verify_jwt_claims` in `agentlock/integrations/fastapi.py:161` and
+`agentlock/integrations/flask.py:147` opens with the same two lines:
+
+```python
+    if not authorization.startswith("Bearer "):
+        return None
+```
+
+and `None` is documented, in the docstring immediately above it, as meaning the
+request carries no bearer token, "which is not a failure". Both call sites then
+read:
+
+```python
+        if claims is not None and claims.get("sub"):
+            user_id = claims.get("sub", "")
+            role = claims.get("role", "")
+        else:
+            ...headers...
+```
+
+So under a configured key there are three request classes, not two. A token in
+the recognised form that verifies is identity. A token in the recognised form
+that does not verify is 401. Anything else, and that includes an absent
+`Authorization` header, is `None`, and `None` reaches the identity headers.
+
+Verification is therefore enforced only on clients that choose to present a
+token in the one spelling the adapter matches. A client that presents none is
+trusted on its own headers, on an adapter explicitly configured to verify.
+
+AMENDMENT 9's release session measured the second half of this and named it
+Limit 2. Its own numbers are in N3:
+
+```
+L2 lowercase scheme, headers used:     status=200 ran=['ADMIN_ACTION']
+L2 flask lowercase scheme, headers used: status=200 ran=['ADMIN_ACTION']
+```
+
+and its own sentence names the consequence exactly: "This matters because it is
+the one way the no fallback rule of D2 can be sidestepped: a caller cannot get a
+FAILED verification to fall back to the headers, but a caller can present
+something that is never seen as a token in the first place and reach the header
+path that way." Having written that, it concluded that scheme matching "is case
+sensitive by choice rather than by accident, and it stays that way here rather
+than being loosened in a release commit that is supposed to change prose".
+
+Two things are wrong with that conclusion and only one of them is about scheme
+spelling.
+
+The smaller error is that the scheme match is wrong on its own terms. RFC 7235
+defines the auth scheme as case insensitive, so `bearer eyJ...` is a bearer
+credential and an implementation that reads it as something else is misreading a
+protocol, not enforcing a policy. Calling that "by choice" made a bug into a
+decision.
+
+The larger error is that scheme spelling was never the door. It is one way
+through a door that stands open by itself: the request with NO `Authorization`
+header at all takes the same path, needs no trick, and was never measured. N3
+measured the lowercase spelling and the Basic-style case not at all, and
+generalised from the narrower of the two.
+
+Reproduced against the checkout at `050afc5`, from `/tmp` so it cannot pick the
+tree up by accident, with `jwt_key` configured and `jwt_algorithms=["HS256"]` on
+every probe. `/tmp/al1102_j3_repro.py`, verbatim:
+
+```
+A no Authorization header, admin headers       fastapi  status=200 ran=['ADMIN_ACTION'] -> OPEN
+B lowercase bearer, signed token, guest hdrs   fastapi  status=403 ran=[] -> OPEN
+C lowercase bearer, forged token, admin hdrs   fastapi  status=200 ran=['ADMIN_ACTION'] -> OPEN
+D Basic scheme, admin headers                  fastapi  status=200 ran=['ADMIN_ACTION'] -> OPEN
+E control Bearer forged token, admin headers   fastapi  status=401 ran=[] -> CLOSED
+F control Bearer signed token, guest headers   fastapi  status=200 ran=['ADMIN_ACTION'] -> CLOSED
+A no Authorization header, admin headers       flask    status=200 ran=['ADMIN_ACTION'] -> OPEN
+B lowercase bearer, signed token, guest hdrs   flask    status=403 ran=[] -> OPEN
+C lowercase bearer, forged token, admin hdrs   flask    status=200 ran=['ADMIN_ACTION'] -> OPEN
+D Basic scheme, admin headers                  flask    status=200 ran=['ADMIN_ACTION'] -> OPEN
+E control Bearer forged token, admin headers   flask    status=401 ran=[] -> CLOSED
+F control Bearer signed token, guest headers   flask    status=200 ran=['ADMIN_ACTION'] -> CLOSED
+OPEN probes: 8
+EXIT=1
+```
+
+Probe A is the finding in its plainest form and needs no forged token, no
+unusual spelling and no knowledge of the implementation: omit the header and be
+whoever the identity headers say. Probe D is the same thing wearing a real
+scheme. Probe C is what the lowercase spelling costs, which is not that a token
+is ignored but that a FORGED token routes the request onto the header path.
+Probe B is what it costs in the other direction, a genuine token signed with the
+configured key discarded for its spelling.
+
+The two controls hold and matter. E shows that a token in the recognised form is
+genuinely checked, so this is a hole in the door and not an absent door. F shows
+that a verified token really does outrank contradicting headers, which is the
+property D2 was written to give and the property the other probes show is
+conditional on the caller's cooperation.
+
+This is the same class of mistake as J2 and the arc has now made it three times:
+J1 read a denial and knew one of the two spellings the codebase writes, J2 read
+an identity and never asked whether it was signed, and J3 enforces an identity
+rule on every request that opts into it. In each the check is correct on the
+input the author had in mind and absent on the input nobody sent while writing
+it.
+
+## Q2. Decisions of record
+
+**D6. A configured `jwt_key` makes the bearer token the only identity, and the
+identity headers are never consulted.** With a key set, the two request classes
+are exhaustive and there is no third:
+
+* An `Authorization` header that is absent, empty, or carries a scheme that is
+  not bearer is **401** with reason `jwt_required`. A request that presents
+  nothing to verify, on an integration configured to verify, is refused rather
+  than identified some other way.
+* A bearer token that is present and does not verify stays **401** with reason
+  `jwt_invalid`, exactly as D2 made it. Bad signature, disallowed or unsecured
+  algorithm, expired, or malformed are unchanged.
+* The scheme match becomes case insensitive on the word bearer, so `bearer`,
+  `BEARER` and `Bearer` are all parsed and verified. A lowercase spelling
+  produces a real verification and therefore a real 401 or a real 200, rather
+  than being invisible.
+
+With `jwt_key` set to `None`, which is the default, behavior is unchanged in
+every respect: the bearer token is not read for identity at all, and the
+`X-AgentLock-User-Id` and `X-AgentLock-Role` headers are the identity input as
+they have been since before 1.10.0. J3 is a statement about the configured
+state and it changes nothing about the default one.
+
+**D6a. `require_agentlock`'s `use_jwt=False` is refused when a key is
+configured.** This has to be decided rather than left, because it is the one
+remaining way to reach the header path under a configured key.
+`agentlock/integrations/fastapi.py:496` reads `if use_jwt and jwt_key is not
+None`, so a dependency built with both a key and `use_jwt=False` reads no token
+and identifies by header, which is J3 by configuration instead of by request.
+The two arguments contradict: verify tokens with this key, and do not read
+tokens. Honoring either silently is wrong, so the dependency raises `ValueError`
+when it is built. Build time rather than request time, for the reason D2 already
+gave about the missing verification backend. `use_jwt` keeps its meaning and its
+default; what it can no longer do is combine with a key. Measured before this
+was written: `use_jwt` appears three times in `agentlock/integrations/fastapi.py`
+and nowhere else in the repository, in no test and in no document, so nothing
+depends on the combination being accepted.
+
+**D6b. Two readings of D6 stated before the code is written, because both are
+edges D6's own sentence does not settle.**
+
+1. An `Authorization` value whose scheme IS bearer and whose token is empty,
+   which is the value `Bearer` with nothing after it, stays `jwt_invalid`
+   rather than becoming `jwt_required`. A bearer scheme was presented; what
+   followed it was a bad token. That is what 1.10.2 already does and D6 gives
+   no reason to move it.
+2. A token that verifies but carries no `sub` claim yields an empty user id and
+   whatever `role` it carries, and the gate then refuses it as
+   `not_authenticated`. It does NOT fall through to the headers. Through 1.10.2
+   the call sites tested `claims.get("sub")` for truth and used the headers when
+   it was falsy, which is the header fallback again in a narrower window. Under
+   D6 a verified token is the identity even when the identity it carries is
+   empty.
+
+**D7. Files.** `agentlock/integrations/fastapi.py`,
+`agentlock/integrations/flask.py`, `CHANGELOG.md`, `README.md`,
+`tests/test_v110_hardening.py` and this document. Nothing else. No engine file
+outside the two adapters, no schema field, no version bump: `pyproject.toml`,
+`agentlock/__init__.py` and `CITATION.cff` already read 1.10.2 and 1.10.2 is
+still what this fixes.
+
+`README.md` is in the list because both of its triggers fire. The HTTP identity
+paragraph at lines 423 to 438 states D2 and has to state D6, and the
+environments paragraph at lines 378 to 388 carries counts that this session
+moves.
+
+**D8. The `### Limits` bullet on scheme spelling is removed rather than
+rewritten.** It describes an engine that will not exist after this commit, and
+the useful half of what it said, that the distinction between a bad token and no
+token is where the door was, is not a limit any more but the substance of the
+fix. It moves into `### Security` as part of the J3 bullet. The other limit, a
+verified token carrying no `exp` claim being accepted, is untouched: it is still
+true, still measured, and still the issuer's decision rather than the verifier's.
+
+**D9. Zero existing test cases are edited, and what does change in the test file
+is listed here before the edit.** The brief predicted zero and asked that any
+case in `TestJwtAndAudit` or in either oracle asserting the header fallback under
+a configured key be quoted first. The scan is in Q3.4 and finds none, so nothing
+is quoted and nothing is edited. Two shared helpers and one constant do change,
+and neither is a test:
+
+* `_fastapi_call` gains `scheme="Bearer"` and `identity=None`, keyword only.
+* `_flask_call` gains the same two alongside its existing `decorator=False`.
+* The class gains an `ADMIN_HEADERS` constant beside `HEADERS`, because the J3
+  cases need an identity that CAN reach the admin tool: what has to be visible
+  is a header being consulted, and a header that would be refused anyway shows
+  nothing.
+
+Every existing call passes neither new argument and every existing case is
+byte identical to what AMENDMENT 8 committed.
+
+## Q3. STEP 0 measurements
+
+### Q3.1 (0a) State at HEAD
+
+Read out at `050afc5` rather than carried forward from AMENDMENT 9.
+
+```
+suite, /tmp/al18-extras   1735 passed, 9 skipped, 47 warnings in 3.59s
+suite, checkout venv      1682 passed, 62 skipped, 46 warnings in 3.45s
+ruff check .              All checks passed!
+mypy agentlock/ --ignore-missing-imports
+                          Success: no issues found in 34 source files
+```
+
+Environments, read out of each interpreter rather than remembered:
+
+```
+/tmp/al18-extras   CPython 3.14.6, mcp 2.2.0, fastapi 0.141.1, flask 3.1.3, python-jose 3.5.0
+checkout venv      CPython 3.14.6, mcp absent, fastapi 0.135.3, flask 3.1.3, python-jose absent
+```
+
+`dist/` holds the two artifacts AMENDMENT 9 built and digested:
+
+```
+ffee42aea5676a01140a6561347646b456cd144164d0ad086632d3b9599a4dac  dist/agentlock-1.10.2-py3-none-any.whl
+92337b459764a404660b30fa4022392c7a40b13ba697d97de1f0fa518595e2a1  dist/agentlock-1.10.2.tar.gz
+```
+
+Both reconcile with A9.5 exactly. They are the artifacts this session invalidates
+and STEP 4 rebuilds.
+
+### Q3.2 (0b) J3 reproduced against the checkout
+
+`/tmp/al1102_j3_repro.py`, run from `/tmp` against `/tmp/al18-extras` whose
+`agentlock` is the checkout. Output is quoted verbatim in Q1. Eight probes OPEN
+across the two adapters, two controls CLOSED on each, exit 1.
+
+The script prints OPEN or CLOSED per probe and exits nonzero if any probe is
+OPEN, which is the shape every reproduction script in this arc uses, so it can
+be rerun unchanged against the rebuilt wheel in STEP 4. Its OPEN rule is not
+uniform, because the finding is not: probes A, C and D are OPEN if the admin
+route RUNS, and probe B is OPEN if it does NOT. A fix that refuses everything
+would close three probes and open the fourth.
+
+### Q3.3 (0c) The new cases, and the suite with them
+
+`TestJwtAndAudit` gains 11 cases. Nine are committed as `xfail(strict=True)`
+ahead of the code that satisfies them, which is the form this arc has used since
+the first red pass: the before state goes into the history, and because a strict
+xfail that starts passing is itself a failure, neither the marker nor the fix can
+be left half applied. Two are guards on the unchanged no-key path and pass at
+`050afc5`.
+
+The nine, named:
+
+* no `Authorization` header at all with admin identity headers, 401
+  `jwt_required`, on fastapi and on flask.
+* a lowercase `bearer` scheme carrying a token signed with the configured key,
+  alongside guest headers, 200 with the handler run, on fastapi and on flask.
+* a lowercase `bearer` scheme carrying a forged `"alg": "none"` token alongside
+  admin headers, 401 `jwt_invalid`, on fastapi and on flask.
+* a `Basic` scheme alongside admin headers, 401 `jwt_required`, on fastapi and
+  on flask.
+* `require_agentlock` built with a key and `use_jwt=False`, raising `ValueError`.
+
+The two guards are the no-key path with no token presented and admin identity
+headers, 200 with the handler run, on each adapter. They say what the fix must
+not break.
+
+Eight of the eleven are guarded on `jose`, being the four per adapter that
+configure a key. The `use_jwt` case is not, because D6a's refusal precedes any
+import of the verification backend, and the two guards are not, because they
+configure no key.
+
+The flask cases split across both entry points as the J2 cases do: the extension
+hook by default, and the `Basic` scheme case through the route decorator, since
+both call the one identity function and both have to refuse.
+
+The class alone, at `050afc5` with the new cases present:
+
+```
+18 passed, 103 deselected, 9 xfailed, 1 warning in 0.40s
+```
+
+Whole suite with them, which is the state commit A leaves:
+
+```
+/tmp/al18-extras   1737 passed, 9 skipped, 9 xfailed, 47 warnings in 3.81s
+checkout venv      1684 passed, 70 skipped, 1 xfailed, 46 warnings in 3.54s
+```
+
+Both reconcile with Q3.1 by construction. The extras environment has `jose`, so
+its 1735 gains the two guards and its nine xfails are the nine. The checkout
+venv has no `jose`, so the eight key-configuring cases skip there and 62 plus 8
+is 70, its 1682 gains the same two guards, and the one xfail left is the
+`use_jwt` case, which needs `fastapi` and not `jose`.
+
+Both oracle files, unchanged, in `/tmp/al18-extras`:
+
+```
+tests/test_v110_system_review.py + tests/test_v1101_system_followup.py
+96 passed, 16 warnings in 0.46s
+```
+
+### Q3.4 (0d) Existing tests that assert the header fallback under a configured key
+
+Predicted at zero and the scan finds zero, so nothing is quoted here and nothing
+is edited.
+
+The scan is `jwt_key`, `jwt_algorithms`, a quoted `Authorization`, and both
+casings of the bearer scheme, over all of `tests/`, with `AuthorizationGate`
+excluded so the substring does not swamp it. Twelve hits, all in
+`tests/test_v110_hardening.py`, read one at a time:
+
+* Two in `TestFlaskToolSelection`, being the case D7 of the 1.10.2 FREEZE
+  rewrote. It configures NO `jwt_key`, sends a token, and asserts 403 with
+  reason `not_authenticated`, which is the no-key path and is untouched by D6.
+* Two helper signatures, two header constructions and two `jwt_key=jwt_key`
+  passes, all in the `_fastapi_call` and `_flask_call` helpers of D9.
+* One `jwt_key=self.KEY` in each of the two construction-failure cases, neither
+  of which makes a request.
+* One comment line naming J2.
+
+Not one of the sixteen cases in `TestJwtAndAudit` sends a request under a
+configured key without a token in the recognised form, which is why the finding
+survived a class written specifically about bearer identity. Every key-configured
+case in it presents a proper `Bearer ` token. Neither oracle file mentions JWT,
+`jwt_key` or an `Authorization` header at all, and neither is edited by this
+session.
+
+### Q3.5 (0e) Lint, types, style at the freeze
+
+```
+mypy agentlock/ --ignore-missing-imports   Success: no issues found in 34 source files
+ruff check .                               All checks passed!
+corpus grep over the diff                  0
+em dashes on added lines                   0
+ASCII double hyphens, the test file        1, the house comment rule
+ASCII double hyphens, this section         5, the standing mypy flag
+```
+
+Measured over the 182 lines commit A adds to `tests/test_v110_hardening.py`,
+there is one, and it is the section separator that opens the new cases, in the
+form A8.3 declared and the same form the J1 and J2 halves of the class already
+use. Measured over the lines this section itself adds, there are five, every
+one of them the `--ignore-missing-imports` flag: two inside fences quoting the
+command as it was run, and three inside backticks in prose, one of which is the
+sentence you are reading. Both counts are given
+separately because A9.2 established that a declaration written over a freeze's
+own prose keeps missing the parts of the document that do not exist yet, and
+the way to stop that is to measure each file as it is written rather than to
+declare once for everything.
+
+### Q3.6 (0f) Hygiene
+
+`~/agentlock-hygiene.sh` against the repo path returns `0`, `0`, `1`, `0`. The
+single em dash file is `docs/PREDICTIONS_v18_recipient.md`, the v18 predictions
+document quoting the character in order to name it as prohibited, which is the
+exception this arc has carried since 1.8 and which this session does not touch.
+
+## Q4. Frozen predictions
+
+**T1.** The nine strict xfails pass with their markers removed, and neither
+guard changes outcome. `TestJwtAndAudit` holds **exactly 27 cases**, being the
+16 AMENDMENT 8 measured plus the 11 of Q3.3. Whole suite, 0 failed and 0
+xfailed in both environments:
+
+* `/tmp/al18-extras`: **1746 passed, 9 skipped**.
+* checkout venv: **1685 passed, 70 skipped**.
+
+**T2.** `/tmp/al1102_j3_repro.py` reports **all 12 probes CLOSED, 0 OPEN, exit
+0**, against the fixed checkout. Probe A is 401 `jwt_required`, B is 200 with
+the handler run, C is 401 `jwt_invalid`, D is 401 `jwt_required`, and the two
+controls are unmoved at 401 and 200.
+
+**T3.** Nothing that is refused at `050afc5` is allowed after the fix. The three
+J2 and red pass scripts of this arc that exercise the checkout still exit **0**
+unchanged: `/tmp/al1102_jwt_repro.py`, `/tmp/al1102_jwt_verified.py` and, on the
+rebuilt wheel in STEP 4, `/tmp/al110_redpass_repro.py` and
+`/tmp/al110_redpass2_repro.py`. In particular `al1102_jwt_verified.py`'s probe G,
+a forged token with NO key configured falling to the headers and being refused
+403, is unchanged, because D6 says nothing about the unconfigured state.
+
+**T4.** Both oracle files still pass in full: `tests/test_v110_system_review.py`
+**65 passed** and `tests/test_v1101_system_followup.py` **31 passed**, 96
+between them, 0 failed and 0 xfailed. Neither file is edited by this session and
+`tests/test_v1101_system_followup.py` still hashes to the digest W3.1 recorded
+once its two guards are removed.
+
+**T5.** `mypy agentlock/ --ignore-missing-imports` reports **0 errors** and
+`ruff check .` is **clean, with no new `per-file-ignores` entry**. The corpus
+grep over the diff returns **0**. `~/agentlock-hygiene.sh` returns **0, 0, 1,
+0**, the 1 being `docs/PREDICTIONS_v18_recipient.md`. Added lines carry **0** em
+dashes, and their ASCII double hyphens are only the declared non prose forms of
+A9.2 as amended: the house comment rule, the `--ignore-missing-imports` flag
+inside backticks and inside a fence quoting the command as run, and the markdown
+table separator row of a result table.
+
+**T6.** Files in commit B are **exactly five**: `agentlock/integrations/fastapi.py`,
+`agentlock/integrations/flask.py`, `CHANGELOG.md`, `README.md` and
+`tests/test_v110_hardening.py`, whose only change is the removal of the nine
+`xfail` markers. **No existing test case is edited**, per D9. No schema field is
+added or altered. `pyproject.toml`, `agentlock/__init__.py` and `CITATION.cff`
+are untouched and the version stays **1.10.2**.
+
+**T7.** `CHANGELOG.md`: the `[1.10.2]` entry gains a third `### Security`
+bullet for J3, stating that a configured `jwt_key` makes the verified token the
+only identity, that a request presenting no token is 401 `jwt_required`, that
+the scheme is matched case insensitively, and that `use_jwt=False` with a key is
+refused at build time. The `### Not additive` section gains the consequence for
+the configure branch: choosing `jwt_key` means every request to a gated route
+must carry a verified token, and the `X-AgentLock-*` headers stop being read.
+The `### Limits` scheme spelling bullet is **removed** and the `exp` bullet is
+**unchanged**. The preamble suite figures move to **1746 passing and 9 skipped**
+and **1685 passing and 70 skipped**, with the new skips restated as 9 oracle
+cases guarded on `mcp` and 16 engine cases guarded on `python-jose`. Both credit
+phrases of D4 remain present verbatim, and no new credit phrase is invented for
+J3: it was found by this session against the unpublished branch and the entry
+says so in those words.
+
+**T8.** `README.md`: the 1.10.2 Versions row reads **1746**, the environments
+paragraph reads **1746 passing and 9 skipped**, **58 added tests**, **27 engine
+tests**, **1685 passing and 70 skipped** and **25 of the 70 new**, splitting 9
+on `mcp` and 16 on `python-jose`. Every one of those reconciles: 1688 plus 58 is
+1746, 31 plus 27 is 58, 16 plus 11 is 27, and 45 plus 25 is 70. The HTTP
+identity paragraph states D6 rather than D2, naming the `jwt_required` refusal
+and the case insensitive scheme. No other line of `README.md` changes.
+
+## Q5. Commit plan
+
+* **A**: `docs: freeze 1.10.2 J3, configured key disables header identity`.
+  This section, append only, and the eleven cases of Q3.3 with their nine strict
+  xfails.
+* **B**: `fix: a configured jwt_key makes the bearer token the only identity`.
+  D6, D6a and D6b in both adapters, the docstrings, the CHANGELOG and README
+  text, and the removal of the nine xfail markers.
+* **C**: AMENDMENT 10, the measured results against Q4.
+* **D**: AMENDMENT 11, the release checks re-run against the rebuilt 1.10.2.
+
+No merge, no tag, no push, no upload.
