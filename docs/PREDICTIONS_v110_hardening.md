@@ -4511,3 +4511,296 @@ deployment that was relying on unverified bearer claims is now failing closed,
 which is correct and is also an outage until it configures `jwt_key`. The
 changelog says so under a not additive heading. Whether that warrants anything
 louder than a changelog entry is a release decision.
+
+# 1.10.2 RELEASE FREEZE (2026-09-10)
+
+Appended after AMENDMENT 8. Everything above, sections 1 through 5, AMENDMENT 1,
+the RED PASS FREEZE, AMENDMENT 2, the RED PASS 2 FREEZE, AMENDMENT 3, the
+RELEASE FREEZE, AMENDMENT 4, the 1.10.1 FREEZE, AMENDMENT 5, the 1.10.1 RED
+PASS FREEZE, AMENDMENT 6, the 1.10.1 RELEASE FREEZE, AMENDMENT 7, the 1.10.2
+FREEZE and AMENDMENT 8, is left exactly as it was written.
+
+Date: 2026-09-10
+Branch: `v1.10.2-jwt-and-audit`.
+HEAD: `f7794f3`.
+Working tree at measurement time: clean.
+
+This is the 1.10.2 release session. One release commit and one amendment. No
+merge, no tag, no push, no upload.
+
+A note on labels before anything else. The predictions below are named V1 to V8,
+which is what the release brief calls them. Section Z4 used those same eight
+names for the 1.10.1 release predictions and AMENDMENT 7 measured them under
+those names. The two sets are unrelated. Prediction letters are reused across
+freezes in this document and always have been; the freeze a prediction sits in
+is what identifies it.
+
+## N1. State at HEAD, measured
+
+Read out rather than carried forward from AMENDMENT 8.
+
+```
+suite, /tmp/al18-extras   1735 passed, 9 skipped, 47 warnings in 3.58s
+ruff check .              All checks passed!
+mypy agentlock/ --ignore-missing-imports
+                          Success: no issues found in 34 source files
+```
+
+`~/agentlock-hygiene.sh` against the repo path returns `0`, `0`, `1`, `0`. The
+single em dash file is `docs/PREDICTIONS_v18_recipient.md`, the v18 predictions
+document quoting the character in order to name it as prohibited, which is the
+exception this arc has carried since 1.8.
+
+`dist/` holds the two 1.10.2 artifacts AMENDMENT 8 built and digested:
+
+```
+ffee42aea5676a01140a6561347646b456cd144164d0ad086632d3b9599a4dac  dist/agentlock-1.10.2-py3-none-any.whl
+7b8427a05c39bceebd5fd9669593425c020fbfedd70052ffc3cf9484bf185298  dist/agentlock-1.10.2.tar.gz
+```
+
+Both reconcile with A8.8 exactly.
+
+## N2. The fact that shapes this session, and what it means for V8
+
+The fix commit of the 1.10.2 arc, `9497b0a`, is ten files, and per A8.4 those
+ten are D5's list minus the reviewer's oracle file. Three of the ten are the
+release front matter:
+
+```
+CHANGELOG.md    14 ++
+CITATION.cff     2 +-
+README.md       32 ++
+pyproject.toml  12 +-
+agentlock/__init__.py  9 +-
+```
+
+The 1.10.1 arc did this the other way round: `60ff8d6` was a separate
+`release: v1.10.1` commit carrying the front matter, and the fix commit before
+it carried none. The 1.10.2 arc put the front matter in the fix commit instead.
+Neither ordering is wrong, but the consequence for this session is direct: most
+of what the release brief predicts is already true at HEAD, and V8 asks that
+any file already satisfying its prediction be dropped from the release commit
+and said so BEFORE editing. So the measurement below comes first and the edit
+comes after it.
+
+### N2.1 V2, V3 and V4 are already satisfied at HEAD
+
+**V3, `CITATION.cff`.** Measured: `version: 1.10.2` at line 10,
+`date-released: 2026-09-10` at line 16, and `yaml.safe_load` parses the file and
+returns those two values as `'1.10.2'` and `'2026-09-10'`. Today is 2026-09-10,
+so the date is today's. **The edit is skipped and the file is not in the release
+commit.**
+
+**V4, the version files.** `pyproject.toml:7` reads `version = "1.10.2"` and
+`agentlock/__init__.py:37` reads `__version__ = "1.10.2"`. Every remaining
+`1.10.1` in the tree outside this document was read individually, not counted:
+three in `README.md`, being the 1.10.1 Versions row, the 1.10.1 environments
+sentence and the 1.10.2 sentence naming which recheck produced this release;
+two headings and two narrative mentions in `CHANGELOG.md`; one in a
+`pyproject.toml` comment naming which recheck the second oracle came from; six
+in engine docstrings and comments saying what the code did through 1.10.1 and
+no longer does, across `defer.py`, `gate.py`, `modify.py` and both HTTP
+adapters; and the rest in test docstrings including the reviewer's own file
+header. None presents 1.10.1 as the current version. This is A8.6 re-read
+rather than restated. **Nothing to edit.**
+
+**V2, `README.md`.** The Versions row for 1.10.2 is at line 317, the
+environments paragraph at lines 378 to 388, and the HTTP identity paragraph at
+lines 423 to 438. Every number in the first two was checked against A8.8
+individually rather than in aggregate: 1735 and 9 for the extras environment;
+1682 and 62 for the environment without `mcp` and without `python-jose`; 17 new
+skips splitting 9 on `mcp` and 8 on `python-jose`, and 9 plus 8 is 17 while 62
+minus 45 is also 17; 16 engine cases, which is A8.1's amended count and not
+P2's frozen 14; 31 oracle cases and 65 prior, 96 between the two files; 47 added
+tests, which is 31 plus 16, and 1688 plus 47 is 1735; and the interpreter and
+dependency versions 3.14.6, 2.2.0, 0.141.1, 3.1.3 and 3.5.0. Ten figures and
+five versions, all matching. The identity paragraph states D2 in D2's own terms:
+verification opt in, the two states exhaustive, expiry enforced, `"none"`
+refused however `jwt_algorithms` is written, 401 with `jwt_invalid` and no
+fallback to the headers, no identity at all when `jwt_key` is unset, and the
+headers trusted-upstream inputs in either state. `grep -n "1\.10\.1" README.md`
+returns lines 318, 366 and 381, all three history. **Nothing to edit.**
+
+### N2.2 V1 is the only prediction with work in it
+
+`CHANGELOG.md` at HEAD carries `## [1.10.2] - 2026-09-10`, which is today's
+date; two narrative paragraphs, the second holding the per environment suite
+figures with the interpreter, `mcp`, `fastapi`, `flask` and `python-jose`
+versions; a bold `**This release is not additive.**` paragraph; and a `###
+Security` section of two bullets, J2 first and J1 second, each closing with its
+credit phrase. Both credit phrases of D4 are present verbatim, in the narrative
+and again in the bullets.
+
+Three things V1 asks for are not there.
+
+1. There is no `### Not additive` subsection. The not additive statement is a
+   bold lead-in on an ordinary paragraph. A8.9 already described it as being
+   "under a not additive heading", which it is not, and this is the session
+   that makes that sentence true.
+2. The not additive statement gives one of the two branches a proxy reliant
+   deployment has. It says such a deployment "will find that bearer tokens now
+   carry no identity at all until it configures `jwt_key`". It does not say the
+   other branch: that it may instead leave `jwt_key` unset and accept that the
+   `X-AgentLock-*` headers are now the identity input, which is a real and
+   supported choice and is what the default does.
+3. There are no stated limits for 1.10.2. The 1.10.1 entry has a `### Limits`
+   section and this one does not.
+
+**So the release commit is `CHANGELOG.md` alone.** That is stated here, before
+the edit, as V8 requires.
+
+## N3. The two limits, measured before they are written down
+
+V1 names two limits. Neither was measured by AMENDMENT 8, and writing a limit
+into a changelog on the strength of having read two lines of code is how a
+changelog acquires a claim nobody checked. Both were reproduced against the
+checkout, on both adapters, with a control for each.
+
+`/tmp/al18-extras`, a probe building an admin route behind each adapter with
+`jwt_key` configured and `jwt_algorithms=["HS256"]`, verbatim:
+
+```
+L1 verified token, no exp claim:        status=200 ran=['ADMIN_ACTION']
+L2 lowercase scheme, headers used:     status=200 ran=['ADMIN_ACTION']
+L2 lowercase scheme, forged, guest hdr: status=403 ran=[]
+control expired token refused:          status=401 ran=[]
+L1 flask verified token, no exp claim:  status=200 ran=['ADMIN_ACTION']
+L2 flask lowercase scheme, headers used: status=200 ran=['ADMIN_ACTION']
+```
+
+**Limit 1: a verified token carrying no `exp` claim is accepted.** Both
+adapters pass `options={"verify_exp": True, "verify_aud": False}` and set no
+`require`, so expiry is enforced when the claim is present and there is nothing
+to enforce when it is absent. The control is the fourth line: a token signed
+with the configured key and an `exp` sixty seconds in the past is 401, so
+`verify_exp` is genuinely on. A token with no `exp` at all is a token that never
+expires, and this integration does not refuse one. The issuer decides token
+lifetime; a deployment that needs every token to carry an expiry has to make its
+issuer put one there, because nothing on the verifying side here will notice.
+
+**Limit 2: an `Authorization` value whose scheme is not spelled `Bearer ` is
+not parsed at all.** `_verify_jwt_claims` tests
+`authorization.startswith("Bearer ")` and returns `None` otherwise, and `None`
+means no token rather than a bad token, so the identity headers decide. The
+second line shows what that costs and the third shows what it does not: with a
+lowercase scheme the token is invisible, so headers naming an admin are obeyed
+and headers naming a guest are refused 403. The token neither authorizes nor
+blocks. This matters because it is the one way the no fallback rule of D2 can
+be sidestepped: a caller cannot get a FAILED verification to fall back to the
+headers, but a caller can present something that is never seen as a token in the
+first place and reach the header path that way. That path is only as good as the
+deployment's edge stripping of `X-AgentLock-*`, which is what the headers have
+always depended on and what the docstrings now say in those words. Scheme
+matching is case sensitive by choice rather than by accident, and it stays that
+way here rather than being loosened in a release commit that is supposed to
+change prose.
+
+## N4. One qualification of V1, stated before the edit
+
+V1 says the entry "opens with" a `### Not additive` subsection. Read as
+literally as it can be read, that puts the heading immediately under
+`## [1.10.2] - 2026-09-10` with nothing before it, which would file the two
+narrative paragraphs somewhere else. One of those paragraphs carries the per
+environment suite figures, which V1 requires in the same breath. Filing suite
+figures under a heading that says "Not additive" would make them read as part of
+the breaking change notice, which they are not, and giving them a heading of
+their own would make this the only entry in the file whose release summary is
+not an unheaded preamble.
+
+**V1 as qualified: `### Not additive` is the FIRST SUBSECTION of the entry.**
+The unheaded preamble stays where it is and where every other entry in this file
+keeps its own, the not additive statement stops being a bold lead-in and becomes
+that first subsection, and `### Security` follows it. This is a reading of my
+own wording written down before the edit rather than after it, which is the only
+form of it worth anything.
+
+## N5. Baselines at HEAD
+
+Every figure the amendment will report against, fixed here.
+
+```
+suite, /tmp/al18-extras   1735 passed, 9 skipped, 0 failed
+ruff check .              clean
+mypy                      0 errors in 34 source files
+hygiene                   0, 0, 1, 0
+CHANGELOG heading         ## [1.10.2] - 2026-09-10
+CITATION                  version 1.10.2, date-released 2026-09-10
+pyproject / __init__      1.10.2 / 1.10.2
+```
+
+The wheel and sdist digests of N1 are the 1.10.2 artifacts as AMENDMENT 8 built
+them. V5 rebuilds after `rm -rf dist build`, and the rebuild happens after the
+`CHANGELOG.md` edit, so the two digests are expected to MOVE. The sdist ships
+`CHANGELOG.md` and its content genuinely changes. The wheel's long description
+is `README.md`, which does not change, so whether the wheel digest moves is a
+question about the sdist and wheel reproducibility of this build backend rather
+than about content, and A7.2 already recorded that the two behave differently
+here. Both digests are reported as measured either way, and neither is predicted
+to hold.
+
+## N6. Frozen predictions
+
+**V1.** `CHANGELOG.md`: the `## [1.10.2] - 2026-09-10` heading carries today's
+date, unchanged. The entry's FIRST SUBSECTION, per N4, is `### Not additive`,
+and it states three things plainly: that 1.10.1 and earlier accepted unverified
+bearer claims as identity in BOTH HTTP adapters; that a bearer token now carries
+no identity at all unless `jwt_key` is configured; and that a deployment relying
+on an upstream proxy to verify has exactly two options, configure `jwt_key` or
+accept that the `X-AgentLock-*` headers are the identity input. `### Security`
+follows with the two bullets as built, J2 then J1, unchanged. A `### Limits`
+section follows Security with exactly the two limits of N3: a verified token
+carrying no `exp` claim is accepted, and an `Authorization` scheme not spelled
+`Bearer ` is ignored rather than parsed. Both credit phrases of D4 remain
+present verbatim. The per environment suite figures remain in the preamble with
+the interpreter version and the `mcp` version, and no figure in them changes.
+
+**V2.** `README.md`: already satisfied at HEAD per N2.1, measured number by
+number against A8.8. **Not edited and not in the release commit.**
+
+**V3.** `CITATION.cff`: already satisfied at HEAD per N2.1, `version: 1.10.2`
+and `date-released: 2026-09-10`, `yaml.safe_load` parsing. **The edit is
+skipped and the file is not in the release commit.**
+
+**V4.** `pyproject.toml` and `agentlock/__init__.py` both read 1.10.2, and no
+current version string in the tree says 1.10.1. Already satisfied at HEAD per
+N2.1. **Nothing edited.**
+
+**V5.** Build in `/tmp/al18-extras` after `rm -rf dist build`: `twine check
+dist/*` **PASSED** for both artifacts, and the wheel METADATA reads
+`Metadata-Version: 2.4` and `Version: 1.10.2`. Both digests are reported as
+measured and both are expected to differ from N1, per N5.
+
+**V6.** A fresh venv holding only the newly built wheel with the `crypto`,
+`mcp`, `fastapi` and `flask` extras, exercised from outside the checkout so it
+cannot resolve the source tree, prints **1.10.2** from site packages. Both
+oracle files copied to `/tmp` run **96 passed** against it. All four
+reproduction scripts of this arc in `/tmp` exit **0**:
+`/tmp/al1102_jwt_repro.py`, `/tmp/al1102_jwt_verified.py`,
+`/tmp/al110_redpass_repro.py` and `/tmp/al110_redpass2_repro.py`. Those four are
+the scope of "this arc": the `al19` and `al191` scripts are the 1.9 arc's and
+are not rerun here.
+
+**V7.** Full suite in `/tmp/al18-extras` after reinstalling the built wheel over
+it: **1735 passed, 9 skipped, 0 failed**. `ruff check .` clean. `mypy agentlock/
+--ignore-missing-imports` clean. `~/agentlock-hygiene.sh` returns all zeros
+except the em dash count, which stays at **1** and stays
+`docs/PREDICTIONS_v18_recipient.md`. Added lines carry **0** em dashes, and the
+only ASCII double hyphens on added lines are two forms of the same flag,
+`--ignore-missing-imports`, declared for this use in A2.5: the flag inside
+backticks in prose, and the command as run quoted inside a fence, which is the
+command's own syntax rather than this document's prose. The house comment rule
+of A8.3 does not arise: this session adds no code.
+
+**V8.** Files in the release commit: **`CHANGELOG.md` alone**, per N2. `V2`'s
+`README.md` and `V3`'s `CITATION.cff` are dropped because both already satisfy
+their predictions at HEAD, which N2.1 states before any edit is made. No engine
+file, no test file and no schema field is touched.
+
+## N7. Commit plan
+
+* **A**: `docs: freeze v1.10.2 release predictions`. This section, append only.
+* **B**: `release: v1.10.2`. `CHANGELOG.md` alone.
+* **C**: AMENDMENT 9, the measured results against N6, the sha256 of both
+  artifacts, the METADATA lines, and commit B's hash.
+
+No merge, no tag, no push, no upload.
