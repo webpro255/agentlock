@@ -241,3 +241,173 @@ def test_context_chain_detects_changed_content():
     assert chain.verify_chain() == (True, None)
     entry.content_hash = 'altered'
     assert chain.verify_chain() == (False, 0)
+
+
+"""Additional local v1.10.0 review probes; no network or real sensitive data."""
+import asyncio
+from functools import partial
+from pathlib import Path
+import pytest
+from agentlock import agentlock
+from agentlock.exceptions import DeniedError, TokenInvalidError
+from agentlock.schema import DataPolicyConfig
+
+@pytest.mark.parametrize('kind', ['ordinary_inside', 'ordinary_outside', 'link_outside',
+    'link_then_parent_escape', 'link_then_parent_inside'])
+def test_resolved_path_matches_the_path_opened(tmp_path, kind):
+    allowed = tmp_path / 'allowed'
+    outside = tmp_path / 'outside'
+    (allowed / 'inner').mkdir(parents=True)
+    (outside / 'child').mkdir(parents=True)
+    (allowed / 'inside.txt').write_text('PUBLIC')
+    (outside / 'private.txt').write_text('PRIVATE_SENTINEL')
+    (allowed / 'jump').symlink_to(outside / 'child', target_is_directory=True)
+    (allowed / 'inner' / 'back').symlink_to(allowed, target_is_directory=True)
+    paths = {
+        'ordinary_inside': allowed / 'inside.txt',
+        'ordinary_outside': outside / 'private.txt',
+        'link_outside': allowed / 'jump' / '..' / 'private.txt',
+        'link_then_parent_escape': allowed / 'jump' / '..' / 'private.txt',
+        'link_then_parent_inside': allowed / 'inner' / 'back' / 'inside.txt',
+    }
+    # Direct outside symlink is a separate control from link/.. composition.
+    (allowed / 'direct').symlink_to(outside / 'private.txt')
+    paths['link_outside'] = allowed / 'direct'
+    path = str(paths[kind])
+    actual = Path(path).resolve()
+    permitted = actual.is_relative_to(allowed.resolve())
+    g, _, _ = setup(modify_policy=modify('path', 'whitelist_path', allowed_prefixes=[str(allowed)]))
+    observed = []
+    def read(path):
+        observed.append(Path(path).read_text())
+        return observed[-1]
+    try:
+        g.call('task', read, parameters={'path': path}, **AUTH)
+        ran = True
+    except DeniedError:
+        ran = False
+    assert ran == permitted, (kind, str(actual), observed)
+
+@pytest.mark.parametrize('value,allowed', [
+    ('bob@company.test', True),
+    ('eve@outside.test', False),
+    ('bob@company.test, eve@outside.test', False),
+    ('eve@outside.test, bob@company.test', False),
+    ('bob@company.test;eve@outside.test', False),
+])
+def test_domain_transform_checks_all_recipients(value, allowed):
+    g, _, _ = setup(modify_policy=modify('to', 'restrict_domain', allowed_domains=['company.test']))
+    observed = []
+    def send(to):
+        observed.extend(to.replace(';', ',').split(','))
+        return 'simulated sent'
+    try:
+        g.call('task', send, parameters={'to': value}, **AUTH)
+    except DeniedError:
+        pass
+    assert bool(observed) == allowed, observed
+
+@pytest.mark.parametrize('policy', ['modify', 'data_policy'])
+@pytest.mark.parametrize('shape', ['text', 'structured', 'embedded'])
+def test_mcp_standard_text_payloads_are_redacted(policy, shape):
+    pytest.importorskip("mcp")
+    from mcp.server import Server
+    import mcp.types as mt
+    from agentlock.integrations.mcp import AgentLockMCPServer
+    cfg = ({'modify_policy': modify('output')} if policy == 'modify' else
+           {'data_policy': DataPolicyConfig(prohibited_in_output=['ssn'], redaction='auto')})
+    g, p, _ = setup(**cfg)
+    async def handler(ctx, params):
+        if shape == 'text':
+            return mt.CallToolResult(content=[mt.TextContent(type='text', text=SECRET)])
+        if shape == 'structured':
+            return mt.CallToolResult(content=[], structured_content={'note': SECRET})
+        return mt.CallToolResult(content=[mt.EmbeddedResource(type='resource',
+            resource=mt.TextResourceContents(uri='file:///synthetic/note.txt', text=SECRET))])
+    server = Server('local-followup', on_call_tool=handler)
+    AgentLockMCPServer(server, g, {'task': p}, default_user_id='alice', default_role='user')
+    response = asyncio.run(server.get_request_handler('tools/call').handler(None,
+        mt.CallToolRequestParams(name='task', arguments={})))
+    assert '123-45-6789' not in response.model_dump_json()
+
+def test_data_policy_plain_string_positive_control():
+    g, _, _ = setup(data_policy=DataPolicyConfig(prohibited_in_output=['ssn'], redaction='auto'))
+    assert '123-45-6789' not in g.call('task', lambda: SECRET, **AUTH)
+
+@pytest.mark.parametrize('mode', ['sync', 'async'])
+@pytest.mark.parametrize('shape', ['positional_only', 'keyword_only', 'kwargs', 'partial'])
+def test_transformed_parameters_rebuild_invocation(mode, shape):
+    g, p, _ = setup(modify_policy=modify('body'))
+    seen = []
+    if shape in ('positional_only', 'partial'):
+        if mode == 'sync':
+            def task(body, /): seen.append(body); return 'done'
+        else:
+            async def task(body, /): seen.append(body); return 'done'
+        args, kwargs = (SECRET,), {}
+        if shape == 'partial': task, args = partial(task, SECRET), ()
+    elif shape == 'keyword_only':
+        if mode == 'sync':
+            def task(*, body=SECRET): seen.append(body); return 'done'
+        else:
+            async def task(*, body=SECRET): seen.append(body); return 'done'
+        args, kwargs = (), {}
+    else:
+        if mode == 'sync':
+            def task(**kwargs): seen.append(kwargs['body']); return 'done'
+        else:
+            async def task(**kwargs): seen.append(kwargs['body']); return 'done'
+        args, kwargs = (), {'body': SECRET}
+    wrapped = agentlock(g, name='task', permissions=p)(task)
+    result = wrapped(*args, **kwargs, _user_id='alice', _role='user')
+    if mode == 'async': result = asyncio.run(result)
+    assert result == 'done' and len(seen) == 1
+    assert '123-45-6789' not in seen[0]
+
+@pytest.mark.parametrize('presentation', ['requested', 'effective', 'omitted', 'substituted'])
+def test_direct_effective_token_binding(presentation):
+    g, _, _ = setup(modify_policy=modify('body'))
+    a = g.authorize('task', parameters={'body': SECRET}, **AUTH)
+    seen = []
+    def task(body): seen.append(body); return 'done'
+    kwargs = {'parameters': {'body': SECRET}}
+    if presentation == 'effective': kwargs = {'effective_parameters': a.effective_parameters}
+    elif presentation == 'omitted': kwargs = {}
+    elif presentation == 'substituted': kwargs = {'parameters': {'body': 'different action'}}
+    if presentation == 'substituted':
+        with pytest.raises(TokenInvalidError): g.execute('task', task, token=a.token, **kwargs)
+        assert seen == []
+    else:
+        assert g.execute('task', task, token=a.token, **kwargs) == 'done'
+        assert seen == [a.effective_parameters['body']]
+        assert '123-45-6789' not in seen[0]
+
+def test_async_cancellation_consumes_grant(monkeypatch):
+    g, p, _ = setup()
+    issued = []
+    issue = g.token_store.issue
+    def capture(*a, **kw):
+        t = issue(*a, **kw); issued.append(t); return t
+    monkeypatch.setattr(g.token_store, 'issue', capture)
+    async def task(): raise asyncio.CancelledError()
+    wrapped = agentlock(g, name='task', permissions=p)(task)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(wrapped(_user_id='alice', _role='user'))
+    assert issued[0].status.value == 'used'
+
+def test_deferral_expiry_without_sweep():
+    from agentlock import DeferralManager
+    manager = DeferralManager()
+    record = manager.queue_commit('session', 'task', {}, taint_at_call={})
+    record.created_at -= 1000
+    manager.resolve_commit_queue('session', deny=False)
+    assert record.resolution == 'deny'
+
+def test_deferred_nested_parameters_are_snapshotted():
+    from agentlock import DeferralManager
+    manager = DeferralManager()
+    params = {'target': {'url': 'https://original.test'}}
+    record = manager.queue_commit('session', 'task', params, taint_at_call={})
+    params['target']['url'] = 'https://substitution.test'
+    assert record.parameters['target']['url'] == 'https://original.test'
+

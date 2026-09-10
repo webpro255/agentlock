@@ -33,7 +33,6 @@ Usage::
 from __future__ import annotations
 
 import os
-import posixpath
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -49,6 +48,41 @@ __all__ = [
 
 # All PII types for the default redact_pii action
 _DEFAULT_PII_TYPES = ["ssn", "email", "phone", "credit_card", "api_key"]
+
+# G3.  One address, and the domain it belongs to as group 1.  Held verbatim
+# from the pre 1.10.1 action so that what counts as an address is unchanged by
+# this fix; only how many of them are checked changes.
+_EMAIL_PATTERN = re.compile(
+    r"\b[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Z|a-z]{2,})\b"
+)
+
+# G3.  A recipient field separates RECIPIENTS with either of these.  Whitespace
+# separates the parts of ONE recipient, which is how a display name is written,
+# so it is not a peer of these two and gets its own split below.
+_RECIPIENT_SEPARATORS = re.compile(r"[,;]")
+
+
+def _address_domain(token: str) -> str | None:
+    """The domain of a token that is exactly one address, or ``None``.
+
+    G4.  The pattern is used as a FULL match here, not as a search.  A search
+    asks whether some substring of the token is an address, which is how
+    ``bob@company.test@evil.test`` was judged on ``company.test`` and allowed:
+    the pattern read the part it recognized and stopped before the rest.  A
+    full match asks whether the token IS an address, so anything the pattern
+    cannot account for in its entirety is refused rather than partly read.
+
+    Angle brackets around the address are stripped first, because that is how a
+    display name is written and the address inside them is what the token is
+    about.  The bracketed form is taken from the LAST ``<`` so that
+    ``Bob<bob@company.test>``, written without a space, is read the same way as
+    ``Bob <bob@company.test>``.
+    """
+    inner = token
+    if inner.endswith(">") and "<" in inner:
+        inner = inner[inner.rindex("<") + 1:-1]
+    match = _EMAIL_PATTERN.fullmatch(inner)
+    return match.group(1) if match else None
 
 
 def apply_output_modifier(
@@ -291,20 +325,97 @@ class ModifyEngine:
         return redaction.redacted
 
     def _action_restrict_domain(self, value: str, config: dict[str, Any]) -> str:
-        """Restrict email addresses to allowed domains."""
+        """Restrict a recipient field to addresses in allowed domains.
+
+        G3.  Through 1.10.0 this called ``search`` and read ``group(1)``, which
+        is the FIRST address in the value and nothing after it.
+        ``"bob@company.test, eve@outside.test"`` was judged on ``company.test``
+        alone, passed, and the tool was invoked with both recipients intact.
+        The decision was a function of the order the addresses were written in.
+        1.10.1 made the parse exhaustive over the pieces of the value, which
+        closed that.
+
+        G4.  What 1.10.1 left unchanged was how the value is recognized as a
+        recipient list at all: it asked ``_EMAIL_PATTERN`` whether it could
+        find an address anywhere, and if it could not, the value was held to
+        carry none and returned unchanged.  That is correct for a field holding
+        something that is not a recipient, and wrong for a field holding a
+        recipient the pattern cannot read.  ``_EMAIL_PATTERN`` is ASCII only
+        and wants a dotted domain, so ``bob@compаny.test`` spelled with a
+        Cyrillic letter and the address literal ``bob@[10.0.0.1]`` both failed
+        it and both passed a domain allowlist.  Both are deliverable.
+        ``bob@company.test@evil.test`` passed for the neighboring reason: the
+        pattern recognized the leading part, and what a mail system does with
+        the rest was never decided.
+
+        **The at sign decides, not the pattern.**  An at sign is what makes a
+        string an address; the pattern is one opinion about which addresses are
+        well formed, and an engine that refuses to decide about the addresses
+        its own pattern cannot read is deciding in the caller's favor.  So:
+
+        1. A value with no ``@`` anywhere is returned unchanged.  A field with
+           no at sign in it is not a recipient list, and an allowlist over
+           domains can only govern things that have a domain.  This is the
+           behavior the engine has always had and it is what
+           ``TestRestrictDomain::test_no_email_in_field`` pins.
+        2. Otherwise the value is split on comma and semicolon into pieces,
+           each piece is stripped, and pieces empty after stripping are
+           discarded.  That is what makes a trailing separator and a whitespace
+           only piece benign.
+        3. Every remaining piece must carry at least one whitespace separated
+           token containing an ``@``.  A piece with none blocks the value:
+           once a value has been established as a recipient list, a piece the
+           parser cannot read is not evidence of innocence.
+        4. Every token containing an ``@``, in every piece, must parse as
+           exactly one ASCII address, and its domain must be on the allowlist
+           after casefold.  A token that does not parse blocks the value.
+
+        The two separators do different jobs, which is what they already are.
+        A comma or a semicolon separates RECIPIENTS.  Whitespace separates the
+        parts of one recipient, which is how ``Bob <bob@company.test>`` is
+        written, so the display name form is accepted: the token carrying the
+        at sign parses once its angle brackets come off, and the tokens that
+        carry no at sign are the name.  Domains compare after casefolding, so a
+        value differing from the allowlist only in case is the same value.
+
+        Order cannot change the answer, because no piece and no token is
+        privileged over any other.
+
+        Two limits, both fail closed, both stated rather than left to be
+        discovered.  A display name containing a comma, as in ``"Doe, Bob"
+        <bob@company.test>``, splits into pieces that do not each carry an
+        address and is therefore BLOCKED; honoring RFC 5322 quoting here would
+        mean writing a mail parser, and getting one subtly wrong is how the
+        first match rule happened.  A bare local name with no domain, which a
+        mail system may still know how to route, is not covered, for the same
+        reason as the no at sign case: there is no domain in it to compare.
+        """
         allowed = config.get("allowed_domains", [])
         if not allowed:
             return value
 
-        # Check if value looks like an email
-        email_pattern = re.compile(
-            r"\b[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Z|a-z]{2,})\b"
-        )
-        match = email_pattern.search(value)
-        if match:
-            domain = match.group(1).lower()
-            if domain not in [d.lower() for d in allowed]:
-                return "[BLOCKED: external domain not allowed]"
+        if "@" not in value:
+            return value
+
+        allowed_folded = {str(d).casefold() for d in allowed}
+        blocked = "[BLOCKED: external domain not allowed]"
+
+        pieces = [
+            piece.strip()
+            for piece in _RECIPIENT_SEPARATORS.split(value)
+        ]
+
+        for piece in pieces:
+            if not piece:
+                continue
+            tokens = [token for token in piece.split() if "@" in token]
+            if not tokens:
+                return blocked
+            for token in tokens:
+                domain = _address_domain(token)
+                if domain is None or domain.casefold() not in allowed_folded:
+                    return blocked
+
         return value
 
     def _action_whitelist_path(self, value: str, config: dict[str, Any]) -> str:
@@ -317,13 +428,38 @@ class ModifyEngine:
         matter what it points at, so both were permitted and the tool then read
         the file the prefix existed to exclude.
 
-        The check now resolves both sides and compares them as paths:
-        backslashes are normalized, the candidate is lexically normalized,
-        both it and each prefix are put through :func:`os.path.realpath`, which
-        collapses ``..`` and follows symlinks, and the candidate is allowed
-        only when :func:`os.path.commonpath` of the pair IS the prefix.  That
-        last comparison is what makes ``/data-private`` fail against a
-        ``/data`` prefix, which a string prefix test would have passed.
+        G1.  Through 1.10.0 the fix was incomplete in a way that reintroduced
+        the same hole for one composition.  A lexical ``normpath`` ran BEFORE
+        ``realpath``, so ``..`` was collapsed against the SPELLING of the path
+        rather than against where the path leads.  With a directory symlink at
+        ``allowed/jump`` pointing outside the tree,
+        ``allowed/jump/../private.txt`` was rewritten to
+        ``allowed/private.txt`` before the filesystem was consulted at all, and
+        that rewritten path is genuinely inside the prefix.  The gate allowed.
+        The host then opened the ORIGINAL string, ``open()`` walked ``jump`` as
+        a link and did not collapse the ``..`` lexically, and the file outside
+        the prefix was read.  The checked path and the opened path were two
+        different files.
+
+        Both halves of that are closed here.  Resolution now uses filesystem
+        semantics FIRST: backslashes are normalized and nothing else is, and
+        the raw value goes straight into :func:`os.path.realpath`, which walks
+        the components left to right, follows each symlink as it meets it, and
+        resolves ``..`` against what it has resolved so far rather than against
+        the text.  Each prefix is resolved the same way.  The candidate is
+        allowed only when :func:`os.path.commonpath` of the pair IS the
+        resolved prefix, which is what makes ``/data-private`` fail against a
+        ``/data`` prefix where a string prefix test would have passed.
+
+        **On allow the RESOLVED path is returned, not the caller's string.**
+        The parameter value is canonicalized, so the callable opens exactly the
+        path that was checked and the two cannot diverge.  A caller that needs
+        the spelling it sent has it in the audit record of the original
+        parameters.
+
+        A path that is not absolute is blocked outright.  A relative path names
+        a different file for every working directory, so what it resolves to is
+        a property of the caller's process and not of the request.
 
         Any exception blocks.  A path that cannot be resolved is a path whose
         destination is unknown, and an unknown destination is not an allowed
@@ -342,23 +478,22 @@ class ModifyEngine:
             return value
 
         blocked = "[BLOCKED: path outside allowed directories]"
+        raw = value.replace("\\", "/")
+        if not os.path.isabs(raw):
+            return blocked
         try:
-            candidate = os.path.realpath(
-                posixpath.normpath(value.replace("\\", "/"))
-            )
+            candidate = os.path.realpath(raw)
         except Exception:
             return blocked
 
         for prefix in allowed_prefixes:
             try:
-                resolved_prefix = os.path.realpath(
-                    posixpath.normpath(str(prefix).replace("\\", "/"))
-                )
+                resolved_prefix = os.path.realpath(str(prefix).replace("\\", "/"))
                 if (
                     os.path.commonpath([candidate, resolved_prefix])
                     == resolved_prefix
                 ):
-                    return value
+                    return candidate
             except Exception:
                 continue
 

@@ -1163,3 +1163,605 @@ class TestRedPass:
         result = gate.call("task", lambda: carrier, user_id="alice", role="user")
         assert result is carrier
         assert str(result) == SECRET
+
+
+class TestRecheck:
+    """The 1.10.0 recheck: three findings, and the engine-level cases the
+    reviewer's oracle does not reach.
+
+    The oracle exercises G1 and G3 through ``gate.call`` and G2 through the
+    mcp 2.x hook.  What it cannot reach from outside is pinned here: the same
+    G2 shapes over the 1.x ``call_tool`` hook, which is selected by the
+    presence of ``call_tool`` and not by the SDK version; the resolved path a
+    whitelisted callable actually receives, which the oracle observes only as
+    the file that got read; and the recipient edge forms, which decide whether
+    the exhaustive parse is usable rather than only safe.
+    """
+
+    # G1: whitelist_path normalizes lexically before it resolves (REPRODUCED)
+
+    @staticmethod
+    def _whitelist_gate(prefix: str) -> AuthorizationGate:
+        gate = AuthorizationGate()
+        gate.register_tool("task", _perms(modify_policy=ModifyPolicyConfig(
+            enabled=True,
+            apply_when_hardening_active=False,
+            transformations=[TransformationConfig(
+                field="path",
+                action="whitelist_path",
+                config={"allowed_prefixes": [prefix]},
+            )],
+        )))
+        return gate
+
+    @staticmethod
+    def _link_tree(tmp_path):
+        """allowed/jump is a directory symlink pointing outside the tree."""
+        allowed = tmp_path / "allowed"
+        outside = tmp_path / "outside"
+        (allowed / "inner").mkdir(parents=True)
+        (outside / "child").mkdir(parents=True)
+        (allowed / "inside.txt").write_text("PUBLIC")
+        (outside / "private.txt").write_text("PRIVATE_SENTINEL")
+        (allowed / "jump").symlink_to(outside / "child", target_is_directory=True)
+        (allowed / "inner" / "back").symlink_to(allowed, target_is_directory=True)
+        return allowed, outside
+
+    def test_the_callable_receives_the_path_that_was_checked(self, tmp_path):
+        """G1's second half, which the oracle can only observe indirectly.
+
+        Through 1.10.0 the action returned the caller's original string on
+        allow, so the gate checked one path and the host opened another.  A
+        composition through a symlink is where those two diverge, and the
+        assertion here is on the string the callable was handed rather than on
+        what it read, so the divergence is pinned at the point it happens.
+        """
+        allowed, _ = self._link_tree(tmp_path)
+        gate = self._whitelist_gate(str(allowed))
+        seen = []
+
+        def read(path):
+            seen.append(path)
+            return "ok"
+
+        gate.call(
+            "task", read,
+            parameters={"path": str(allowed / "inner" / "back" / "inside.txt")},
+            user_id="alice", role="user",
+        )
+        assert seen == [str((allowed / "inside.txt").resolve())]
+
+    def test_a_symlink_then_parent_composition_is_denied(self, tmp_path):
+        """G1.  ``allowed/jump/../private.txt`` where ``jump`` leads outside.
+
+        A lexical ``normpath`` ahead of ``realpath`` collapses this to
+        ``allowed/private.txt`` against the SPELLING of the path, which is
+        inside the prefix, and the filesystem is never consulted about
+        ``jump``.  ``open()`` does not collapse it lexically, so the tool read
+        the file the prefix existed to exclude.
+        """
+        allowed, outside = self._link_tree(tmp_path)
+        gate = self._whitelist_gate(str(allowed))
+        target = allowed / "jump" / ".." / "private.txt"
+        assert target.resolve() == (outside / "private.txt").resolve()
+
+        with pytest.raises(DeniedError):
+            gate.call(
+                "task", lambda path: path, parameters={"path": str(target)},
+                user_id="alice", role="user",
+            )
+
+    def test_a_relative_path_is_blocked(self, tmp_path):
+        """A relative path names a different file for every working directory,
+        so what it resolves to is a property of the caller's process and not of
+        the request.  It was blocked before only because the working directory
+        happened to sit outside the prefix; it is blocked structurally now.
+        """
+        allowed, _ = self._link_tree(tmp_path)
+        gate = self._whitelist_gate(str(allowed))
+
+        with pytest.raises(DeniedError):
+            gate.call(
+                "task", lambda path: path, parameters={"path": "./inside.txt"},
+                user_id="alice", role="user",
+            )
+
+    def test_mcp_1x_whitelisted_path_reaches_the_handler_resolved(self, tmp_path):
+        """G1 over the 1.x hook.  The parameter transformation is applied by
+        the gate, so the adapter carries the canonicalized value through to the
+        handler like any other effective parameter.
+        """
+        pytest.importorskip("mcp")
+        from agentlock.integrations.mcp import AgentLockMCPServer
+
+        allowed, _ = self._link_tree(tmp_path)
+        gate = self._whitelist_gate(str(allowed))
+        server = FakeServer()
+        AgentLockMCPServer(server, gate, {})
+        seen = []
+
+        @server.call_tool()
+        async def handler(name: str, arguments: dict):
+            seen.append(arguments["path"])
+            return "ok"
+
+        asyncio.run(server.handler("task", {
+            "path": str(allowed / "inner" / "back" / "inside.txt"),
+            "_agentlock_user_id": "alice", "_agentlock_role": "user",
+        }))
+        assert seen == [str((allowed / "inside.txt").resolve())]
+
+    # G2: MCP output redaction misses two shapes and one policy (REPRODUCED)
+
+    def test_mcp_1x_an_embedded_resource_is_redacted(self):
+        """G2(a) over the 1.x hook.  ``getattr(item, "text", None)`` is None on
+        an ``EmbeddedResource``, so the item fell through to the general walk,
+        which returns a custom object unchanged by its own stated contract.
+        The declared transformation never reached the string a client reads.
+        """
+        pytest.importorskip("mcp")
+        from agentlock.integrations.mcp import AgentLockMCPServer
+
+        class TextResource:
+            """An ``EmbeddedResource`` holds its text one level down, here."""
+
+            def __init__(self, text):
+                self.text = text
+
+        class Embedded:
+            def __init__(self, text):
+                self.resource = TextResource(text)
+
+        class Result:
+            def __init__(self, content):
+                self.content = content
+
+        gate, perms = _gate(modify_policy=_redact("output"))
+        server = FakeServer()
+        AgentLockMCPServer(server, gate, {"task": perms})
+
+        @server.call_tool()
+        async def handler(name: str, arguments: dict):
+            return Result([Embedded(SECRET)])
+
+        result = asyncio.run(server.handler("task", {
+            "_agentlock_user_id": "alice", "_agentlock_role": "user",
+        }))
+        assert SSN not in result.content[0].resource.text
+
+    def test_mcp_1x_a_blob_resource_is_passed_through(self):
+        """The stated limit, pinned so it cannot drift.  A resource carrying
+        base64 in ``blob`` and no ``text`` comes back untouched: this engine
+        does not claim to decode a blob, guess its media type, and redact
+        inside it.  A host serving sensitive material that way redacts it at
+        the source.
+        """
+        pytest.importorskip("mcp")
+        from agentlock.integrations.mcp import AgentLockMCPServer
+
+        class BlobResource:
+            def __init__(self, blob):
+                self.blob = blob
+
+        class Embedded:
+            def __init__(self, blob):
+                self.resource = BlobResource(blob)
+
+        class Result:
+            def __init__(self, content):
+                self.content = content
+
+        payload = "MTIzLTQ1LTY3ODk="
+        gate, perms = _gate(modify_policy=_redact("output"))
+        server = FakeServer()
+        AgentLockMCPServer(server, gate, {"task": perms})
+
+        @server.call_tool()
+        async def handler(name: str, arguments: dict):
+            return Result([Embedded(payload)])
+
+        result = asyncio.run(server.handler("task", {
+            "_agentlock_user_id": "alice", "_agentlock_role": "user",
+        }))
+        assert result.content[0].resource.blob == payload
+
+    @staticmethod
+    def _data_policy_perms() -> AgentLockPermissions:
+        from agentlock.schema import DataPolicyConfig
+
+        return _perms(data_policy=DataPolicyConfig(
+            prohibited_in_output=["ssn"], redaction="auto",
+        ))
+
+    @pytest.mark.parametrize("shape", ["text", "structured", "embedded"])
+    def test_mcp_1x_the_data_policy_reaches_every_shape(self, shape):
+        """G2(b) over the 1.x hook, and the reason the two policies now share
+        one walk.
+
+        Redaction in the adapter was guarded by ``isinstance(result, str)``,
+        which is never true of an MCP result, so a tool declaring
+        ``prohibited_in_output`` with ``redaction="auto"`` and no modify policy
+        had the step skipped entirely and leaked through every shape at once.
+        Two policies over the same payload need one definition of what the
+        payload is, or the weaker definition decides what leaks.
+        """
+        pytest.importorskip("mcp")
+        from agentlock.integrations.mcp import AgentLockMCPServer
+
+        class Text:
+            def __init__(self, text):
+                self.text = text
+
+        class TextResource:
+            def __init__(self, text):
+                self.text = text
+
+        class Embedded:
+            def __init__(self, text):
+                self.resource = TextResource(text)
+
+        class Result:
+            def __init__(self, content, structured=None):
+                self.content = content
+                self.structured_content = structured
+
+        gate = AuthorizationGate()
+        perms = self._data_policy_perms()
+        gate.register_tool("task", perms)
+        server = FakeServer()
+        AgentLockMCPServer(server, gate, {"task": perms})
+
+        @server.call_tool()
+        async def handler(name: str, arguments: dict):
+            if shape == "text":
+                return Result([Text(SECRET)])
+            if shape == "structured":
+                return Result([], {"note": SECRET})
+            return Result([Embedded(SECRET)])
+
+        result = asyncio.run(server.handler("task", {
+            "_agentlock_user_id": "alice", "_agentlock_role": "user",
+        }))
+        rendered = repr([
+            getattr(item, "text", None) or getattr(item.resource, "text", None)
+            for item in result.content
+        ]) + repr(result.structured_content)
+        assert SSN not in rendered
+
+    def test_mcp_1x_an_undeclared_tool_output_is_untouched(self):
+        """Control.  Walking unconditionally is only safe because redaction of
+        a tool that declared no data policy is the identity.  A plain string
+        return with no policy at all comes back exactly as the handler wrote
+        it, secret and all, which is the pre-existing contract.
+        """
+        pytest.importorskip("mcp")
+        from agentlock.integrations.mcp import AgentLockMCPServer
+
+        gate = AuthorizationGate()
+        gate.register_tool("task", _perms())
+        server = FakeServer()
+        AgentLockMCPServer(server, gate, {})
+
+        @server.call_tool()
+        async def handler(name: str, arguments: dict):
+            return SECRET
+
+        result = asyncio.run(server.handler("task", {
+            "_agentlock_user_id": "alice", "_agentlock_role": "user",
+        }))
+        assert result == SECRET
+
+    # G3: restrict_domain validates one address, positionally (REPRODUCED)
+
+    @staticmethod
+    def _domain_gate() -> AuthorizationGate:
+        gate = AuthorizationGate()
+        gate.register_tool("task", _perms(modify_policy=ModifyPolicyConfig(
+            enabled=True,
+            apply_when_hardening_active=False,
+            transformations=[TransformationConfig(
+                field="to",
+                action="restrict_domain",
+                config={"allowed_domains": ["company.test"]},
+            )],
+        )))
+        return gate
+
+    def _send(self, value):
+        """Return the recipients the tool was actually invoked with, or None
+        if the value was blocked."""
+        gate = self._domain_gate()
+        seen = []
+
+        def send(to):
+            seen.append(to)
+            return "simulated sent"
+
+        try:
+            gate.call(
+                "task", send, parameters={"to": value},
+                user_id="alice", role="user",
+            )
+        except DeniedError:
+            return None
+        return seen[0]
+
+    @pytest.mark.parametrize("value", [
+        "bob@company.test,",
+        "bob@company.test;",
+        "bob@company.test, ,carol@company.test",
+        "Bob <bob@company.test>",
+        "bob@COMPANY.TEST",
+        "Bob <bob@company.test>, Carol <carol@company.test>",
+    ])
+    def test_benign_recipient_forms_are_allowed(self, value):
+        """The edge forms that decide whether an exhaustive parse is usable
+        rather than only safe.
+
+        A trailing separator and a whitespace only piece are formatting, not
+        recipients, so they are discarded before the parse requirement rather
+        than counted as unparseable pieces.  A display name is accepted because
+        the pattern finds the address inside it.  Domains compare case
+        insensitively, so a value that differs from the allowlist only in case
+        is the same value.
+        """
+        assert self._send(value) == value
+
+    @pytest.mark.parametrize("value", [
+        "bob@company.test, eve@outside.test",
+        "eve@outside.test, bob@company.test",
+        "bob@company.test;eve@outside.test",
+        "bob@company.test, eve@outside.test, carol@company.test",
+        "Bob <bob@company.test>, Eve <eve@outside.test>",
+        "bob@company.test, not-an-address",
+        "bob@company.test eve@outside.test",
+    ])
+    def test_a_disallowed_or_unparseable_piece_blocks_the_value(self, value):
+        """G3.  ``search`` read the FIRST address and nothing after it, so the
+        answer was a function of the order the addresses were written in: the
+        same recipient set blocked when the outside address came first and
+        allowed when it came second.  The pair of orderings at the top of this
+        list is that finding; both must block now, and they must block for the
+        same reason.
+
+        The unparseable piece cases are the smuggling shape.  Once a value has
+        been established as a recipient list by carrying an address, a piece
+        the parser cannot read is not evidence of innocence.  The last case has
+        no separator at all, which is why addresses are collected per piece
+        with ``finditer`` rather than ``search``.
+        """
+        assert self._send(value) is None
+
+    @pytest.mark.parametrize("value", ["not-an-email", "", "   "])
+    def test_a_value_carrying_no_address_is_untouched(self, value):
+        """The scope of the exhaustive parse, pinned rather than implied.
+
+        A field with no address in it is not a recipient list, and an allowlist
+        over domains can only govern things that have a domain.  This is the
+        behavior the engine has always had and
+        ``TestRestrictDomain::test_no_email_in_field`` pins the unit half of
+        it; this is the gate half.
+        """
+        assert self._send(value) == value
+
+    def test_a_quoted_display_name_with_a_comma_blocks(self):
+        """The stated limit, pinned so it cannot drift.  ``"Doe, Bob"
+        <bob@company.test>`` splits into pieces that do not each carry an
+        address, so it blocks.  That is a conservative failure and it is
+        deliberate: honoring RFC 5322 quoting here would mean writing a mail
+        parser, and getting one subtly wrong is how the first match rule
+        happened.
+        """
+        assert self._send('"Doe, Bob" <bob@company.test>') is None
+
+
+class TestBranchWheelRedPass:
+    """The red pass against the 1.10.1 branch wheel, sha256 ``ae231877``.
+
+    1.10.1 closed G3 by parsing the whole recipient value instead of its first
+    address.  A red pass against the wheel built from that fix found that the
+    parse still decides whether a value IS a recipient list by asking the ASCII
+    address pattern, and a value the pattern cannot read was therefore treated
+    as carrying no address at all and returned unchanged.  That is G4, and the
+    forms it lets through are deliverable addresses rather than curiosities.
+
+    The G4 cases were committed as ``xfail(strict=True)`` before the code that
+    satisfies them, so the before state is in the history, and the markers came
+    off in the commit that closed the finding.  A strict xfail that starts
+    passing is a failure, so neither the marker nor the fix could be left half
+    applied.
+
+    The same pass reported two MCP payloads the walker does not descend into.
+    Both are STATED rather than closed, and their cases assert the pass
+    through: a limit that is pinned is a limit that cannot drift.
+    """
+
+    # G4: an address the ASCII pattern cannot read is not "no address"
+
+    @staticmethod
+    def _domain_gate() -> AuthorizationGate:
+        gate = AuthorizationGate()
+        gate.register_tool("task", _perms(modify_policy=ModifyPolicyConfig(
+            enabled=True,
+            apply_when_hardening_active=False,
+            transformations=[TransformationConfig(
+                field="to",
+                action="restrict_domain",
+                config={"allowed_domains": ["company.test"]},
+            )],
+        )))
+        return gate
+
+    def _send(self, value):
+        """Return the recipients the tool was invoked with, or None if the
+        value was blocked."""
+        gate = self._domain_gate()
+        seen = []
+
+        def send(to):
+            seen.append(to)
+            return "simulated sent"
+
+        try:
+            gate.call(
+                "task", send, parameters={"to": value},
+                user_id="alice", role="user",
+            )
+        except DeniedError:
+            return None
+        return seen[0]
+
+    @pytest.mark.parametrize("value", [
+        "bob@compаny.test",
+        "bob@[10.0.0.1]",
+        "bob@company.test@evil.test",
+    ])
+    def test_an_address_the_pattern_cannot_read_is_blocked(self, value):
+        """G4.  Through 1.10.1 the exhaustive parse asked the ASCII pattern
+        whether the value held an address, and a value the pattern could not
+        read was judged to hold none, which returned it unchanged.
+
+        The first case spells its domain with a Cyrillic letter, the second is
+        an address literal, and the third carries a second at sign after an
+        allowed domain, so the pattern reads the allowed part and stops before
+        the rest.  All three are deliverable, and all three passed a domain
+        allowlist that exists to decide exactly this.
+
+        What decides now is the at sign, which is the character that makes a
+        string an address, and not the pattern, which is one opinion about
+        which addresses are well formed.  A piece carrying an at sign that does
+        not parse as a single ASCII address blocks the value, so an address the
+        engine cannot read is refused rather than waved through.
+        """
+        assert self._send(value) is None
+
+    @pytest.mark.parametrize("value", ["not-an-email", "Bob Smith", ""])
+    def test_a_value_with_no_at_sign_is_untouched(self, value):
+        """The scope of the at sign rule, pinned rather than implied.
+
+        A field with no at sign anywhere in it is not a recipient list, and an
+        allowlist over domains can only govern things that have a domain.  This
+        is the behavior the engine has always had and
+        ``TestRestrictDomain::test_no_email_in_field`` pins the unit half of
+        it.  A bare local name a mail system may still know how to route is not
+        covered, for the same reason: there is no domain in it to compare.
+        """
+        assert self._send(value) == value
+
+    @pytest.mark.parametrize("value", [
+        "Bob <bob@company.test>",
+        "bob@COMPANY.TEST",
+        "Bob <bob@COMPANY.TEST>",
+        "Bob <bob@company.test>, Carol <carol@company.test>",
+    ])
+    def test_the_benign_forms_the_at_sign_rule_must_not_break(self, value):
+        """The controls.  A rule that blocked every value it could not parse
+        exactly would close G4 by refusing ordinary recipients, and these are
+        the ordinary recipients.
+
+        A display name is accepted, as it was before, because the address
+        inside the angle brackets is what the piece is about.  Domains compare
+        after casefolding, so a value differing from the allowlist only in case
+        is the same value.  Neither of those is a loosening: each of these
+        pieces still has to parse as one address whose domain is allowed.
+        """
+        assert self._send(value) == value
+
+    def test_an_idna_encoded_domain_outside_the_allowlist_is_blocked(self):
+        """The lookalike domain in its encoded spelling.
+
+        A domain that is not ASCII reaches the wire encoded, and the encoded
+        form is ASCII, parses, and is a different domain from the one on the
+        allowlist.  It blocks on the domain comparison rather than on the
+        parse, which is the right reason: the engine compares the domain it was
+        handed against the domains it was given and does not decode, fold or
+        otherwise guess at what a domain resembles.
+        """
+        assert self._send("bob@xn--compny-4of.test") is None
+
+    # Two MCP payloads the walker does not descend into (STATED)
+
+    def test_a_resource_link_is_passed_through(self):
+        """The stated limit.  A resource link carries a URI and a name and no
+        content, so it reaches the general walk and comes back untouched, both
+        fields included.
+
+        A link is a reference to data rather than the data, and following one
+        to redact what it points at would mean fetching it, which is not
+        something an authorization decision does.  The name travels with the
+        link, so a host that puts sensitive material in either field is
+        publishing it and has to redact it at the source.
+        """
+        pytest.importorskip("mcp")
+        from agentlock.integrations.mcp import AgentLockMCPServer
+
+        class Link:
+            """A ``ResourceLink``: a uri and a name, no text and no resource."""
+
+            def __init__(self, uri, name):
+                self.uri = uri
+                self.name = name
+
+        class Text:
+            def __init__(self, text):
+                self.text = text
+
+        class Result:
+            def __init__(self, content):
+                self.content = content
+
+        link = Link("https://files.test/" + SSN, "report-" + SSN)
+        gate, perms = _gate(modify_policy=_redact("output"))
+        server = FakeServer()
+        AgentLockMCPServer(server, gate, {"task": perms})
+
+        @server.call_tool()
+        async def handler(name: str, arguments: dict):
+            return Result([link, Text(SECRET)])
+
+        result = asyncio.run(server.handler("task", {
+            "_agentlock_user_id": "alice", "_agentlock_role": "user",
+        }))
+        assert result.content[0].uri == "https://files.test/" + SSN
+        assert result.content[0].name == "report-" + SSN
+        assert SSN not in result.content[1].text
+
+    def test_a_result_meta_is_passed_through(self):
+        """The stated limit.  A tool result's metadata field is not walked,
+        under either of the spellings the two SDK majors use for it.
+
+        The walker covers the two payloads a client reads as the answer, which
+        are the content blocks and the structured content.  Metadata is the
+        transport's own channel, carrying things like a progress token and a
+        cursor, and rewriting values there would change how a client routes a
+        result rather than what it reads out of one.  A handler that puts
+        sensitive material in metadata is putting it outside the payload this
+        engine claims to cover.
+        """
+        pytest.importorskip("mcp")
+        from agentlock.integrations.mcp import AgentLockMCPServer
+
+        class Text:
+            def __init__(self, text):
+                self.text = text
+
+        class Result:
+            def __init__(self, content, meta):
+                self.content = content
+                self.meta = meta
+                self._meta = meta
+
+        gate, perms = _gate(modify_policy=_redact("output"))
+        server = FakeServer()
+        AgentLockMCPServer(server, gate, {"task": perms})
+
+        @server.call_tool()
+        async def handler(name: str, arguments: dict):
+            return Result([Text(SECRET)], {"note": SSN})
+
+        result = asyncio.run(server.handler("task", {
+            "_agentlock_user_id": "alice", "_agentlock_role": "user",
+        }))
+        assert result.meta == {"note": SSN}
+        assert result._meta == {"note": SSN}
+        assert SSN not in result.content[0].text

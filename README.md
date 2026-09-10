@@ -314,6 +314,7 @@ changelog. That is how we intend to keep working.
 
 | version | highlights | tests |
 |---------|-----------|-------|
+| 1.10.1  | recheck: the reviewer re-ran the oracle against the published 1.10.0 wheel and added 32 cases; resolved path containment resolves before it normalizes and returns the path it checked; one MCP payload walker serving both the declared transformation and the data policy, covering embedded resources; recipient restriction parses the whole value rather than its first address | 1688 with the `crypto` and `mcp` extras plus `fastapi` and `flask`, 9 skipped |
 | 1.10.0  | integration hardening: one execution contract, so a declared transformation reaches the tool and the caller on every path, in every shape it returns and in both payloads of an MCP result; the authenticated session's role authoritative over the caller's claim; resolved path containment; server identity and route mapping authoritative over the client; parameter and novel lineage re-checked at deferred commit; terminal deferral states; tokens consumed before async calls | 1616 with the `crypto` and `mcp` extras plus `fastapi` and `flask`, 9 skipped |
 | 1.9.1   | binding completeness: a `**kwargs` key that names another parameter is refused rather than flattened over it; partials bound through to the function underneath; recipients read for the characters they hold; an unobservable declared recipient parameter refused | 1520 with the `crypto` and `mcp` extras, 9 skipped |
 | 1.9.0   | enforcement completeness: all call arguments reach the gate, tokens bind the empty call, MCP wrapper fails closed and supports both SDK majors | 1503 with the `crypto` and `mcp` extras, 9 skipped |
@@ -360,6 +361,18 @@ hook is covered in every environment by `tests/test_v110_hardening.py`,
 `TestRedPass`'s own session-role and structured-content cases over that hook
 included. On CPython 3.13.14 with all four present it is 1617 passing and 8
 skipped. Nothing fails in any of these environments.
+
+For 1.10.1 it is 1688 passing and 9 skipped on CPython 3.14.6 with `mcp
+2.2.0`, `fastapi`, `flask` and PyNaCl present, the 72 added tests being the
+32 cases the reviewer appended to the oracle in their 1.10.0 recheck, which
+brings that file to 65, and the 40 engine tests covering what those 32 reach
+from outside cannot: the same MCP shapes over the 1.x hook, the resolved path
+a whitelisted callable actually receives, the recipient edge forms, and the 13
+cases of the pre-release red pass against this release's own branch wheel.
+Without `mcp`, and with `fastapi`, `flask` and PyNaCl still present but no
+`autogen`, it is 1652 passing and 45 skipped; 19 of the 45 are new in this
+release and all 19 are guarded on `mcp`, being 10 oracle cases and 9 engine
+cases. Nothing fails.
 
 The 1.9.0 argument binding, and the 1.9.1 binding rules that refuse a
 `**kwargs` key naming another parameter, bind through a `functools.partial` to
