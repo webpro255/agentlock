@@ -5769,3 +5769,333 @@ it.
 
 The release checks are re-run next, against a wheel rebuilt from this commit,
 and AMENDMENT 11 carries them.
+
+# AMENDMENT 11: 1.10.2 RELEASE RE-FREEZE (2026-09-10)
+
+Appended after AMENDMENT 10. Everything above it is left exactly as it was
+written.
+
+Date: 2026-09-10
+Branch: `v1.10.2-jwt-and-audit`.
+HEAD at the time this half was written: `658dd8e`, the AMENDMENT 10 commit.
+
+This section carries two things that would normally be two commits, and it says
+so rather than pretending otherwise. The first half, R1 to R8 below, is a
+re-freeze of the release predictions: 1.10.2 was verified as a release by
+AMENDMENT 9, that verification was against artifacts the J3 fix has now
+invalidated, and every one of those checks has to be run again against a wheel
+built from `aa887cf`. The second half is the measurement of those predictions.
+Both are in commit D because the commit plan of the J3 freeze has four commits
+in it and this is the fourth.
+
+What keeps that honest is ordering rather than assertion. The predictions were
+written into this file and the file was hashed BEFORE the first check was run.
+The digest below is of `docs/PREDICTIONS_v110_hardening.md` as it stood when R1
+to R8 were finished, with nothing after R8 and with the four line fence carrying
+the digest itself deleted, since a file cannot contain its own hash. To check
+it: take this file, cut everything from the `## R8` section's last line onward,
+delete the fence below and the sentence following it, and hash what is left.
+
+
+```
+7c288b802a0e0d17964e01379c95a3a2b51abf9ae954621b50a0693add4bbb1a
+```
+
+Anything below the fence is measurement and was written after those checks ran.
+
+## R1. Rebuild and artifact check
+
+Build in the checkout with the `/tmp/al18-extras` interpreter after
+`rm -rf dist build`, which is how AMENDMENT 8 and AMENDMENT 9 both built.
+`twine check dist/*` reports **PASSED** for both artifacts, and the wheel
+METADATA at `agentlock-1.10.2.dist-info/METADATA` reads `Metadata-Version: 2.4`
+and `Version: 1.10.2`. The version does not move: 1.10.2 is unreleased and J3 is
+part of what it is, not something that follows it.
+
+**Both digests move**, and unlike A9.1 this is not an open question. The sdist
+ships `CHANGELOG.md` and `README.md`, both of which this session edited, and the
+wheel ships `agentlock/`, which is where the fix is. A9.1's amended rule says
+the wheel digest holds when the commit touches only files the wheel does not
+contain, and this commit touches two files it does. The pair to compare against
+is A9.5's:
+
+```
+ffee42aea5676a01140a6561347646b456cd144164d0ad086632d3b9599a4dac  dist/agentlock-1.10.2-py3-none-any.whl
+92337b459764a404660b30fa4022392c7a40b13ba697d97de1f0fa518595e2a1  dist/agentlock-1.10.2.tar.gz
+```
+
+## R2. A fresh venv holding only the wheel
+
+A venv that has never seen this repository, holding the newly built wheel with
+the `crypto`, `mcp`, `fastapi` and `flask` extras and nothing else, exercised
+from `/tmp` so it cannot resolve the source tree, prints **1.10.2** and names a
+`site-packages` path when asked where `agentlock` came from. The path is read
+out rather than assumed, which is the check A10.4 exists because this arc got
+wrong once already.
+
+## R3. Both oracles against the wheel
+
+Both oracle files copied to a directory under `/tmp`, run there against site
+packages: **96 passed**, 0 failed, 0 xfailed. Neither file was edited by this
+session and their digests are the ones A10.5 recorded under T4.
+
+## R4. Every reproduction script of this arc
+
+All five exit **0** in that venv, with 0 OPEN probes each:
+`/tmp/al1102_j3_repro.py`, `/tmp/al1102_jwt_repro.py`,
+`/tmp/al1102_jwt_verified.py`, `/tmp/al110_redpass_repro.py` and
+`/tmp/al110_redpass2_repro.py`. The first is new in this session and the other
+four are the arc's, being the four V6 named. The `al19` and `al191` scripts
+belong to the 1.9 arc and are not rerun here, which is what V6 said and is
+unchanged.
+
+## R5. J3 closed against the wheel specifically
+
+`/tmp/al1102_j3_repro.py` run in the R2 venv reports **all 12 probes CLOSED, 0
+OPEN, exit 0**, with probe A at 401, B at 200 and the handler run, C at 401, D
+at 401, and the two controls at 401 and 200. This is the prediction that matters
+most in this section, because the same script against the PREVIOUS wheel, which
+is the one the maintainer was about to publish, reports 8 OPEN. That comparison
+is measured rather than recalled: the old wheel is still installed in
+`/tmp/al18-extras` until R6 replaces it, and the script is run against it once
+more, from `/tmp`, before the reinstall.
+
+## R6. The suite against the rebuilt wheel and in both environments
+
+After reinstalling the newly built wheel over `/tmp/al18-extras`, the full suite
+there is **1746 passed, 9 skipped, 0 failed**, and the checkout venv is **1685
+passed, 70 skipped, 0 failed**. Both are A10.7's figures and neither moves,
+because the reinstall changes what a script from `/tmp` imports and not what
+`pytest` from the repository root imports. `ruff check .` is clean and
+`mypy agentlock/ --ignore-missing-imports` reports 0 errors in 34 source files.
+
+## R7. Front matter, hygiene and style
+
+`pyproject.toml` and `agentlock/__init__.py` both read **1.10.2**, `CITATION.cff`
+reads `version: 1.10.2` and `date-released: 2026-09-10` and `yaml.safe_load`
+parses it, and `CHANGELOG.md` still carries `## [1.10.2] - 2026-09-10`. None of
+those four files is edited by this session, exactly as V3 and V4 were not edited
+by AMENDMENT 9's, and for a stronger reason: they were correct then and the J3
+fix does not move a version.
+
+`~/agentlock-hygiene.sh` returns **0, 0, 1, 0**, the 1 being
+`docs/PREDICTIONS_v18_recipient.md`. This section's own added lines carry **0**
+em dashes, and their ASCII double hyphens are only the declared non prose forms
+of A9.2 as amended: the `--ignore-missing-imports` flag in prose and in a fence
+quoting the command as run, and the markdown table separator row of the result
+table below.
+
+## R8. Files in commit D
+
+**`docs/PREDICTIONS_v110_hardening.md` alone.** No engine file, no test file, no
+schema field, and none of the four front matter files of R7. The J3 fix is
+already committed at `aa887cf` and this commit adds no code to it.
+
+## A11.0 The ordering digest, checked
+
+The rule stated above for reconstructing the digest says "cut everything from
+the `## R8` section's last line onward", which is one word wrong: R8's last line
+is the last line of the frozen half and is kept, not cut. The sentence is left
+as it was written rather than corrected in place, because correcting the text a
+digest covers is how a digest stops meaning anything.
+
+The rule as it should read: truncate this file immediately AFTER the last line
+of section R8, delete the fence carrying the digest together with the sentence
+that follows it, and hash what remains. Run against this file as committed:
+
+```
+7c288b802a0e0d17964e01379c95a3a2b51abf9ae954621b50a0693add4bbb1a
+```
+
+which is the value the fence carries. So the eight predictions below were fixed
+before any of the checks that measure them, and this is checkable by anyone
+holding the committed file rather than being a claim about what happened in what
+order.
+
+## A11.1 Result table
+
+| # | Predicted | Measured | Verdict |
+|---|-----------|----------|---------|
+| R1 | rebuild after `rm -rf dist build`, `twine check` PASSED for both, METADATA `Metadata-Version: 2.4` and `Version: 1.10.2`, both digests moving from A9.5's pair | `Successfully built agentlock-1.10.2.tar.gz and agentlock-1.10.2-py3-none-any.whl`; both PASSED; `Metadata-Version: 2.4`, `Name: agentlock`, `Version: 1.10.2`; both digests moved, per A11.2 | MET |
+| R2 | a fresh venv holding only the wheel with the four extras prints 1.10.2 and names a site packages path | `version 1.10.2 from /tmp/al1102j3-wheel/lib/python3.14/site-packages/agentlock/__init__.py`, read out from `/tmp` | MET |
+| R3 | both oracles copied under `/tmp`, 96 passed, 0 failed, 0 xfailed | `96 passed, 16 warnings in 0.57s` from `/tmp/al1102j3-oracle`, resolving the same site packages path | MET |
+| R4 | all five reproduction scripts exit 0 with 0 OPEN probes each | all five exit 0; the two J2 scripts report 0 OPEN, both red pass scripts report every probe CLOSED with F6 UNCHANGED | MET |
+| R5 | J3 against the wheel: 12 CLOSED, 0 OPEN, exit 0, and 8 OPEN against the previous wheel | 12 CLOSED and exit 0 in the R2 venv; the same script against the wheel still installed in `/tmp/al18-extras` before the reinstall gave `OPEN probes: 8`, exit 1 | MET |
+| R6 | 1746 passed and 9 skipped after the reinstall, 1685 passed and 70 skipped in the checkout venv, ruff clean, mypy 0 errors in 34 files | `1746 passed, 9 skipped, 47 warnings in 3.71s`; `1685 passed, 70 skipped, 46 warnings in 3.57s`; `All checks passed!`; `Success: no issues found in 34 source files` | MET |
+| R7 | 1.10.2 in both version files, CITATION parsing at 1.10.2 and 2026-09-10, the CHANGELOG heading unchanged, none of the four edited; hygiene 0, 0, 1, 0; style as declared | `pyproject.toml:7` and `agentlock/__init__.py:37`; `yaml.safe_load` returns `'1.10.2'` and `'2026-09-10'`; `## [1.10.2] - 2026-09-10` at line 10; `git status` shows only this document modified; hygiene `0`, `0`, `1`, `0` | MET |
+| R8 | commit D is `docs/PREDICTIONS_v110_hardening.md` alone | one file, no code, no front matter | MET |
+
+None of R1 to R8 was defective. The re-freeze was written against a release that
+had already been verified once, so its predictions were carrying the previous
+session's measurements forward and only two of them had genuine uncertainty in
+them: whether the digests would move, which A9.1's amended rule had already
+settled in advance, and whether the reinstall would disturb the suite figures,
+which A9.5 had already measured once from the other direction.
+
+## A11.2 The digests, and what each one is answering
+
+```
+before  ffee42aea5676a01140a6561347646b456cd144164d0ad086632d3b9599a4dac  agentlock-1.10.2-py3-none-any.whl
+after   37f3b08d666b945ae69e34408209c6a0d13ceac3d4a5f9757caa4dd88977d4c3  agentlock-1.10.2-py3-none-any.whl
+before  92337b459764a404660b30fa4022392c7a40b13ba697d97de1f0fa518595e2a1  agentlock-1.10.2.tar.gz
+after   20a7ff99d97311c15ef4a95dd95de432832c875a9e059c2feebb05486b87e9fc  agentlock-1.10.2.tar.gz
+```
+
+Both moved, which is the third data point this arc has on the same question and
+the first where the answer was known before the build ran. A7.2 saw a wheel hold
+and an sdist move. A9.1 saw the same and amended N5's expectation to say why:
+the wheel contains neither `CHANGELOG.md` nor `README.md`, so a commit touching
+only those cannot move it. This commit's predecessor touched `agentlock/`, which
+the wheel does contain, so R1 predicted both digests moving and gave that reason
+rather than treating it as an open question about build reproducibility. It is
+not one. A build backend that produces a byte identical wheel from unchanged
+inputs produces a different one from changed inputs, and knowing which files are
+in which artifact is what turns a digest comparison into a check.
+
+The two artifacts now in `dist/` are the release artifacts, and the pair
+AMENDMENT 9 recorded are superseded rather than merely older. A9.5 called those
+"the release artifacts" and, on the evidence of R5's 8 OPEN probes against that
+same wheel, they were the artifacts that shipped J3.
+
+## A11.3 Final measurements
+
+Build in the checkout with the `/tmp/al18-extras` interpreter, after
+`rm -rf dist build`:
+
+```
+Successfully built agentlock-1.10.2.tar.gz and agentlock-1.10.2-py3-none-any.whl
+Checking dist/agentlock-1.10.2-py3-none-any.whl: PASSED
+Checking dist/agentlock-1.10.2.tar.gz: PASSED
+```
+
+METADATA, read out of the wheel at `agentlock-1.10.2.dist-info/METADATA`:
+
+```
+Metadata-Version: 2.4
+Name: agentlock
+Version: 1.10.2
+```
+
+Artifact digests, and these are the release artifacts:
+
+```
+37f3b08d666b945ae69e34408209c6a0d13ceac3d4a5f9757caa4dd88977d4c3  dist/agentlock-1.10.2-py3-none-any.whl
+20a7ff99d97311c15ef4a95dd95de432832c875a9e059c2feebb05486b87e9fc  dist/agentlock-1.10.2.tar.gz
+```
+
+Fresh venv `/tmp/al1102j3-wheel`, holding only the newly built wheel with the
+`crypto`, `mcp`, `fastapi` and `flask` extras, exercised from `/tmp` so it
+cannot resolve the source tree:
+
+```
+version 1.10.2 from /tmp/al1102j3-wheel/lib/python3.14/site-packages/agentlock/__init__.py
+both oracles, copied to /tmp/al1102j3-oracle   96 passed, 16 warnings in 0.57s
+/tmp/al1102_j3_repro.py        12 probes CLOSED, 0 OPEN, exit 0
+/tmp/al1102_jwt_repro.py       fastapi and flask CLOSED, 0 OPEN, exit 0
+/tmp/al1102_jwt_verified.py    all 10 probes CLOSED, 0 OPEN, exit 0
+/tmp/al110_redpass_repro.py    F1 gate, F1 mcp, F2, F3 CLOSED, exit 0
+/tmp/al110_redpass2_repro.py   F4 both SDK majors, E15 both returns, F5 both
+                               shapes CLOSED, F6 limit UNCHANGED, exit 0
+```
+
+The J3 probes against the wheel, verbatim:
+
+```
+A no Authorization header, admin headers       fastapi  status=401 ran=[] -> CLOSED
+B lowercase bearer, signed token, guest hdrs   fastapi  status=200 ran=['ADMIN_ACTION'] -> CLOSED
+C lowercase bearer, forged token, admin hdrs   fastapi  status=401 ran=[] -> CLOSED
+D Basic scheme, admin headers                  fastapi  status=401 ran=[] -> CLOSED
+E control Bearer forged token, admin headers   fastapi  status=401 ran=[] -> CLOSED
+F control Bearer signed token, guest headers   fastapi  status=200 ran=['ADMIN_ACTION'] -> CLOSED
+A no Authorization header, admin headers       flask    status=401 ran=[] -> CLOSED
+B lowercase bearer, signed token, guest hdrs   flask    status=200 ran=['ADMIN_ACTION'] -> CLOSED
+C lowercase bearer, forged token, admin hdrs   flask    status=401 ran=[] -> CLOSED
+D Basic scheme, admin headers                  flask    status=401 ran=[] -> CLOSED
+E control Bearer forged token, admin headers   flask    status=401 ran=[] -> CLOSED
+F control Bearer signed token, guest headers   flask    status=200 ran=['ADMIN_ACTION'] -> CLOSED
+OPEN probes: 0
+```
+
+The same script against the wheel that was in `dist/` when this session opened,
+still installed in `/tmp/al18-extras` at that moment and run from `/tmp`, gave
+`OPEN probes: 8` and exit 1. That is the whole case for this session in two
+runs of one file.
+
+Suite after reinstalling the newly built wheel over `/tmp/al18-extras`, and in
+the checkout venv:
+
+```
+/tmp/al18-extras   1746 passed, 9 skipped, 47 warnings in 3.71s
+checkout venv      1685 passed, 70 skipped, 46 warnings in 3.57s
+```
+
+The suite still imports the checkout, because pytest puts the repository root
+ahead of site packages, and that is the import shape every figure in this arc
+was measured under. Read out rather than assumed:
+`1.10.2 /home/n1trolab/agentlock-v1.4/agentlock/__init__.py`.
+
+Types, lint, front matter and style:
+
+```
+mypy agentlock/ --ignore-missing-imports   Success: no issues found in 34 source files
+ruff check .                               All checks passed!
+hygiene, ~/agentlock-hygiene.sh            0, 0, 1, 0
+pyproject.toml / agentlock/__init__.py     1.10.2 / 1.10.2
+CITATION.cff via yaml.safe_load            '1.10.2', '2026-09-10'
+CHANGELOG heading                          ## [1.10.2] - 2026-09-10
+em dashes on this section's added lines    0
+ASCII double hyphen lines, this section    5: 4 the standing flag, 1 table separator
+```
+
+Measured over commit D as a whole, both halves of it, rather than over either
+half alone. The four are the `--ignore-missing-imports` flag: once in R6's
+prose, once in R7 naming it as declared, once in the fence above quoting the
+command as it was run, and once in this sentence accounting for the other three.
+The one separator is A11.1's result table. R7 predicted exactly that set and
+named the separator singular, which is correct: this section carries one table.
+
+## A11.4 What this session did
+
+Four commits on `v1.10.2-jwt-and-audit`, one finding, one fix, five files of
+content changed across the whole session, and a release re-verified against
+artifacts rebuilt from the fix.
+
+The finding is that 1.10.2's own JWT fix enforced verification only on clients
+that chose to present a token. The release session that prepared 1.10.2 measured
+one half of that, on both adapters, printed the two lines that show it, and
+filed it under `### Limits` with a paragraph explaining that the behavior was
+deliberate. It also wrote, in that same paragraph, that this was "the one way
+the no fallback rule of D2 can be sidestepped". A limit that names a way around
+a security rule is not a limit. That sentence is the reason this session exists,
+and it was written by the session that decided not to act on it.
+
+The other half was never measured at all: a request with no `Authorization`
+header takes the same path, needs no forged token and no unusual spelling, and
+was reachable by any client of a deployment that had configured `jwt_key` and
+believed it had switched verification on.
+
+## A11.5 What this session did not do
+
+No merge, no tag, no push, and no upload. The branch is
+`v1.10.2-jwt-and-audit` and it is not merged to `main`. No schema field was
+added or altered, no engine file outside the two HTTP adapters was touched, and
+no version string moved: 1.10.2 is unreleased, so J3 is part of what 1.10.2 is
+rather than something that follows it. `CITATION.cff`, `pyproject.toml`,
+`agentlock/__init__.py` and the `CHANGELOG.md` heading were measured and left
+alone.
+
+`dist/` holds the two artifacts A11.2 digests and is left in place for the
+maintainer. Publishing them, and removing them afterwards, is a manual step this
+session does not take. The two artifacts AMENDMENT 9 built are gone, replaced by
+`rm -rf dist build` before the rebuild, and that is deliberate: they carry J3
+and nothing should be able to publish them by accident.
+
+One thing is worth writing down for whatever comes next, because it is now a
+pattern rather than an incident. Three times in this arc a session has measured
+a behavior, found it uncomfortable, explained why it was intended, and moved on:
+A7.4, the N3 limits, and this. Twice the explanation held. Once it did not, and
+what distinguished the case that did not was visible in the writing itself. The
+paragraph argued that a security rule could be stepped around and then concluded
+that this was acceptable because the thing it reached was already trusted for
+other reasons. A limit that has to reason about how an attacker gets to it is a
+finding that has not been recognised yet.
