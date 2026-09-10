@@ -5512,3 +5512,260 @@ and the case insensitive scheme. No other line of `README.md` changes.
 * **D**: AMENDMENT 11, the release checks re-run against the rebuilt 1.10.2.
 
 No merge, no tag, no push, no upload.
+
+# AMENDMENT 10
+
+Date: 2026-09-10
+Branch: `v1.10.2-jwt-and-audit`.
+Measured against the T1 to T8 predictions frozen at `f19f31c` before any
+adapter code was written.
+
+Three of the eight were defective and one section of the freeze states a fact
+about its own measurement that is wrong. A10.1 to A10.4 are the amendments, and
+the first three of them were written and dated BEFORE commit B was made, for the
+reason A8.1 gave: an expectation quietly rewritten to match what happened is not
+a measurement of anything. A10.4 could not have been written earlier, because
+what it corrects only became visible when the same script was run twice against
+two different copies of the library.
+
+## A10.1 T7 amended: the entry counts its own findings and there are now three
+
+T7 predicted the `### Security` section gaining a third bullet and said nothing
+about the two sentences directly above it that count the findings. The
+`[1.10.2]` entry opens "Two findings, one from each direction" and its second
+paragraph opens "The two are the same shape of mistake in different places". A
+third bullet under an entry that says there are two is an entry that contradicts
+itself on its first line.
+
+The count is not a formality here, because the framing is load bearing: the
+opening sentence attributes one finding to the external reviewer's recheck and
+one to a pre-release check against the published 1.10.1 wheel, and J3 came from
+neither. It came from this branch's own release session, which measured the
+behavior, reasoned about it and filed it as a limit, and then from a rereading
+of that reasoning. That is a third direction and the entry has to say so, or
+the credit line for the second finding silently acquires a third.
+
+**T7 as amended:** the preamble moves from two findings to three, the second
+paragraph's "The two are the same shape of mistake" becomes "The three", and the
+sentence naming where each came from gains J3's origin in those words: measured
+by the release session itself and written down as a documented limit rather than
+recognised as a gap. Both existing credit phrases stay verbatim and no new
+credit phrase is invented, which is what T7 predicted and is unchanged.
+
+## A10.2 T8 amended: the README sentence that enumerates the engine cases
+
+T8 predicted five figures in the environments paragraph and the HTTP identity
+paragraph stating D6. It missed that the same paragraph does not only count the
+engine cases, it says what they cover: "both spellings of a denied deferral
+through `confirm_execution`, and the verified, unverified, wrong key, expired
+and no key states of bearer identity over both HTTP adapters and both flask
+entry points". That enumeration was exhaustive over 16 cases and is not
+exhaustive over 27.
+
+Moving a number from 16 to 27 while leaving a list that names five states would
+produce the one failure mode this document exists to catch: a figure that
+reconciles and a sentence that no longer describes what the figure counts.
+
+**T8 as amended:** the enumeration extends by the three shapes J3 adds, being an
+`Authorization` header that is absent, one whose scheme is spelled in another
+case, and one whose scheme is not bearer at all, plus the refusal of a
+configured key alongside a disabled token path. The five figures of T8 are
+unchanged and still have to reconcile.
+
+## A10.3 T8 amended again: the Versions row summarises the release, not the commit
+
+T8 said the 1.10.2 Versions row "reads 1746" and predicted no other change to
+it. The row's other half is a one line summary of what the release contains, and
+after this commit it contains something the summary does not mention: that a
+configured key refuses a request presenting no token at all, which is the half
+of J3 that needs no forged token and no unusual spelling.
+
+The Versions table is the first place a reader looks to decide whether a release
+affects them, and a deployment that configures `jwt_key` is affected by exactly
+that sentence and by nothing else in this fix.
+
+**T8 as amended:** the 1.10.2 Versions row reads 1746 AND its highlights text
+gains the `jwt_required` refusal. Every other line of `README.md` outside the
+environments and HTTP identity paragraphs is unchanged, which is the part of T8
+that stands.
+
+## A10.4 Q3.2 was measured against the built wheel, not against the checkout
+
+Q3.2 says the reproduction ran "against `/tmp/al18-extras` whose `agentlock` is
+the checkout". That was true when the 1.10.2 FREEZE wrote the same sentence and
+it stopped being true in AMENDMENT 9, which installed the built 1.10.2 wheel
+into that environment. A9.5 records the reinstall and explains why the suite is
+unaffected by it: pytest puts the repository root ahead of site packages, so
+`pytest` from the checkout imports the checkout. A script run from `/tmp` has no
+such rootdir insertion and imports site packages.
+
+Measured, which is how this surfaced. `/tmp/al18-extras/bin/python` run from
+`/tmp` resolves:
+
+```
+/tmp/al18-extras/lib/python3.14/site-packages/agentlock/__init__.py
+```
+
+so `/tmp/al1102_j3_repro.py` at STEP 0 exercised the 1.10.2 wheel as built, and
+its eight OPEN probes are a statement about the artifact sitting in `dist/`
+rather than about the working tree. The same script run with the checkout ahead
+of site packages, after the fix, reports every probe CLOSED.
+
+Nothing measured is retracted. If anything the STEP 0 reproduction is worth more
+than the freeze claimed for it, because it says the finding is in the artifact
+the maintainer was about to publish and not merely in a branch. What is
+corrected is the attribution of the environment.
+
+**Q3.2 as corrected:** the STEP 0 reproduction ran against the 1.10.2 wheel
+installed into `/tmp/al18-extras`, which is the artifact in `dist/`. The
+post-fix run of the same script names its import path explicitly, and the
+definitive post-fix run is STEP 4's, against a freshly built wheel in a venv
+that holds nothing else.
+
+## A10.5 Result table
+
+| # | Predicted | Measured | Verdict |
+|---|-----------|----------|---------|
+| T1 | the nine xfails pass with their markers removed, neither guard moves, `TestJwtAndAudit` holds exactly 27 cases, 1746 passed and 9 skipped in the extras environment and 1685 passed and 70 skipped in the checkout venv, 0 failed and 0 xfailed in both | `27 passed, 103 deselected`; `1746 passed, 9 skipped, 47 warnings in 3.65s`; `1685 passed, 70 skipped, 46 warnings in 3.48s` | MET |
+| T2 | `/tmp/al1102_j3_repro.py` reports all 12 probes CLOSED, 0 OPEN, exit 0, with A at 401 `jwt_required`, B at 200, C at 401 `jwt_invalid`, D at 401 `jwt_required` and the two controls unmoved | 12 CLOSED, `OPEN probes: 0`, exit 0, against the checkout named explicitly per A10.4; the four reasons are the four the tests pin | MET |
+| T3 | nothing refused at `050afc5` becomes allowed; `al1102_jwt_repro.py` and `al1102_jwt_verified.py` still exit 0, probe G unmoved | both exit 0 with 0 OPEN; probe G is `403 insufficient_role` on both adapters, unchanged. The two red pass scripts run against the rebuilt wheel and are reported in AMENDMENT 11 | MET so far |
+| T4 | both oracles pass in full, 65 and 31, 96 between them, 0 failed and 0 xfailed, neither edited, the second still reconstructing to W3.1's digest | `96 passed, 16 warnings in 0.47s`; deleting the two guard lines reconstructs `74e924251eebf8887e478adba59c3cb1bc1432675942118bac79382ea85c6aed`, which is W3.1's | MET |
+| T5 | mypy 0 errors, ruff clean with no new ignore, corpus grep 0, hygiene 0, 0, 1, 0, 0 em dashes on added lines and only the declared double hyphen forms | `Success: no issues found in 34 source files`; `All checks passed!` with `per-file-ignores` untouched; hygiene `0`, `0`, `1`, `0` with the em dash still `docs/PREDICTIONS_v18_recipient.md`; 0 em dashes on 971 added lines and 7 double hyphen lines, 6 the standing flag and 1 the house comment rule | MET |
+| T6 | commit B is exactly five files, no existing test case edited, no schema field, version stays 1.10.2 | commit B is `CHANGELOG.md`, `README.md`, both adapters and `tests/test_v110_hardening.py`, whose diff is 18 deletions and 0 insertions, being the nine two line markers; `pyproject.toml`, `agentlock/__init__.py` and `CITATION.cff` untouched at 1.10.2 | MET |
+| T7 | CHANGELOG gains a third Security bullet, the Not additive section gains the consequence for the configure branch, the scheme spelling limit is removed and the `exp` limit is not, the preamble figures move to 1746 and 9 and 1685 and 70 with the skips restated, both credit phrases stay verbatim and no new one is invented | all present; the preamble also moves from two findings to three per A10.1; `### Limits` holds one bullet, the `exp` one, byte identical to what commit `9497b0a` wrote; both credit phrases still appear twice each | AMENDED, then MET |
+| T8 | README Versions row reads 1746, the environments paragraph reads 1746, 9, 58, 27, 1685, 70 and 25 of the 70 new splitting 9 and 16, the HTTP identity paragraph states D6, no other line changes | every figure present and reconciling: 1688 plus 58 is 1746, 31 plus 27 is 58, 16 plus 11 is 27, 45 plus 25 is 70, 9 plus 16 is 25; the enumeration extended per A10.2 and the Versions row's highlights per A10.3; no other line of the file changed | AMENDED, then MET |
+
+## A10.6 What the fix actually changed, stated for the record
+
+The shape of it is that `_verify_jwt_claims` stopped having a third answer.
+
+Through 1.10.2 as built it returned `dict | None`, and `None` was the answer
+that meant "no bearer token, which is not a failure". Both adapters treated
+that answer as permission to read the identity headers. It now returns `dict`
+and raises for everything else, which is why the fix is small in the call sites
+and total in effect: there is no longer a value the adapters can receive that
+routes a request onto the header path under a configured key.
+
+`_JwtInvalidError` gained a base class, `_JwtIdentityError`, carrying a
+`reason` attribute, and a sibling, `_JwtRequiredError`, whose reason is
+`jwt_required`. Both call sites in each adapter catch the base and pass
+`exc.reason` into the 401 body, which now takes the reason as an argument and
+writes a different explanation and suggestion for each. Nothing else about the
+401 shape moved: it is still `agentlock_denied` with a `detail` object holding
+`status`, `reason`, `detail` and `suggestion`, so the existing `jwt_invalid`
+assertions are untouched and pass unchanged.
+
+The scheme match went from `authorization.startswith("Bearer ")` to a
+`partition(" ")` and a casefolded comparison against `bearer`, which is what
+RFC 7235 asks for. An empty `Authorization` header and one carrying another
+scheme now raise `_JwtRequiredError` with different messages, one saying no
+bearer token was presented and the other naming the scheme that was.
+
+Three things in that list are load bearing and easy to miss.
+
+The truthiness test on `claims.get("sub")` is gone from all three call sites.
+It was the last narrow window in which a request under a configured key could
+reach the identity headers, needing only a verified token with no subject in it,
+and per D6b a verified token is now the identity even when the identity it
+carries is empty. What that produces is an empty user id and an ordinary
+`not_authenticated` denial from the gate, which is a 403 rather than a 401, and
+that is correct: the token was fine and the identity in it was not.
+
+The empty bearer token stayed `jwt_invalid` rather than becoming
+`jwt_required`, per D6b again. `Bearer` with nothing after it is a bearer
+scheme carrying a bad credential, not an absent credential.
+
+And `require_agentlock` refuses `use_jwt=False` alongside a key, per D6a,
+before it imports the verification backend, so that combination fails with a
+`ValueError` naming both arguments rather than with an unrelated
+`IntegrationUnsupportedError` on an installation without `python-jose`.
+
+What did not change is the entire unconfigured path. With `jwt_key` unset, both
+adapters read the same two headers in the same order and ignore the
+`Authorization` header exactly as 1.10.2 left them, which is what the two
+guards in the test class exist to say and what probe G of
+`/tmp/al1102_jwt_verified.py` measures from outside.
+
+## A10.7 Final measurements
+
+Suite, both environments:
+
+```
+/tmp/al18-extras   1746 passed, 9 skipped, 47 warnings in 3.65s
+checkout venv      1685 passed, 70 skipped, 46 warnings in 3.48s
+```
+
+Oracles alone, `/tmp/al18-extras`:
+
+```
+tests/test_v110_system_review.py + tests/test_v1101_system_followup.py
+96 passed, 16 warnings in 0.47s
+```
+
+`TestJwtAndAudit` alone: `27 passed, 103 deselected, 1 warning in 0.25s`.
+
+Types, lint and style:
+
+```
+mypy agentlock/ --ignore-missing-imports   Success: no issues found in 34 source files
+ruff check .                               All checks passed!
+corpus grep over the diff                  0
+hygiene, ~/agentlock-hygiene.sh            0, 0, 1, 0
+em dashes on 971 added lines               0
+ASCII double hyphen lines, A and B         7: 6 the standing flag, 1 the house comment rule
+ASCII double hyphen lines, this amendment  2: 1 the standing flag, 1 the A10.5 table separator
+```
+
+Both counts are measured separately, per A9.2, because a declaration written
+over one half of a document keeps missing the half that does not exist yet.
+This amendment's own added lines carry 0 em dashes.
+
+Reproduction scripts against the fixed checkout, run from `/tmp` with the
+repository ahead of site packages, the import path read out rather than assumed:
+
+```
+/home/n1trolab/agentlock-v1.4/agentlock/__init__.py
+/tmp/al1102_j3_repro.py        12 probes CLOSED, 0 OPEN, exit 0
+/tmp/al1102_jwt_repro.py       both adapters CLOSED, 0 OPEN, exit 0
+/tmp/al1102_jwt_verified.py    all 10 probes CLOSED, 0 OPEN, exit 0
+```
+
+The J3 probes, verbatim:
+
+```
+A no Authorization header, admin headers       fastapi  status=401 ran=[] -> CLOSED
+B lowercase bearer, signed token, guest hdrs   fastapi  status=200 ran=['ADMIN_ACTION'] -> CLOSED
+C lowercase bearer, forged token, admin hdrs   fastapi  status=401 ran=[] -> CLOSED
+D Basic scheme, admin headers                  fastapi  status=401 ran=[] -> CLOSED
+E control Bearer forged token, admin headers   fastapi  status=401 ran=[] -> CLOSED
+F control Bearer signed token, guest headers   fastapi  status=200 ran=['ADMIN_ACTION'] -> CLOSED
+A no Authorization header, admin headers       flask    status=401 ran=[] -> CLOSED
+B lowercase bearer, signed token, guest hdrs   flask    status=200 ran=['ADMIN_ACTION'] -> CLOSED
+C lowercase bearer, forged token, admin hdrs   flask    status=401 ran=[] -> CLOSED
+D Basic scheme, admin headers                  flask    status=401 ran=[] -> CLOSED
+E control Bearer forged token, admin headers   flask    status=401 ran=[] -> CLOSED
+F control Bearer signed token, guest headers   flask    status=200 ran=['ADMIN_ACTION'] -> CLOSED
+OPEN probes: 0
+```
+
+Probe B moved from 403 to 200 and probes A, C and D from 200 to 401, which is
+the fix in one table: a genuine token stopped being discarded for its spelling
+and three ways of presenting no token stopped being identified by header.
+
+The fix commit is ``aa887cf2660c9b904b1f55d3e38b7f83072862f8``.
+
+`dist/` still holds the artifacts AMENDMENT 9 built, and per A10.4 those are
+the artifacts the STEP 0 reproduction opened eight probes against. They are
+stale as of this commit and STEP 4 rebuilds them.
+
+## A10.8 What this session has not done at this point
+
+No merge, no tag, no push, and no upload. The branch is
+`v1.10.2-jwt-and-audit` and it is not merged to `main`. No schema field was
+added or altered, no engine file outside the two HTTP adapters was touched, and
+the version is still 1.10.2 in both places it is written, because 1.10.2 is
+unreleased and this is what it now contains rather than something that follows
+it.
+
+The release checks are re-run next, against a wheel rebuilt from this commit,
+and AMENDMENT 11 carries them.
