@@ -106,10 +106,14 @@ class TestTokenStore:
         token = store.issue("tool", "user", "role", parameters=params)
         assert token.parameters_hash == ExecutionToken.hash_parameters(params)
 
-    def test_issue_without_parameters_empty_hash(self):
+    def test_issue_without_parameters_binds_the_empty_call(self):
+        """v1.9, G2: a token issued for a call carrying no parameters is bound
+        to the empty call, not to any call at all.  Through 1.8.0 this stored
+        an empty hash, and an empty hash skipped the comparison."""
         store = TokenStore()
         token = store.issue("tool", "user", "role")
-        assert token.parameters_hash == ""
+        assert token.parameters_hash == ExecutionToken.hash_parameters({})
+        assert token.parameters_hash != ""
 
     def test_validate_and_consume_succeeds(self):
         store = TokenStore()

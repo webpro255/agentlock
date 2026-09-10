@@ -283,6 +283,11 @@ declaration that weakens gating: that one requires a human.
   the user already supplied plants nothing, so there is nothing for a
   provenance match to fire on. The session write-gate covers the gated
   case; parameter lineage does not.
+- Guessing which call you meant. An execution token is bound to the
+  parameters the gate authorized, the empty call included. As of 1.9,
+  `execute()` must be handed the same parameters `authorize()` saw or it
+  raises `TokenInvalidError`; the gate has no way to tell which of two
+  differing parameter sets was the honest one, so it refuses both.
 - Telling a legitimate quotation from an attack. A summary that genuinely
   quotes an attacker-supplied address really does carry that value, so it
   is denied. Deciding it was benign would mean judging what the value is
@@ -309,6 +314,7 @@ changelog. That is how we intend to keep working.
 
 | version | highlights | tests |
 |---------|-----------|-------|
+| 1.9.0   | enforcement completeness: all call arguments reach the gate, tokens bind the empty call, MCP wrapper fails closed and supports both SDK majors | 1503 with the `crypto` and `mcp` extras, 9 skipped |
 | 1.8.0   | recipient policy enforcement at pipeline Step 8; declared recipient parameter read from the trusted permission block; recipient sets | 1495 with the `crypto` and `mcp` extras, 8 skipped |
 | 1.7.0   | cross-hop provenance linking; parent attribution at ingestion by whole-content carriage; taint-reachability walk at decision time | 1418 with optional extras, 7 skipped |
 | 1.6.0   | value-identity normalization; encoded-form attribution, bare and composite, base64/hex/natural-URL, zero decode | 1364 (1351 without optional extras) |
@@ -327,7 +333,25 @@ install additionally skips the same 13 optional-extra tests. For 1.8.0 it
 is 1495 passing and 8 skipped, the 8 being those 7 baselines plus the
 AutoGen integration test, which needs the `autogen` extra and so runs
 only on Python below 3.14; a bare install runs 1479 passed and 24
-skipped. Nothing fails in any of these environments.
+skipped. For 1.9.0 it is 1503 passing and 9 skipped under `mcp 2.x`, the
+9 being those 8 plus the mcp 1.x test, which selects on the installed
+SDK major; under `mcp 1.x` it is 1502 passing and 10 skipped, the two 2.x
+tests taking the place of the 1.x one. Nothing fails in any of these
+environments.
+
+The 1.9.0 argument binding covers the engine's own decorators and in-repo
+integrations, which is the whole of what that release changes. The standalone
+adapters ship from their own repositories and are updated separately. At their
+current releases, `crewai-agentlock` 0.2.0 and `langchain-agentlock` 0.1.0
+authorize keyword arguments only, and of those two only `crewai-agentlock`
+carries positional arguments past the gate into the wrapped call;
+`mcp-agentlock` 0.2.1, `openai-agentlock` 0.1.0 and `openclaw-agentlock` 0.1.0
+hand the gate the same argument mapping they hand the tool and have no
+positional route. No standalone adapter applies the wrapped function's
+defaults, so a parameter the caller omits and the function defaults is not seen
+by the gate in any of them. The same release makes an execution token bind the
+empty call: the parameters passed to `execute()` must be the parameters passed
+to `authorize()`, and `None` and `{}` are the same call.
 
 Full feature history:
 [v1.1](docs/history.md#v11-memory--context-permissions),
@@ -358,7 +382,9 @@ matches the mechanism you rely on:
 > Where Recovery Is Sound.* Zenodo.
 > https://doi.org/10.5281/zenodo.21363120
 
-Software archive (all versions): https://doi.org/10.5281/zenodo.22681594. This release: https://doi.org/10.5281/zenodo.22681595.
+Software archive (all versions): https://doi.org/10.5281/zenodo.22681594.
+The version DOI for each release is minted at publication and added to
+`CITATION.cff` and to this line in a follow-up commit.
 
 ```bibtex
 @misc{grice2026agentlock,

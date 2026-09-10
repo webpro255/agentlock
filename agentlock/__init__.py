@@ -34,7 +34,7 @@ Copyright 2026 David Grice
 SPDX-License-Identifier: AGPL-3.0-or-later
 """
 
-__version__ = "1.8.0"
+__version__ = "1.9.0"
 
 from agentlock.action_class_audit import (
     ActionClassAudit,
@@ -53,6 +53,7 @@ from agentlock.audit import (
     InMemoryAuditBackend,
 )
 from agentlock.auth_providers import AuthProvider, StaticAuthProvider
+from agentlock.binding import bind_call_parameters, ensure_bindable
 from agentlock.chain import GENESIS_HASH, ChainedContextEntry, ContextChain
 from agentlock.context import ContextProvenance, ContextState, ContextTracker
 from agentlock.decorators import agentlock
@@ -61,10 +62,12 @@ from agentlock.exceptions import (
     AgentLockError,
     ApprovalRequiredError,
     AuthenticationRequiredError,
+    BindingError,
     ConfigurationError,
     DeferredError,
     DeniedError,
     InsufficientRoleError,
+    IntegrationUnsupportedError,
     MemoryConfirmationRequiredError,
     MemoryProhibitedContentError,
     MemoryReadDeniedError,
@@ -304,4 +307,9 @@ __all__ = [
     "TokenReplayedError",
     "SchemaValidationError",
     "ConfigurationError",
+    "BindingError",
+    "IntegrationUnsupportedError",
+    # Argument binding (v1.9)
+    "bind_call_parameters",
+    "ensure_bindable",
 ]

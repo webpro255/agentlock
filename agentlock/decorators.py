@@ -30,6 +30,7 @@ import time
 from collections.abc import Callable
 from typing import Any, TypeVar
 
+from agentlock.binding import bind_call_parameters, ensure_bindable
 from agentlock.gate import AuthorizationGate
 from agentlock.schema import AgentLockPermissions
 
@@ -81,6 +82,12 @@ def agentlock(
     """
 
     def decorator(func: F) -> F:
+        # Fail closed at wrap time.  A callable whose signature cannot be read
+        # cannot have its arguments bound, so the gate would only ever see the
+        # part of each call the caller passed by keyword.  Refuse to build the
+        # wrapper rather than ship one that gates a subset.
+        ensure_bindable(func)
+
         tool_name = name or func.__name__
 
         # Build permissions
@@ -122,12 +129,18 @@ def agentlock(
                 kwargs.pop("_session_id", "")
                 meta = kwargs.pop("_metadata", None)
 
+                # G1: the gate is shown the whole call, positionals and
+                # defaults included, not just what arrived by keyword.  The
+                # reserved auth kwargs are removed first so they are never
+                # part of what is authorized.
+                params, bound = bind_call_parameters(func, args, kwargs)
+
                 # Authorize through the gate
                 auth_result = gate.authorize(
                     tool_name,
                     user_id=user_id,
                     role=role,
-                    parameters=kwargs,
+                    parameters=params,
                     metadata=meta,
                 )
                 auth_result.raise_if_denied()
@@ -145,17 +158,17 @@ def agentlock(
                 attempt = gate.begin_execution(
                     tool_name,
                     token_id=auth_result.token.token_id,
-                    parameters=kwargs,
+                    parameters=params,
                 )
                 started = time.time()
                 try:
-                    captured_result = await func(*args, **kwargs)
+                    captured_result = await func(*bound.args, **bound.kwargs)
                 except BaseException as exc:
                     gate.confirm_execution(
                         tool_name,
                         status="failed",
                         token_id=auth_result.token.token_id,
-                        parameters=kwargs,
+                        parameters=params,
                         duration_ms=(time.time() - started) * 1000,
                         error_type=type(exc).__name__,
                         attempt_audit_id=(attempt.audit_id if attempt else ""),
@@ -165,7 +178,7 @@ def agentlock(
                     tool_name,
                     status="succeeded",
                     token_id=auth_result.token.token_id,
-                    parameters=kwargs,
+                    parameters=params,
                     duration_ms=(time.time() - started) * 1000,
                     attempt_audit_id=(attempt.audit_id if attempt else ""),
                 )
@@ -176,13 +189,13 @@ def agentlock(
                 if redacted and redacted.was_redacted:
                     # Consume token and return redacted output
                     gate.token_store.validate_and_consume(
-                        auth_result.token.token_id, tool_name, kwargs,
+                        auth_result.token.token_id, tool_name, params,
                     )
                     return redacted.redacted
 
                 # Consume token for audit trail
                 gate.token_store.validate_and_consume(
-                    auth_result.token.token_id, tool_name, kwargs,
+                    auth_result.token.token_id, tool_name, params,
                 )
                 return captured_result
 
@@ -199,12 +212,17 @@ def agentlock(
                 kwargs.pop("_session_id", "")
                 meta = kwargs.pop("_metadata", None)
 
+                # G1, as above.  The gate is handed the bound call; the
+                # function is invoked from the same binding, so what was
+                # authorized and what runs cannot drift apart.
+                params, bound = bind_call_parameters(func, args, kwargs)
+
                 return gate.call(
                     tool_name,
-                    lambda **p: func(*args, **p),
+                    lambda **_p: func(*bound.args, **bound.kwargs),
                     user_id=user_id,
                     role=role,
-                    parameters=kwargs,
+                    parameters=params,
                     metadata=meta,
                 )
 

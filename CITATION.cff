@@ -7,15 +7,12 @@ authors:
   - family-names: Grice
     given-names: David
     orcid: "https://orcid.org/0009-0005-5388-123X"
-version: 1.8.0
-doi: 10.5281/zenodo.22681595
+version: 1.9.0
+doi: 10.5281/zenodo.22681594
 identifiers:
   - type: doi
     value: 10.5281/zenodo.22681594
     description: "Concept DOI, resolves to the latest version"
-  - type: doi
-    value: 10.5281/zenodo.22681595
-    description: "Version DOI for 1.8.0"
 date-released: 2026-09-09
 license: AGPL-3.0
 repository-code: "https://github.com/webpro255/agentlock"
