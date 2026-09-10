@@ -491,3 +491,149 @@ It is not a description of a fix. Section 2 is the engine at `d56122d`, measured
 Section 3 is what was decided. Section 4 is where those decisions were wrong,
 recorded before the build so the record cannot be tidied afterwards. Section 5
 is what the build is scored against. Everything after this line is append only.
+
+---
+
+## AMENDMENT 1 (2026-09-09): v1.9.0 built, every prediction matched
+
+Measured on `v1.9-enforcement-completeness` at `71100d7 fix: bind all call
+arguments, always compare token hash, fail closed on unsupported MCP servers,
+support mcp 2.x`, which is the build commit. Every environment was reinstalled
+with `pip install -e` against the built tree before measuring.
+
+### Scoreboard
+
+| Prediction | Verdict | Evidence |
+|---|---|---|
+| U1 | MATCH | All seven xfail markers removed. No test reports XPASS or failure in any environment. Every X test passes wherever it is not skipped: 5 of 9 in the checkout (four mcp guarded skips), 8 of 9 under mcp 2.2.0 (X6 skips), 7 of 9 under mcp 1.30.0 (X5 and X9 skip), 8 of 9 under mcp 2.2.0 with pyautogen (X6 skips). Per test output below. |
+| U2 | MATCH | `1498 passed, 14 skipped, 0 failed`. Predicted 1498 passed and 13 skipped excluding X9, which Section 4's D2 declared would add one skip here. 14 is 13 plus X9. |
+| U3 | MATCH | `/tmp/al18-extras`: `1503 passed, 9 skipped`, predicted `1502 passed, 9 skipped` plus one X9 pass. `/tmp/al19-mcp1`: `1502 passed, 10 skipped`, predicted `1502 passed, 9 skipped` plus one X9 skip. `/tmp/al18-probe313`: `1504 passed, 8 skipped`, predicted `1503 passed, 8 skipped` plus one X9 pass. Every difference from the predicted figure is exactly X9, in the direction D2 stated in advance. 0 failed in all three. |
+| U4 | MATCH | `Success: no issues found in 34 source files`, down from `Found 4 errors in 2 files (checked 33 source files)`. The extra source file is `agentlock/binding.py`. |
+| U5 | MATCH | Exactly one existing test edited, the one predicted. Diff below. |
+| U6 | MATCH | `git show --stat 71100d7` lists 14 paths, the 13 predicted plus `agentlock/binding.py` as the new file the prediction named. Nothing else. |
+| U7 | MATCH | `ruff check .` reports `All checks passed!`. `grep -ri agentshield agentlock tests schema` returns 0. |
+
+### The four suite lines
+
+```
+$ python3 -m pytest -q                              # checkout, CPython 3.14.6, no mcp
+1498 passed, 14 skipped, 16 warnings in 2.99s
+
+$ /tmp/al18-extras/bin/python -m pytest -q          # CPython 3.14.6, mcp 2.2.0
+1503 passed, 9 skipped, 16 warnings in 3.17s
+
+$ /tmp/al19-mcp1/bin/python -m pytest -q            # CPython 3.13.14, mcp 1.30.0
+1502 passed, 10 skipped in 2.80s
+
+$ /tmp/al18-probe313/bin/python -m pytest -q        # CPython 3.13.14, mcp 2.2.0, pyautogen 0.9.0
+1504 passed, 8 skipped in 3.11s
+```
+
+### Per test, after the build
+
+```
+$ python3 -m pytest tests/test_v19_enforcement_gaps.py -q -rs   # checkout, no mcp
+SKIPPED [1] tests/test_v19_enforcement_gaps.py:270: needs the mcp 2.x SDK
+SKIPPED [1] tests/test_v19_enforcement_gaps.py:329: needs the mcp 1.x SDK
+SKIPPED [1] tests/test_v19_enforcement_gaps.py:386: needs the mcp 2.x SDK
+SKIPPED [1] tests/test_v19_enforcement_gaps.py:447: could not import 'mcp': No module named 'mcp'
+========================= 5 passed, 4 skipped in 0.01s =========================
+
+$ /tmp/al18-extras/bin/python -m pytest tests/test_v19_enforcement_gaps.py -q -rs   # mcp 2.2.0
+SKIPPED [1] tests/test_v19_enforcement_gaps.py:329: needs the mcp 1.x SDK
+========================= 8 passed, 1 skipped in 0.29s =========================
+
+$ /tmp/al19-mcp1/bin/python -m pytest tests/test_v19_enforcement_gaps.py -q -rs   # mcp 1.30.0
+SKIPPED [1] tests/test_v19_enforcement_gaps.py:270: needs the mcp 2.x SDK
+SKIPPED [1] tests/test_v19_enforcement_gaps.py:386: needs the mcp 2.x SDK
+========================= 7 passed, 2 skipped in 0.17s =========================
+
+$ /tmp/al18-probe313/bin/python -m pytest tests/test_v19_enforcement_gaps.py -q -rs   # mcp 2.2.0 + pyautogen 0.9.0
+SKIPPED [1] tests/test_v19_enforcement_gaps.py:329: needs the mcp 1.x SDK
+========================= 8 passed, 1 skipped in 0.29s =========================
+```
+
+X3, the AutoGen reproduction, passes in `/tmp/al18-probe313` with a real
+`pyautogen 0.9.0` present, not only under the monkeypatched import check.
+
+### U4 verbatim
+
+```
+$ /tmp/al18-extras/bin/mypy agentlock/ --ignore-missing-imports
+Success: no issues found in 34 source files
+```
+
+### U5 verbatim
+
+One edit, the predicted one:
+
+```diff
+--- a/tests/test_token.py
++++ b/tests/test_token.py
+@@ -106,10 +106,14 @@ class TestTokenStore:
+         token = store.issue("tool", "user", "role", parameters=params)
+         assert token.parameters_hash == ExecutionToken.hash_parameters(params)
+ 
+-    def test_issue_without_parameters_empty_hash(self):
++    def test_issue_without_parameters_binds_the_empty_call(self):
++        """v1.9, G2: a token issued for a call carrying no parameters is bound
++        to the empty call, not to any call at all.  Through 1.8.0 this stored
++        an empty hash, and an empty hash skipped the comparison."""
+         store = TokenStore()
+         token = store.issue("tool", "user", "role")
+-        assert token.parameters_hash == ""
++        assert token.parameters_hash == ExecutionToken.hash_parameters({})
++        assert token.parameters_hash != ""
+```
+
+No test constructing `AgentLockMCPServer` over an object lacking `call_tool`
+existed, as predicted, so neither existing MCP test was touched. Both keep using
+a `FakeServer` that defines `call_tool` and both stay on the 1.x branch.
+
+### U6 verbatim
+
+```
+$ git show --stat 71100d7 --name-only --format=
+CHANGELOG.md
+README.md
+agentlock/__init__.py
+agentlock/binding.py
+agentlock/decorators.py
+agentlock/exceptions.py
+agentlock/gate.py
+agentlock/integrations/autogen.py
+agentlock/integrations/mcp.py
+agentlock/policy.py
+agentlock/token.py
+pyproject.toml
+tests/test_token.py
+tests/test_v19_enforcement_gaps.py
+```
+
+### D2 closed
+
+The mcp 2.x constructor route, recorded as a defect in V4 before the build, is
+covered. `Server(on_call_tool=...)` writes the handler registry directly, so the
+handler is in place before `AgentLockMCPServer` is constructed and the wrapping
+of `add_request_handler` alone would never see it. The hook now also
+re-registers whatever is already bound to `tools/call`, wrapped. X9 measures it
+against the real SDK: the constructor-registered handler denies a hostile
+recipient and never runs, and runs for a known contact with the reserved keys
+stripped. X9 passes in both mcp 2.2.0 environments and skips in the other two.
+
+### Out of scope, reported and not fixed
+
+`CITATION.cff:10` reads `version: 1.8.0` and `:18` describes a version DOI for
+1.8.0. Both are now behind `pyproject.toml`. They are not touched here: U6 froze
+the file list, and a version DOI cannot be written by this branch because it is
+minted at release. `CITATION.cff` was written by the `4a6a7e4 release: v1.8.0`
+commit and belongs to the same manual step. Naming it here so the release step
+does not miss it.
+
+### What this release is not
+
+Additive. G2 and G3 change behavior on paths that were failing open, which is
+recorded in the CHANGELOG under its own heading rather than left for a reader to
+infer. A deployment that authorized one call and executed another, or that
+relied on an MCP wrapper which was in fact installing no hook, will see denials
+where it previously saw execution. That is the fix, not a side effect of it.
