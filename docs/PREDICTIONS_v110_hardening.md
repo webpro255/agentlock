@@ -3157,3 +3157,194 @@ three G4 forms** and reproduces the X1 control table otherwise.
 * **C**: AMENDMENT 6, the measured results against X4.
 
 No merge, no tag, no push, no upload.
+
+# AMENDMENT 6
+
+Date: 2026-09-10
+Branch: `v1.10.1-recheck`.
+Measured against the X4 predictions frozen at `6fb91bd` before any code was
+written.
+
+## A6.1 Result table
+
+| # | Predicted | Measured | Verdict |
+|---|---|---|---|
+| Y1a | the three G4 cases pass with their markers removed, nothing else in the class changes outcome | `13 passed` in the class, `3 failed` first with the markers still on, which is a strict xfail turning green | MET |
+| Y1b | `/tmp/al18-extras`: 1688 passed, 9 skipped, 0 failed, 0 xfailed | `1688 passed, 9 skipped, 44 warnings in 3.48s` | MET |
+| Y1c | checkout venv: 1652 passed, 45 skipped, 0 failed, 0 xfailed | `1652 passed, 45 skipped, 43 warnings in 3.36s` | MET |
+| Y2 | no value moves from blocked to allowed; the three G4 forms move from allowed to blocked | 86 decisions over 43 values and two allowlists: **0** loosenings, 11 tightenings, the three G4 forms among them | MET, qualified in A6.3 |
+| Y3a | mypy 0; ruff clean, no new `per-file-ignores` entry | `Success: no issues found in 34 source files`; `All checks passed!`; no entry added | MET |
+| Y3b | corpus grep 0; 0 em dashes on added lines; ASCII double hyphens limited to the two declared | 0; 0; one, the `--ignore-missing-imports` flag inside backticks that A2.5 declared | MET |
+| Y4 | files exactly R8 or a proper subset; no existing test edited | five files, all in R8; the only edit to an existing test file is the removal of the three-case `xfail` marker this arc added at `6fb91bd` | MET |
+| Y5 | the named controls hold, each for the reason X2.1 gives | all 13 cases in the class pass, and the X1 control table reproduces with the three G4 rows flipped and nothing else changed | MET |
+| Y6 | the two limits hold, their cases pass, and the docstring and CHANGELOG say so | link `uri` and `name` and the result `_meta` come back untouched in a result whose text block IS transformed, measured against real SDK models under `mcp 2.2.0`; both cases pass; both texts written | MET |
+| Y7 | CHANGELOG inside the existing entry, no new heading; README changes exactly the four count figures that move | CHANGELOG as predicted; README moved **six** figures, not four | **MISMATCH, prediction defect, amended in A6.2** |
+| Y8 | rebuild: twine PASSED both, METADATA Version 1.10.1, both digests different, the rebuilt wheel blocks all three G4 forms | both `PASSED`, `Version: 1.10.1`, both digests differ from X3.1, and all three block from a fresh venv holding only the wheel | MET |
+
+The one mismatch is a defect in the prediction, not in the engine, and it is
+amended below rather than worked around.
+
+## A6.2 Y7 amended: the environments paragraph carries six figures, not four
+
+Y7 named four figures in `README.md`: the Versions row's suite count, and in
+the environments paragraph the same count, the number of added tests, and the
+without `mcp` line's passing, skipped and new counts. The paragraph carries two
+more, and both had to move with the rest:
+
+* **the engine test count.** The paragraph splits the added tests into the 32
+  the reviewer appended to the oracle and the 27 engine tests, and 27 becomes
+  40 for the same reason 59 becomes 72.
+* **the split of the new skips.** The without `mcp` sentence says the new skips
+  are 10 oracle cases and 7 engine cases, and 7 becomes 9 because the two pass
+  through pins are guarded on `mcp`.
+
+Both are the same figure counted in a different place, which is exactly the
+kind of thing a prediction written from a paragraph's summary rather than from
+its every number misses. This is the same class of defect as A5.2 and A2.3.
+
+Amended: **`README.md` changes the Versions row's suite count and the six
+figures of the environments paragraph, and one clause naming what the new
+engine tests cover, and nothing else.** The clause was necessary because the
+paragraph does not only count the engine tests, it says what they are for, and
+adding 13 cases to a list of three subjects without naming the fourth would
+have left the sentence describing a smaller set than the number in front of it.
+
+The Versions row's highlights cell was left as it stands. It says the recipient
+restriction parses the whole value rather than its first address, which is
+still true, and the row is a one line summary of a release whose detail is in
+the CHANGELOG. That is a judgment call and it is recorded here rather than left
+for a reader to notice.
+
+## A6.3 Y2 qualified: three degenerate forms it did not name
+
+Y2 predicted no loosenings and named the three G4 forms as the values that
+would move from allowed to blocked. Zero values loosened, which is the half
+that matters. Eleven tightened, across 43 values and two allowlists, and three
+of the eleven are values Y2 did not name:
+
+```
+'@'                  ALLOWED -> BLOCKED
+'bob@'               ALLOWED -> BLOCKED
+'@company.test'      ALLOWED -> BLOCKED
+```
+
+Each carries an at sign and none parses as an address, so each blocks under
+rule 4 exactly as the three named forms do. They are not a separate behavior;
+they are the same rule reaching values that were never addresses in the first
+place but do carry the character that says they were meant to be. Through
+1.10.1 the pattern found nothing in them and returned them unchanged, so a
+field holding `bob@` reached the tool. The CHANGELOG says so, in the sentence
+about values that were never addresses.
+
+The other eight of the eleven are the three G4 forms counted once per
+allowlist, less the one that was already blocked under the second allowlist
+because `company.test` is not on it.
+
+## A6.4 What the fix actually changed, stated for the record
+
+One behavior, and it denies where 1.10.1 did not.
+
+**A recipient field is a recipient field if it contains an at sign.** Through
+1.10.1 the question was whether `_EMAIL_PATTERN` could find an address in it,
+and a value the pattern could not read was returned unchanged. That is why an
+address whose domain is spelled with a Cyrillic letter, an address literal in
+brackets, and an address with a second at sign after an allowed domain all
+passed a domain allowlist. All three are deliverable. Now the at sign puts the
+value on the strict path and every at sign bearing token has to full match one
+ASCII address whose domain is allowed, so an address the engine cannot read is
+refused instead of waved through. Values that passed before now block, and the
+list of them is A6.3 plus the three findings.
+
+Two things did NOT change, and both were checked rather than assumed. The
+display name form still sends, because whitespace separates the parts of one
+recipient and only the token carrying the at sign has to parse. A value with no
+at sign anywhere is still returned unchanged, which is what
+`TestRestrictDomain::test_no_email_in_field` pins and what keeps the action
+from having an opinion about fields that are not recipient lists.
+
+Nothing else changed. `agentlock/gate.py` is untouched, no schema field was
+added or altered, no denial reason was added, and the only change to
+`agentlock/integrations/mcp.py` is docstring text: R7 states two limits that
+were already the behavior, and states them so a reader finds the boundary
+instead of discovering it.
+
+## A6.5 Final measurements
+
+Suite, both environments:
+
+```
+/tmp/al18-extras   1688 passed, 9 skipped, 44 warnings in 3.48s
+checkout venv      1652 passed, 45 skipped, 43 warnings in 3.36s
+```
+
+Oracle alone, `/tmp/al18-extras`: `65 passed, 13 warnings in 0.43s`, with the
+file unedited since `e7eb8b9`.
+
+Types, lint and style:
+
+```
+mypy agentlock/ --ignore-missing-imports   Success: no issues found in 34 source files
+ruff check .                               All checks passed!
+corpus grep over the diff                  0
+em dashes on added lines                   0
+ASCII double hyphens on added lines        1, the flag A2.5 declared
+```
+
+Measured over the fix commit's diff, which is what Y3b is a prediction about.
+This amendment's own diff adds two more occurrences of the same declared flag,
+quoted back in the table above and in the block above, and one markdown table
+separator, which A5.2 already dealt with as a thing that is punctuation in a
+table rather than prose.
+
+Decision monotonicity, 43 recipient values from this document and the four test
+files, each decided under two allowlists, against the wheel at `cb583ac` and
+against the fixed engine:
+
+```
+total decisions            86
+blocked -> allowed          0
+allowed -> blocked         11
+```
+
+Rebuild after `rm -rf dist build`:
+
+```
+Successfully built agentlock-1.10.1.tar.gz and agentlock-1.10.1-py3-none-any.whl
+Checking dist/agentlock-1.10.1-py3-none-any.whl: PASSED
+Checking dist/agentlock-1.10.1.tar.gz: PASSED
+```
+
+METADATA, read out of the wheel at `agentlock-1.10.1.dist-info/METADATA`:
+
+```
+Metadata-Version: 2.4
+Name: agentlock
+Version: 1.10.1
+```
+
+Artifact digests, both different from X3.1 because the code changed under a
+version that has not been released:
+
+```
+16d2fd4e433f2b639054faff6aad56c76bb044f74a75f15ef4df7b76b92f16f5  dist/agentlock-1.10.1-py3-none-any.whl
+7262b5f9f77741674e69b527c7e1c416ebdad4818c1c31e92a9cce01ceb2eaa7  dist/agentlock-1.10.1.tar.gz
+```
+
+Fresh venv `/tmp/al1101-wheel`, holding only the rebuilt wheel with the
+`crypto`, `mcp`, `fastapi` and `flask` extras, exercised from outside the
+checkout so it cannot resolve the source tree: all three G4 forms block, the
+X1 control table reproduces otherwise, the two MCP pass throughs still pass
+through under real SDK models, and the oracle copied to `/tmp/al1101-oracle`
+runs `65 passed, 13 warnings in 0.51s`.
+
+The fix commit is ``7fef87e30cb396767e635c5b7c509d899529f050``.
+
+## A6.6 What this session did not do
+
+No merge, no tag, no push, and no upload. The branch is `v1.10.1-recheck` and
+it is not merged to `main`. No version was bumped, because 1.10.1 is unreleased
+and this folds into it, so `agentlock/__init__.py`, `pyproject.toml` and
+`CITATION.cff` are untouched, and so are `tests/test_modify.py` and
+`tests/test_v110_system_review.py`. `dist/` holds the two artifacts digested
+above and is left in place for the maintainer; publishing them, and removing
+them afterwards, is a manual step this session does not take.
