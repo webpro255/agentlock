@@ -637,3 +637,135 @@ recorded in the CHANGELOG under its own heading rather than left for a reader to
 infer. A deployment that authorized one call and executed another, or that
 relied on an MCP wrapper which was in fact installing no hook, will see denials
 where it previously saw execution. That is the fix, not a side effect of it.
+
+---
+
+## RELEASE FREEZE (2026-09-09): predictions for the v1.9.0 release commit
+
+Frozen before any release edit exists. Repo at `ce7d5f3 docs: AMENDMENT 1,
+v1.9.0 built and matched`, working tree clean. This is the release session: one
+release commit and one amendment, no merge, no tag, no push, no upload. The
+version was already bumped by the build commit, so the release commit carries
+documentation only.
+
+Recorded as received, verbatim.
+
+**W1.** `CITATION.cff`: version 1.9.0, `date-released` set to today's date from
+`date +%F`, `doi` field set to the concept DOI 10.5281/zenodo.22681594,
+`identifiers` reduced to the concept DOI entry only (the 1.9.0 version DOI is
+minted by Zenodo after the GitHub release and is added in a follow-up docs
+commit, as 1.8.0 did). Validated with `yaml.safe_load`.
+
+**W2.** CHANGELOG 1.9.0 heading carries today's date. The Security section
+additionally carries one scoping sentence: the engine's decorators and in-repo
+integrations bind every call argument; the standalone adapters
+`crewai-agentlock` and `langchain-agentlock` authorize keyword arguments only in
+their current releases and are updated separately; `mcp-agentlock` passes the
+SDK's arguments mapping and is unaffected. Suite figures per environment from
+AMENDMENT 1 are quoted with interpreter and mcp versions.
+
+**W3.** README: the versions table 1.9.0 row (if the build did not already add
+it) and the same scoping sentence wherever the README describes argument binding
+or token binding. `grep -n "1\.8\.0" README.md` returns only history rows and the
+CITATION line about 1.8.0's DOI if present.
+
+**W4.** Build in `/tmp/al18-extras` after `rm -rf dist build`: `twine check`
+PASSED on both artifacts, wheel METADATA `Metadata-Version: 2.4` and
+`Version: 1.9.0`, hatchling pin unchanged.
+
+**W5.** Fresh venv `/tmp/al19-wheel`: pip install the wheel with `[crypto,mcp]`;
+prints 1.9.0; then run an external reproduction script written in `/tmp` (not the
+repo) that exercises the three gaps against the installed wheel only:
+(a) decorator wrapper with `recipient_parameter="to"` over
+`send_email(to="attacker@evil.com", body="")`, positional call raises
+`DeniedError`, default call raises `DeniedError`, counter stays 0; (b) token
+authorized with `parameters={}` then execute with `{"to": "x"}` raises
+`TokenInvalidError`; (c) real mcp 2.x `Server(on_call_tool=handler)` wrapped by
+`AgentLockMCPServer`, denied recipient never reaches the handler, and a bare
+object with neither API raises `IntegrationUnsupportedError`. All pass.
+
+**W6.** Full suite in `/tmp/al18-extras` after reinstall: `1503 passed, 9
+skipped, 0 failed`; ruff clean; mypy 0 errors; `grep -ri agentshield agentlock
+tests schema` returns 0.
+
+**W7.** Files in the release commit: `CITATION.cff`, `CHANGELOG.md`,
+`README.md`. Nothing else (version was bumped in the build).
+
+---
+
+## Defects in the release predictions, found before this freeze was committed
+
+Two. Both were found by reading the repository and the standalone adapter
+sources while preparing to apply W1 to W3, and both were found before any
+release edit was written. They are recorded here rather than as a numbered
+amendment for the same reason Section 4 is where it is: nothing had been
+committed yet, so there is no earlier record for an amendment to correct. The
+numbered amendment slot after the release commit stays AMENDMENT 2, as the
+release instruction assigns it.
+
+W1 to W7 above are reproduced exactly as received and are not edited. The
+restatements below are what the release edits follow and what Section 5 of
+AMENDMENT 2 is scored against.
+
+### R1. W2's scoping sentence names three standalone adapters. Five ship.
+
+The sentence W2 dictates reads as an inventory: "the standalone adapters
+`crewai-agentlock` and `langchain-agentlock` ... `mcp-agentlock` ...". Two more
+standalone adapters exist and are published from their own repositories:
+`openai-agentlock` 0.1.0 and `openclaw-agentlock` 0.1.0. A scoping sentence in a
+Security section is read as the full set of what is and is not covered, so an
+enumeration that silently omits two shipped adapters is the failure the sentence
+exists to prevent.
+
+Each of the five was read at its current release before this was written. The
+three claims W2 makes are all true as far as they go:
+
+| Adapter | Version | What reaches the gate | Positional route |
+|---|---|---|---|
+| `crewai-agentlock` | 0.2.0 | `parameters=kwargs or None` at `src/crewai_agentlock/wrapper.py:188`, `:250` | open: `inner._run(*args, **params)` at `:244` carries positionals past the gate into the call |
+| `langchain-agentlock` | 0.1.0 | `parameters=kwargs or None` at `src/langchain_agentlock/toolkit.py:125`, `:140`, `:151` | none: `_run(self, *args, run_manager=None, **kwargs)` discards `args`, invoking `inner.invoke(params)` |
+| `mcp-agentlock` | 0.2.1 | the SDK's `arguments` mapping at `src/mcp_agentlock/wrapper.py:400`, `:423` | none: `guarded(tool_name, arguments)` hands the handler the same mapping it handed the gate |
+| `openai-agentlock` | 0.1.0 | the JSON `arguments` string parsed to a dict at `openai_agentlock/wrapper.py:50`, `:66` | none: the original invoke receives the same string |
+| `openclaw-agentlock` | 0.1.0 | the caller's `parameters` mapping at `openclaw_agentlock/adapter.py:73` and `executor.py:84` | none: the tool is invoked from that same mapping |
+
+One fact holds across all five and is absent from W2's sentence: no standalone
+adapter applies the wrapped function's defaults, so a parameter the caller omits
+and the function defaults is not seen by the gate in any of them. That is the
+second of the two G1 routes, the one the engine now closes with
+`apply_defaults()`.
+
+**Restatement, which the release edits follow:** the scoping text names all five
+adapters at their current versions, separates the two that authorize keyword
+arguments only from the three that hand the gate the same mapping they hand the
+tool, and states the defaults fact once for all five. It is longer than the one
+sentence W2 specifies. Everything else in W2 stands: the heading date, and the
+suite figures quoted per environment with interpreter and mcp versions.
+
+### R2. W3 leaves a 1.8.0 version DOI in the README that W1 removes from CITATION.cff
+
+`README.md:371` reads:
+
+```
+Software archive (all versions): https://doi.org/10.5281/zenodo.22681594. This release: https://doi.org/10.5281/zenodo.22681595.
+```
+
+`10.5281/zenodo.22681595` is the version DOI for 1.8.0, as `CITATION.cff:16-18`
+states in the entry W1 deletes. W1's reasoning is that a version DOI is minted
+after the GitHub release and cannot be written by this branch, so the file
+carries the concept DOI alone until a follow-up docs commit. The README line
+makes exactly the claim W1 removes, in the same repository, at the same release,
+and it says "This release", which at v1.9.0 is false.
+
+W3's grep condition is not what misses it: the line carries no literal `1.8.0`,
+so `grep -n "1\.8\.0" README.md` never returned it and the condition holds
+either way. W3's edit list is what misses it, by naming only the versions table
+row and the scoping sentence.
+
+**Restatement, which the release edits follow:** `README.md:371` is reduced to
+the concept DOI, with the version DOI described as minted at publication and
+added in the follow-up docs commit, matching W1's treatment of `CITATION.cff`.
+This is a third README edit beyond the two W3 names. It does not change W3's
+grep condition and it does not change W7: `README.md` was already in the release
+commit's file list.
+
+Everything after this line is append only.
