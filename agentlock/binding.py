@@ -32,7 +32,12 @@ from typing import Any
 
 from agentlock.exceptions import BindingError
 
-__all__ = ["bind_call_parameters", "ensure_bindable", "unwrap_partial"]
+__all__ = [
+    "apply_effective_parameters",
+    "bind_call_parameters",
+    "ensure_bindable",
+    "unwrap_partial",
+]
 
 
 def unwrap_partial(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -278,6 +283,58 @@ def _reject_unnameable_positionals(
         f"the call is refused before it is authorized. Pass the recipient as "
         f"{must_observe}=..."
     )
+
+
+def apply_effective_parameters(
+    bound: inspect.BoundArguments,
+    effective: Mapping[str, Any],
+) -> inspect.BoundArguments:
+    """Write authorized parameter values back into a bound call.
+
+    :func:`bind_call_parameters` flattens a call into the name keyed view the
+    gate reasons about.  When the gate transforms one of those values, the
+    transformed value has to travel back the other way, into the binding the
+    function is actually invoked from, or the tool runs with the untransformed
+    argument and the transformation was decoration.  This is that return trip,
+    and it is the inverse of the flattening, name for name:
+
+    * a normal parameter, positional only included, is overwritten by name;
+      ``BoundArguments.args`` rebuilds the positional call from
+      ``arguments``, so writing by name reaches an argument that has no
+      keyword form;
+    * a ``*args`` parameter is kept under its own name as a tuple by the
+      flattening and is restored as a tuple here;
+    * a ``**kwargs`` mapping was flattened to the top level, so each key it
+      carried is taken back out of the top level and put back in the mapping.
+      Keys the flattening never produced are left alone, because a
+      transformation cannot invent a parameter.
+
+    A parameter absent from ``bound.arguments`` is left absent: the binding
+    describes a call that was already made, and this function changes values
+    in it, never its shape.
+
+    Args:
+        bound: The binding to update, mutated in place.
+        effective: The gate's authorized parameters, in the flattened view.
+
+    Returns:
+        The same ``bound``, for convenience at a call site.
+    """
+    for name, parameter in bound.signature.parameters.items():
+        if name not in bound.arguments:
+            continue
+        if parameter.kind is inspect.Parameter.VAR_KEYWORD:
+            mapping = bound.arguments[name]
+            bound.arguments[name] = {
+                key: effective.get(key, value)
+                for key, value in mapping.items()
+            }
+        elif parameter.kind is inspect.Parameter.VAR_POSITIONAL:
+            if name in effective:
+                bound.arguments[name] = tuple(effective[name])
+        elif name in effective:
+            bound.arguments[name] = effective[name]
+    return bound
 
 
 def bind_call_parameters(

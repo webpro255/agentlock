@@ -314,6 +314,7 @@ changelog. That is how we intend to keep working.
 
 | version | highlights | tests |
 |---------|-----------|-------|
+| 1.10.0  | integration hardening: one execution contract, so a declared transformation reaches the tool and the caller on every path; resolved path containment; server identity and route mapping authoritative over the client; parameter and novel lineage re-checked at deferred commit; terminal deferral states; tokens consumed before async calls | 1583 with the `crypto` and `mcp` extras plus `fastapi` and `flask`, 9 skipped |
 | 1.9.1   | binding completeness: a `**kwargs` key that names another parameter is refused rather than flattened over it; partials bound through to the function underneath; recipients read for the characters they hold; an unobservable declared recipient parameter refused | 1520 with the `crypto` and `mcp` extras, 9 skipped |
 | 1.9.0   | enforcement completeness: all call arguments reach the gate, tokens bind the empty call, MCP wrapper fails closed and supports both SDK majors | 1503 with the `crypto` and `mcp` extras, 9 skipped |
 | 1.8.0   | recipient policy enforcement at pipeline Step 8; declared recipient parameter read from the trusted permission block; recipient sets | 1495 with the `crypto` and `mcp` extras, 8 skipped |
@@ -341,7 +342,16 @@ tests taking the place of the 1.x one. For 1.9.1 it is 1520 passing and 9
 skipped under `mcp 2.x` and 1519 passing and 10 skipped under `mcp 1.x`, the
 seventeen added tests being the binding collision class and the binding red
 pass class, none of which is guarded by an extra; a bare install runs 1515
-passed and 14 skipped. Nothing fails in any of these environments.
+passed and 14 skipped. For 1.10.0 it is 1583 passing and 9 skipped with
+`mcp 2.x`, `fastapi`, `flask` and PyNaCl present, the 63 added tests being
+the external review's 33-test oracle and the 30 engine tests covering what
+the oracle reaches from outside cannot; a bare install runs 1568 passed and
+24 skipped, the 24 being the 14 above plus the ten review and engine tests
+guarded on `mcp`, `fastapi` or `flask`. Under `mcp 1.x` the engine suite is
+1568 passing and 20 skipped with the review file's four `mcp` cases
+deselected, which construct the 2.x `Server` and cannot run against a 1.x
+SDK at all; the engine's 1.x hook is covered in every environment by
+`tests/test_v110_hardening.py`. Nothing fails in any of these environments.
 
 The 1.9.0 argument binding, and the 1.9.1 binding rules that refuse a
 `**kwargs` key naming another parameter, bind through a `functools.partial` to
@@ -360,6 +370,19 @@ omits and the function defaults is not seen by the gate in any of them, and
 none of them carries any of the 1.9.1 binding rules. 1.9.0 also makes an execution
 token bind the empty call: the parameters passed to `execute()` must be the
 parameters passed to `authorize()`, and `None` and `{}` are the same call.
+
+1.10.0 closes the gap between a decision and its execution. Through 1.9.1 a
+declared parameter or output transformation was computed by `authorize()` and
+then reached the tool on no path and the caller on one. It now travels with
+the grant: `AuthResult` carries `effective_parameters` beside
+`modify_output_fn`, the execution token is bound to the effective parameters
+rather than the requested ones, and `gate.call()`, both decorators, both MCP
+hooks and the AutoGen map all apply both. 1.10.0 also makes the server, and
+not the client, decide two things the client was deciding: which identity an
+MCP call runs under when the host configured one, and which tool an HTTP
+request is judged against when the route mapping names one. None of this
+reaches the standalone adapters, which ship separately and apply no declared
+transformation at all.
 
 Full feature history:
 [v1.1](docs/history.md#v11-memory--context-permissions),

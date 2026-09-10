@@ -27,6 +27,7 @@ Requires: ``mcp`` (``pip install mcp``)
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import time
 from collections.abc import Callable
@@ -78,10 +79,23 @@ class AgentLockMCPServer:
     incoming ``tools/call`` request is authorized before the tool handler
     runs.
 
-    Authorization context is extracted from:
-    1. The ``_meta`` field in the tool call arguments (keys
-       ``agentlock_user_id``, ``agentlock_role``).
-    2. Defaults provided at construction time.
+    Authorization context (E4).  Identity is resolved per field, and the
+    HOST wins:
+
+    1. ``default_user_id`` / ``default_role``, when configured.  A configured
+       value is authoritative.  Any client-supplied value for that field is
+       stripped from the arguments and ignored, and the substitution is
+       audited as ``identity_override_ignored``.
+    2. Otherwise the client-supplied value, from ``_agentlock_user_id`` /
+       ``_agentlock_role`` in the tool call arguments or from
+       ``_meta.agentlock_user_id`` / ``_meta.agentlock_role``.  **Taking it
+       trusts the transport**: anything that can reach this server can name
+       its own identity, so configure a default, or authenticate upstream and
+       pass the result in as one, wherever that is not acceptable.
+
+    Through 1.9.1 the order was the reverse of this, so a client that sent
+    ``_agentlock_role: admin`` to a server configured ``default_role="user"``
+    was authorized as an admin.
 
     Args:
         server: An MCP ``Server`` instance.
@@ -174,11 +188,13 @@ class AgentLockMCPServer:
                     arguments = arguments or {}
                     user_id, role = self._extract_auth(arguments)
                     auth = self._authorize(name, arguments, user_id, role)
+                    # E1: the handler receives what the gate authorized.
+                    effective = self._effective(auth, arguments)
                     return await self._run_reported(
                         name,
-                        arguments,
+                        effective,
                         auth,
-                        lambda: handler(name, arguments),
+                        lambda: handler(name, effective),
                     )
 
                 # Register the guarded handler with the original decorator
@@ -237,9 +253,11 @@ class AgentLockMCPServer:
             arguments = dict(getattr(params, "arguments", None) or {})
             user_id, role = self._extract_auth(arguments)
             auth = self._authorize(name, arguments, user_id, role)
-            cleaned = self._with_arguments(params, arguments)
+            # E1: the handler receives what the gate authorized.
+            effective = self._effective(auth, arguments)
+            cleaned = self._with_arguments(params, effective)
             return await self._run_reported(
-                name, arguments, auth, lambda: handler(ctx, cleaned)
+                name, effective, auth, lambda: handler(ctx, cleaned)
             )
 
         return guarded
@@ -260,23 +278,62 @@ class AgentLockMCPServer:
     # -- Shared decision path -----------------------------------------------
 
     def _extract_auth(self, arguments: dict[str, Any]) -> tuple[str, str]:
-        """Pull the caller's identity out of the tool arguments, in place.
+        """Resolve the caller's identity, stripping the reserved keys in place.
 
-        The reserved keys are removed, so what the gate authorizes and what the
+        E4, per field: a configured default is authoritative and the client's
+        value for that field is discarded; a field with no configured default
+        falls back to the client, which trusts the transport.  The reserved
+        keys are removed either way, so what the gate authorizes and what the
         tool receives are the same thing: the tool's own arguments.
+
+        Both reserved keys are popped unconditionally.  Popping them inside an
+        ``or`` chain, as this did through 1.9.1, left ``_agentlock_user_id``
+        in the arguments whenever ``_meta`` had already supplied a value.
         """
         meta = arguments.pop("_meta", {}) or {}
-        user_id = (
-            meta.get("agentlock_user_id", "")
-            or arguments.pop("_agentlock_user_id", "")
-            or self._default_user_id
+        claimed_user = arguments.pop("_agentlock_user_id", "") or meta.get(
+            "agentlock_user_id", ""
         )
-        role = (
-            meta.get("agentlock_role", "")
-            or arguments.pop("_agentlock_role", "")
-            or self._default_role
+        claimed_role = arguments.pop("_agentlock_role", "") or meta.get(
+            "agentlock_role", ""
         )
+
+        user_id = self._default_user_id or claimed_user
+        role = self._default_role or claimed_role
+
+        ignored = {}
+        if self._default_user_id and claimed_user:
+            ignored["user_id"] = claimed_user
+        if self._default_role and claimed_role:
+            ignored["role"] = claimed_role
+        if ignored:
+            self._audit_identity_override(ignored, user_id, role)
+
         return user_id, role
+
+    def _audit_identity_override(
+        self, ignored: dict[str, str], user_id: str, role: str
+    ) -> None:
+        """Record a client identity claim that the configured default beat.
+
+        Best effort by construction: a failing audit backend must not break a
+        call the gate is about to decide on its own terms anyway.  Nothing
+        here is ever read back by ``authorize()``.
+        """
+        # pragma: no cover on the suppression - evidence never blocks a call
+        with contextlib.suppress(Exception):
+            self._gate.audit_logger.log(
+                tool_name="",
+                user_id=user_id,
+                role=role,
+                action="identity_override_ignored",
+                reason="mcp_client_supplied_identity",
+                metadata={
+                    "ignored_claim": ignored,
+                    "effective_user_id": user_id,
+                    "effective_role": role,
+                },
+            )
 
     def _authorize(
         self,
@@ -308,11 +365,71 @@ class AgentLockMCPServer:
         auth.raise_if_denied()
         assert auth.token is not None
 
-        # Consume token
+        # Consume token, against the parameters the grant is bound to (E1).
         gate.token_store.validate_and_consume(
-            auth.token.token_id, name, arguments or None
+            auth.token.token_id, name, self._effective(auth, arguments) or None
         )
         return auth
+
+    @staticmethod
+    def _effective(auth: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        """The parameters the grant authorizes, defaulting to the request."""
+        effective = getattr(auth, "effective_parameters", None)
+        return dict(effective) if effective is not None else arguments
+
+    @staticmethod
+    def _modify_text_content(result: Any, modify: Callable[[str], str]) -> Any:
+        """Apply an output transformation to every text item in a result.
+
+        An MCP handler does not return a string.  It returns a
+        ``CallToolResult`` carrying a list of content blocks, or that list on
+        its own, and the text a client actually reads is the ``text`` field of
+        each ``TextContent`` in it.  A transformation that only knew how to
+        rewrite a string therefore never touched anything an MCP client saw,
+        which is why a declared output transformation was inert over this
+        adapter through 1.9.1.
+
+        Content models are rewritten in place where they allow it and copied
+        where they do not, so a frozen SDK model is handled without assuming
+        which of the two the installed version is.  Anything without text is
+        returned untouched.
+        """
+
+        def rewrite(item: Any) -> Any:
+            text = getattr(item, "text", None)
+            if not isinstance(text, str):
+                return item
+            new_text = modify(text)
+            if new_text == text:
+                return item
+            try:
+                item.text = new_text
+                return item
+            except Exception:
+                model_copy = getattr(item, "model_copy", None)
+                if callable(model_copy):
+                    return model_copy(update={"text": new_text})
+                return item
+
+        if isinstance(result, str):
+            return modify(result)
+
+        if isinstance(result, list):
+            return [rewrite(item) for item in result]
+
+        content = getattr(result, "content", None)
+        if isinstance(content, list):
+            rewritten = [rewrite(item) for item in content]
+            if rewritten == content:
+                return result
+            try:
+                result.content = rewritten
+                return result
+            except Exception:
+                model_copy = getattr(result, "model_copy", None)
+                if callable(model_copy):
+                    return model_copy(update={"content": rewritten})
+        return result
 
     async def _run_reported(
         self,
@@ -356,6 +473,12 @@ class AgentLockMCPServer:
             duration_ms=(time.time() - started) * 1000,
             attempt_audit_id=(attempt.audit_id if attempt else ""),
         )
+
+        # E1: the declared output transformation, in the same position
+        # ``gate.execute`` applies it: after the call, before redaction.
+        modify = getattr(auth, "modify_output_fn", None)
+        if modify is not None:
+            result = self._modify_text_content(result, modify)
 
         # Apply redaction
         if isinstance(result, str):

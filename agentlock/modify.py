@@ -11,8 +11,9 @@ Built-in actions:
   emails, phones, credit cards, API keys from tool output strings.
 - ``restrict_domain``: Rewrites ``send_email``'s ``to`` parameter to
   block external domains.  Config: ``{"allowed_domains": ["company.com"]}``.
-- ``whitelist_path``: Blocks ``read_file``'s ``path`` parameter if
-  outside allowed directory prefixes.  Config: ``{"allowed_prefixes": ["/data/"]}``.
+- ``whitelist_path``: Blocks ``read_file``'s ``path`` parameter if it does not
+  RESOLVE inside one of the allowed directories.  Config:
+  ``{"allowed_prefixes": ["/data/"]}``.
 - ``cap_records``: Limits output to a maximum number of records.
   Config: ``{"max_records": 10}``.
 
@@ -31,6 +32,8 @@ Usage::
 
 from __future__ import annotations
 
+import os
+import posixpath
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -215,18 +218,61 @@ class ModifyEngine:
         return value
 
     def _action_whitelist_path(self, value: str, config: dict[str, Any]) -> str:
-        """Block file paths outside allowed prefixes."""
+        """Block a file path that does not RESOLVE inside an allowed directory.
+
+        E3.  Through 1.9.1 this compared the raw string against the prefix with
+        ``startswith``, which is a test of how a path is spelled and not of
+        where it leads.  ``/allowed/../private.txt`` starts with ``/allowed/``
+        and a symlink at ``/allowed/link.txt`` starts with ``/allowed/`` no
+        matter what it points at, so both were permitted and the tool then read
+        the file the prefix existed to exclude.
+
+        The check now resolves both sides and compares them as paths:
+        backslashes are normalized, the candidate is lexically normalized,
+        both it and each prefix are put through :func:`os.path.realpath`, which
+        collapses ``..`` and follows symlinks, and the candidate is allowed
+        only when :func:`os.path.commonpath` of the pair IS the prefix.  That
+        last comparison is what makes ``/data-private`` fail against a
+        ``/data`` prefix, which a string prefix test would have passed.
+
+        Any exception blocks.  A path that cannot be resolved is a path whose
+        destination is unknown, and an unknown destination is not an allowed
+        one.
+
+        **This is canonicalization at authorization time, not a race resistant
+        filesystem sandbox.**  It reports where a path led when the gate looked.
+        Between that moment and the host's ``open()`` a component of the path
+        can be replaced, and nothing decided here can prevent that.  A host
+        that needs to be safe against an actively hostile filesystem must open
+        the file safely itself, with ``O_NOFOLLOW`` or an ``openat`` sequence
+        anchored to a directory descriptor it already holds.
+        """
         allowed_prefixes = config.get("allowed_prefixes", [])
         if not allowed_prefixes:
             return value
 
-        # Normalize path
-        normalized = value.replace("\\", "/")
-        for prefix in allowed_prefixes:
-            if normalized.startswith(prefix):
-                return value
+        blocked = "[BLOCKED: path outside allowed directories]"
+        try:
+            candidate = os.path.realpath(
+                posixpath.normpath(value.replace("\\", "/"))
+            )
+        except Exception:
+            return blocked
 
-        return "[BLOCKED: path outside allowed directories]"
+        for prefix in allowed_prefixes:
+            try:
+                resolved_prefix = os.path.realpath(
+                    posixpath.normpath(str(prefix).replace("\\", "/"))
+                )
+                if (
+                    os.path.commonpath([candidate, resolved_prefix])
+                    == resolved_prefix
+                ):
+                    return value
+            except Exception:
+                continue
+
+        return blocked
 
     def _action_cap_records(self, value: str, config: dict[str, Any]) -> str:
         """Limit output to max_records entries.

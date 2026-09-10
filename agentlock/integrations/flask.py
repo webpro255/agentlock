@@ -58,6 +58,7 @@ def _import_flask() -> Any:
 
 HEADER_USER_ID = "X-AgentLock-User-Id"
 HEADER_ROLE = "X-AgentLock-Role"
+HEADER_TOOL = "X-AgentLock-Tool"
 HEADER_SESSION_ID = "X-AgentLock-Session-Id"
 
 
@@ -71,23 +72,25 @@ def _extract_identity(
 ) -> tuple[str, str]:
     """Extract user_id and role from the current Flask request headers.
 
+    E5, matching the FastAPI middleware: a bearer JWT whose payload names a
+    subject is authoritative, and the identity headers are then ignored
+    entirely rather than merged with it.  A caller cannot present a token and
+    then override the identity inside it with a header.
+
     Returns:
         Tuple of (user_id, role).
     """
     flask_mod = _import_flask()
     request = flask_mod.request
 
-    user_id = request.headers.get(user_id_header, "")
-    role = request.headers.get(role_header, "")
+    claims = _decode_jwt_claims(request.headers.get("Authorization", ""))
+    if claims.get("sub"):
+        return claims.get("sub", ""), claims.get("role", "")
 
-    # Fall back to JWT Authorization header (best-effort decode)
-    if not user_id:
-        auth_header = request.headers.get("Authorization", "")
-        claims = _decode_jwt_claims(auth_header)
-        user_id = user_id or claims.get("sub", "")
-        role = role or claims.get("role", "")
-
-    return user_id, role
+    return (
+        request.headers.get(user_id_header, ""),
+        request.headers.get(role_header, ""),
+    )
 
 
 def _decode_jwt_claims(authorization: str) -> dict[str, Any]:
@@ -189,9 +192,25 @@ def agentlock_required(
 class AgentLockFlask:
     """Flask extension that integrates AgentLock with a Flask application.
 
-    The extension optionally installs a ``before_request`` hook that
-    enforces authorization on configured paths.  It also stores the gate
-    on the app for access from request handlers.
+    The extension installs a ``before_request`` hook that enforces
+    authorization on configured paths.  It also stores the gate on the app for
+    access from request handlers.
+
+    Tool selection (E5), matching the FastAPI middleware.  The SERVER's
+    endpoint mapping wins:
+
+    1. When ``tool_name_from_endpoint`` is configured, whatever it returns is
+       the tool.  A request carrying an ``X-AgentLock-Tool`` header naming a
+       DIFFERENT tool is refused with 403 and reason
+       ``tool_selection_conflict``.  An endpoint the mapping declines (returns
+       ``None`` for) passes through with the header ignored.
+    2. Only when no mapping is configured is ``X-AgentLock-Tool`` honored,
+       which trusts the caller to name its own tool.
+
+    The hook is installed either way, because case 2 has to be reachable for
+    the header to mean anything.  A request that names no tool and matches no
+    mapping passes through untouched, which is every request that reached this
+    extension unmapped through 1.9.1.
 
     Args:
         app: A Flask application (or ``None`` for deferred init via
@@ -244,8 +263,7 @@ class AgentLockFlask:
         app.extensions = getattr(app, "extensions", {})
         app.extensions["agentlock"] = self
 
-        if self.tool_name_from_endpoint is not None:
-            app.before_request(self._before_request_hook)
+        app.before_request(self._before_request_hook)
 
     def _before_request_hook(self) -> Any:
         """Flask before_request hook that enforces AgentLock authorization."""
@@ -255,12 +273,34 @@ class AgentLockFlask:
         if request.path in self.exclude_paths:
             return None
 
-        endpoint = request.endpoint or ""
-        tool_name = None
-        if self.tool_name_from_endpoint:
+        header_tool = request.headers.get(HEADER_TOOL, "")
+
+        if self.tool_name_from_endpoint is not None:
+            endpoint = request.endpoint or ""
             tool_name = self.tool_name_from_endpoint(
                 endpoint, request.method, request.path
             )
+            if tool_name and header_tool and header_tool != tool_name:
+                return flask_mod.jsonify({
+                    "error": "agentlock_denied",
+                    "detail": {
+                        "status": "denied",
+                        "reason": "tool_selection_conflict",
+                        "detail": (
+                            f"This route is mapped to tool {tool_name!r}; the "
+                            f"request asked to be authorized as "
+                            f"{header_tool!r}. The route mapping decides "
+                            f"which permission block applies."
+                        ),
+                        "suggestion": (
+                            f"Remove the {HEADER_TOOL} header, or send it "
+                            f"with the value {tool_name!r}."
+                        ),
+                    },
+                    "audit_id": "",
+                }), 403
+        else:
+            tool_name = header_tool or None
 
         if not tool_name:
             return None

@@ -15,6 +15,7 @@ Triggers:
 
 from __future__ import annotations
 
+import copy
 import secrets
 import time
 from collections.abc import Callable
@@ -29,6 +30,22 @@ __all__ = ["DeferralManager", "DeferralRecord"]
 
 def _generate_deferral_id() -> str:
     return f"defer_{secrets.token_hex(8)}"
+
+
+def _snapshot(parameters: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Copy queued parameters so a later mutation cannot reach the decision.
+
+    Deep where the values allow it.  A value that refuses to be deep copied
+    is kept by reference rather than dropped: an un-copyable parameter is
+    still part of the call, and losing it would make the record describe a
+    call that was never queued.
+    """
+    if parameters is None:
+        return None
+    try:
+        return copy.deepcopy(parameters)
+    except Exception:
+        return dict(parameters)
 
 
 @dataclass
@@ -51,6 +68,10 @@ class DeferralRecord:
     # v1.3 Feature 1 (deferred commit): taint snapshots at call vs commit.
     taint_at_call: dict[str, Any] | None = None
     taint_at_commit: dict[str, Any] | None = None
+    # v1.10 (E6): why the commit-time re-decision denied, when it denied.  A
+    # deferral that resolves to "denied" is a denial, and a denial that cannot
+    # say what denied it is not evidence of anything.  Cleared on commit.
+    denial_reason: str | None = None
     # v1.4 (defer-policy): the caller-asserted action classes, captured at
     # queue time so the commit-time re-decision can evaluate the same gating
     # disjunct the call-time path did.  ``None`` means the caller recorded
@@ -246,11 +267,17 @@ class DeferralManager:
         ``action_flags`` records the caller-asserted action classes so the
         commit-time re-decision can consult the tool's trusted permission
         block.  Omitting it is fail-closed.
+
+        ``parameters`` are snapshotted, not aliased (E6).
         """
         record = DeferralRecord(
             tool_name=tool_name,
             session_id=session_id,
-            parameters=parameters,
+            # E6: the queued parameters are the ones re-decided at end of
+            # turn, so they are snapshotted here rather than aliased.  A
+            # caller that mutates its own dict after queuing must not be able
+            # to change what the commit-time decision is taken over.
+            parameters=_snapshot(parameters),
             trigger="deferred_commit",
             reason=f"'{tool_name}' deferred for end-of-turn commit review.",
             taint_at_call=taint_at_call,
@@ -269,6 +296,22 @@ class DeferralManager:
     ) -> list[DeferralRecord]:
         """Resolve every queued action for a session, in original order.
 
+        E7, two rules this method did not have:
+
+        * **A resolution is terminal.**  A record that already carries one is
+          left exactly as it is.  Through 1.9.1 the assignment below was
+          unconditional, so a record a timeout sweep had already resolved to
+          ``"deny"`` was rewritten to ``"committed"`` by the next call here.
+          A denial that a later call can undo is not a denial.
+        * **Expiry is enforced here, not only by whoever remembers to sweep.**
+          A record past its timeout resolves to ``"deny"`` whether or not
+          :meth:`check_timeouts` ever ran.  A timeout that defaults to DENY
+          and depends on an external cadence to be applied is advisory, which
+          is the opposite of what it exists to be.
+
+        Both are why every record leaves the pending queue: the queue holds
+        what is still undecided, and after this call nothing in it is.
+
         Args:
             deny: either a single bool applied to every record (pre-v1.4
                 behavior), or a per-record predicate.  The gate passes a
@@ -276,14 +319,26 @@ class DeferralManager:
                 permission block; this manager stays policy-free.
             taint_at_commit: the complete-episode taint snapshot (for logging).
 
-        Returns the resolved records (queue is emptied).
+        Returns the records that were queued, in order, resolved or already
+        resolved (queue is emptied).
         """
         queued = self._commit_queue.pop(session_id, [])
         now = time.time()
         decide = deny if callable(deny) else (lambda _record, _d=deny: _d)
         for record in queued:
+            if record.is_resolved:
+                # Terminal.  Not re-decided, and not even re-annotated.
+                continue
             record.taint_at_commit = taint_at_commit
-            record.resolution = "denied" if decide(record) else "committed"
+            if record.is_expired:
+                record.resolution = "deny"
+                record.resolved_at = now
+                record.resolved_by = "timeout"
+                continue
+            denied = decide(record)
+            record.resolution = "denied" if denied else "committed"
+            if not denied:
+                record.denial_reason = None
             record.resolved_at = now
             record.resolved_by = "deferred_commit"
         return queued
