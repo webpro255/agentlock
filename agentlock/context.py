@@ -176,8 +176,15 @@ def _base_lineage_tokens(value: Any, min_len: int) -> set[tuple[str, str]]:
         c = _canon_url(m)
         if "." in c and len(c) >= 4:
             tokens.add(("url", c))
+    # The trailing period is stripped LAST, after the wrapping punctuation, so
+    # ``(summary.)`` and ``summary."`` normalize the same way.  Without it a
+    # sentence-final prose word carries a character that is in ``_STRUCTURAL``
+    # and so qualifies as distinctive, while ``_canon_url`` has always stripped
+    # the same character from the ``url`` spelling of the same token.  Trailing
+    # only, matching ``_canon_url``: a LEADING period is part of the value
+    # (``.bashrc``) and is left alone.
     for raw in re.split(r"\s+", text):
-        w = raw.strip().lower().strip("\"'()[]{}<>,;:!?")
+        w = raw.strip().lower().strip("\"'()[]{}<>,;:!?").rstrip(".")
         if _plain_qualifies(w, min_len):
             tokens.add(("str", w))
     return tokens
