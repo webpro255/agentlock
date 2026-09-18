@@ -314,6 +314,7 @@ changelog. That is how we intend to keep working.
 
 | version | highlights | tests |
 |---------|-----------|-------|
+| 1.10.3  | extractor hygiene: a `str` lineage token strips a trailing period, matching `_canon_url`, so a sentence-final prose word is no longer distinctive, which removes false-positive denials and adds none; derived-origin external actions escalate to `needs_approval` under the new opt-in `gate_derived_origin`, off by default, fail-closed, escalating the whole class rather than reading content | 1834 with the `crypto` and `mcp` extras plus `fastapi`, `flask` and `python-jose`, 9 skipped |
 | 1.10.2  | verified identity and one denial predicate: a bearer token carries identity only once it has been verified against a configured key, a token that fails verification is refused rather than falling back to the identity headers, and a configured key refuses a request that presents no token at all rather than identifying it by header; an execution reported after a TIMEOUT denial is classified as one rather than as an ordinary completion | 1746 with the `crypto` and `mcp` extras plus `fastapi`, `flask` and `python-jose`, 9 skipped |
 | 1.10.1  | recheck: the reviewer re-ran the oracle against the published 1.10.0 wheel and added 32 cases; resolved path containment resolves before it normalizes and returns the path it checked; one MCP payload walker serving both the declared transformation and the data policy, covering embedded resources; recipient restriction parses the whole value rather than its first address | 1688 with the `crypto` and `mcp` extras plus `fastapi` and `flask`, 9 skipped |
 | 1.10.0  | integration hardening: one execution contract, so a declared transformation reaches the tool and the caller on every path, in every shape it returns and in both payloads of an MCP result; the authenticated session's role authoritative over the caller's claim; resolved path containment; server identity and route mapping authoritative over the client; parameter and novel lineage re-checked at deferred commit; terminal deferral states; tokens consumed before async calls | 1616 with the `crypto` and `mcp` extras plus `fastapi` and `flask`, 9 skipped |
@@ -391,6 +392,17 @@ present, it is 1685 passing and 70 skipped; 25 of the 70 are new in this
 release, being 9 oracle cases guarded on `mcp` and 16 engine cases guarded on
 `python-jose`, which is the verification backend and cannot be faked. Nothing
 fails.
+
+For 1.10.3 it is 1834 passing and 9 skipped on CPython 3.14.6 with `mcp 2.2.0`,
+`fastapi`, `flask`, `python-jose` 3.5.0 and PyNaCl present, the 88 added tests being
+the 53 covering the derived-origin escalation, its off-by-default state, its two
+additive lineage facts and the fail-closed reading of `derived_origin_action`, and
+the 35 covering the trailing-period strip in the token extractor, among them the
+depunctuated oracle and the monotonicity argument that the fix adds no token. None
+of the 88 is guarded by an extra, so all 88 run in every configuration. Without
+`mcp` and without `python-jose`, and with `fastapi`, `flask` and PyNaCl still
+present, it is 1773 passing and 70 skipped, the 70 being the same 70 as in 1.10.2.
+Nothing fails.
 
 The 1.9.0 argument binding, and the 1.9.1 binding rules that refuse a
 `**kwargs` key naming another parameter, bind through a `functools.partial` to

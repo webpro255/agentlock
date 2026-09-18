@@ -5,11 +5,11 @@ All notable changes to AgentLock will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.10.3] - 2026-09-18
 
 ### Added
 
-- **Derived-origin external actions escalate to `needs_approval`, off by default (`gate_derived_origin`).** The session write-gate's action half was already correct: `lineage_gated_action` resolves `is_external` and selects the action. Its taint half tested UNTRUSTED only, because `_taint_reachable`'s base case tests `ContextAuthority.UNTRUSTED` and never reaches `DERIVED`, and `tool_output` and `agent_memory` both record DERIVED. An external action driven by tool output or agent memory was therefore ALLOWED, and measurement on seven frozen cells showed it allowed with a grant basis byte-identical between the benign cases and the injected ones: `{"session_lineage": "no_taint:post_authoritative", "tainted": false, "post_authoritative_taint": false}` on all seven. The audit record of a legitimate act could not be told from the audit record of an attack by any field the gate wrote. `LineagePolicyConfig.gate_derived_origin` adds the missing half. `lineage_summary` gains two ADDITIVE facts, `derived_origin` and `derived_origin_post_authoritative`, computed by a flat authority test rather than by the reachability walk, and selected between by the same `require_post_authoritative` knob the untrusted branch uses. A new step 10.5b in `PolicyEngine.evaluate` fires when the action is gated and the selected fact holds, and returns `needs_approval` with the new denial reason `derived_origin_lineage`. `derived_origin_action` chooses between `"step_up"` (the default) and `"deny"`, and any other value fails closed to `step_up`.
+- **Derived-origin external actions escalate to `needs_approval`, off by default (`gate_derived_origin`).** The session write-gate's action half was already correct: `lineage_gated_action` resolves `is_external` and selects the action. Its taint half tested UNTRUSTED only, because `_taint_reachable`'s base case tests `ContextAuthority.UNTRUSTED` and never reaches `DERIVED`, and `tool_output` and `agent_memory` both record DERIVED. An external action driven by tool output or agent memory was therefore ALLOWED, and measurement on seven frozen cells showed it allowed with a grant basis byte-identical between the benign cases and the injected ones: `{"session_lineage": "no_taint:post_authoritative", "tainted": false, "post_authoritative_taint": false}` on all seven. The audit record of a legitimate act could not be told from the audit record of an attack by any field the gate wrote. `LineagePolicyConfig.gate_derived_origin` adds the missing half. `lineage_summary` gains two ADDITIVE facts, `derived_origin` and `derived_origin_post_authoritative`, computed by a flat authority test rather than by the reachability walk, and selected between by the same `require_post_authoritative` knob the untrusted branch uses. A new step 10.5b in `PolicyEngine.evaluate` fires when the action is gated and the selected fact holds, and returns `needs_approval` with the new denial reason `derived_origin_lineage` (`DenialReason.DERIVED_ORIGIN_LINEAGE`). `derived_origin_action` chooses between `"step_up"` (the default) and `"deny"`, and any other value fails closed to `step_up`.
 
   **Read this before turning it on.** It does not read content and it CANNOT tell a benign act from an attack. It escalates the whole derived-origin class, which is the provenance-correct move: the gate cannot verify authority from provenance, so it escalates rather than guesses. Measured on the seven frozen cells, it catches 4 of 4 attacks, including the forgery-by-reuse case in which the user mentioned the destination address in order to DISMISS it, and it puts a human in the loop on 3 of 3 legitimate cases. That 3 of 3 is the disclosed price and it is the ordinary shape of agentic work, an external action following a tool read, not an edge case. What changes is the failure DIRECTION, from fail-open to fail-closed. The two are still indistinguishable in the record; they are now indistinguishable at DENY instead of at ALLOW. Distinguishing them means separating a mention from an authorization in natural language, which is content-based detection and which the injected content controls through the model.
 
@@ -18,6 +18,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **Off by default in 1.10.x.** Turning it on changes the verdict of every external action that follows any tool read in an already-enabled lineage policy, and a patch release is the wrong place to surprise a deployment with that. Enabling it by default is the intended change for 2.0, where a default-behaviour change is expected and is documented as a security-posture upgrade. Until then it is recommended ON wherever an external action following a tool read should require a human.
 
   Scoped, out-of-band authorization, which would let a benign derived-origin action through on evidence rather than on escalation, is deferred to v2. It is un-forgeable only where authorized intent is captured as STRUCTURE from outside the natural-language channel, which is application-boundary work with no call sites in this package today. Pairs with the tokenizer hygiene fix in this same release.
+
+### Fixed
+
+- **A `str` lineage token strips a trailing period, matching `_canon_url`.** `.` is in
+  `_STRUCTURAL`, so `_plain_qualifies` treated an ordinary prose word as a distinctive
+  token whenever it ended a sentence: the `str` floor handed it the word with the period
+  still attached, while `_canon_url` had always stripped that same character from the
+  `url` spelling of the same value. One character decided whether `summary` emitted
+  nothing and `summary.` emitted a token. Trailing only, which is why it is
+  `rstrip(".")` rather than `.` added to the bidirectional strip set: a LEADING period
+  is part of the value (`.bashrc`) and is left alone.
+
+  **This is extractor hygiene, NOT a security fix.** It removes false-positive tokens and
+  it adds none, so it adds no true-positive denials. `_plain_qualifies` is monotone under
+  shortening, because removing a trailing period can only remove a `_STRUCTURAL`
+  character and can only reduce length, so no word that emits nothing today can begin
+  emitting. The one non-subset effect is a dotted spelling collapsing onto its clean twin
+  (`evil.com.` to `evil.com`), which increases token-set agreement and therefore reduces
+  `novel_lineage` denials rather than adding any. It also **unmasks a forgery-by-reuse
+  case** that the punctuation artifact had been masking, which the derived-origin
+  escalation in this same release is what actually addresses.
+
+  Shared root cause with AgentLock's own attribution corpora, family-1 Defect A and
+  family-2 AM7.5: one line, both symptoms. Verified against the depunctuated oracle
+  frozen in the derived-lineage predictions appendix, 17 of 17 inputs agreeing. Zero
+  effect on the separate agentprov benchmark.
 
 ### Limits
 
