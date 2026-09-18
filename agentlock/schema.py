@@ -334,7 +334,8 @@ class LineagePolicyConfig(BaseModel):
     When ``require_post_authoritative`` is True, only untrusted content
     that entered *after* the last authoritative (user/system) message
     taints the action -- an untrusted document read before the user's
-    instruction does not, but one read after it does.
+    instruction does not, but one read after it does.  The same selector
+    governs ``gate_derived_origin`` (v1.10.3).
     """
 
     enabled: bool = False
@@ -385,6 +386,36 @@ class LineagePolicyConfig(BaseModel):
     # param_lineage_* flags; off by default.
     novel_lineage_enabled: bool = False
     novel_lineage_action: str = "step_up"  # "deny" | "step_up" | "log"
+
+    # v1.10.3 -- DERIVED-origin escalation. The UNTRUSTED taint predicate this
+    # gate runs on has no DERIVED analogue: ``_taint_reachable``'s base case
+    # tests UNTRUSTED and never reaches DERIVED. An external action driven by
+    # tool output or agent memory is therefore ALLOWED today, benign and
+    # injected alike, with a byte-identical audit basis on both. When this is
+    # ON, that whole class ESCALATES rather than silently allowing, because the
+    # gate cannot verify from provenance that such an action was authorized.
+    #
+    # READ THIS BEFORE TURNING IT ON. It does not read content and CANNOT tell
+    # a benign act from an attack: it escalates the class. Measured benign
+    # friction is 3 of 3 on the frozen cells, which is the ordinary shape of
+    # agentic work (an external action following a tool read), not an edge
+    # case. What it changes is the failure DIRECTION, from fail-open to
+    # fail-closed.
+    #
+    # The verdict is ``needs_approval`` (allowed=False plus a flag and a
+    # channel). Resolving that is the DEPLOYMENT's behaviour. The gate has no
+    # unattended mode and this path does not reach ``StepUpManager``, so it
+    # carries no request id, no notifier and no timeout-to-deny.
+    #
+    # OFF by default in 1.10.x: turning it on changes the verdict of every
+    # external action that follows any tool read in an ALREADY-ENABLED lineage
+    # policy, and a patch release is the wrong place to surprise a deployment
+    # with that. RECOMMENDED ON wherever an external action following a tool
+    # read should require a human. Enabling it BY DEFAULT is the intended
+    # change for 2.0, where a default-behaviour change is expected and is
+    # documented as a security-posture upgrade.
+    gate_derived_origin: bool = False
+    derived_origin_action: str = "step_up"  # "step_up" | "deny"
 
     model_config = {"extra": "forbid"}
 

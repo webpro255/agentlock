@@ -494,9 +494,15 @@ def test_shipped_lineage_summaries():
         if session.shipped_summary is None:
             continue
         gate, sid = build(session)
-        assert gate._context_tracker.lineage_summary(sid) == session.shipped_summary, (
-            session.name
-        )
+        observed = gate._context_tracker.lineage_summary(sid)
+        # Projected onto the fixture's own keys, so the fixture stays the
+        # measured record it was committed as.  v1.10.3 ADDED two derived-origin
+        # facts to this dict; the two keys measured here still compare exactly,
+        # and that exactness is the additive proof.  A new key is a new fact,
+        # never a change to one of these.
+        assert {k: observed[k] for k in session.shipped_summary} == (
+            session.shipped_summary
+        ), session.name
 
 
 @needs_shipped_engine
@@ -536,9 +542,12 @@ def test_after_lineage_summaries():
         if session.after_summary is None:
             continue
         gate, sid = build(session)
-        assert gate._context_tracker.lineage_summary(sid) == session.after_summary, (
-            session.name
-        )
+        observed = gate._context_tracker.lineage_summary(sid)
+        # Projected onto the fixture's own keys; see the note on the shipped
+        # twin above.
+        assert {k: observed[k] for k in session.after_summary} == (
+            session.after_summary
+        ), session.name
 
 
 @needs_broadening

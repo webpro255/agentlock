@@ -933,6 +933,89 @@ class PolicyEngine:
                             ),
                         )
 
+                # 10.5b (v1.10.3) -- DERIVED-origin escalation, the missing
+                # taint half.  The action half above is already correct and is
+                # reused verbatim: ``gated_action`` resolved ``is_external``
+                # through ``lineage_gated_action``.  What was missing is any
+                # fact about DERIVED content, because ``_taint_reachable``'s
+                # base case tests UNTRUSTED and never reaches DERIVED.  The
+                # consequence was measured: a derived-origin external action
+                # was ALLOWED, benign and injected alike, with a byte-identical
+                # audit basis on both.
+                #
+                # This branch escalates the whole derived-origin class.  It
+                # does NOT read content and cannot tell a benign act from an
+                # attack: telling them apart means separating a mention from an
+                # authorization in natural language, which is content detection
+                # and which the injected content controls through the model.
+                # The gate cannot verify authority from provenance here, so it
+                # escalates rather than guesses.  Fail-closed, not discriminating.
+                #
+                # Placement is load-bearing.  It runs only where the UNTRUSTED
+                # branch above did not return, so an untrusted verdict always
+                # wins and this can never override or soften one.  It is also
+                # guarded on ``session_write_gate``: it is part of the same
+                # call-time write-gate the v1.3 ablation removes, and it
+                # records no shadow of its own.
+                if (
+                    lineage_policy.gate_derived_origin
+                    and lineage_policy.session_write_gate
+                ):
+                    if lineage_policy.require_post_authoritative:
+                        derived = bool(
+                            summary.get("derived_origin_post_authoritative")
+                        )
+                        derived_kind = "post-authoritative derived-origin"
+                    else:
+                        derived = bool(summary.get("derived_origin"))
+                        derived_kind = "derived-origin"
+
+                    if derived:
+                        detail = (
+                            f"Action gated on provenance/lineage, not content: "
+                            f"{derived_kind} content (tool output or agent "
+                            f"memory) is present in the session's context "
+                            f"window before this gated action, and the gate "
+                            f"cannot verify from provenance that the action was "
+                            f"authorized. No parameter content was inspected."
+                        )
+                        # Fails CLOSED on an unrecognized action value: anything
+                        # that is not an explicit "deny" escalates rather than
+                        # allowing.  There is deliberately no "log" mode, which
+                        # would need a shadow-record path this fix does not add.
+                        if lineage_policy.derived_origin_action == "deny":
+                            return PolicyDecision(
+                                allowed=False,
+                                reason=DenialReason.DERIVED_ORIGIN_LINEAGE,
+                                detail=detail,
+                                suggestion=(
+                                    "The tool call was denied purely because "
+                                    "derived-origin content preceded it. "
+                                    "Re-issue the action from the user's own "
+                                    "request, or supply the authorization out "
+                                    "of band."
+                                ),
+                            )
+                        # Carrier 1: allowed=False plus a flag.  This does NOT
+                        # reach ``StepUpManager``, so there is no request id, no
+                        # notifier and no timeout-to-deny, and the gate has no
+                        # unattended mode at all.  What ``needs_approval`` MEANS
+                        # is the deployment's behaviour, not the gate's.
+                        return PolicyDecision(
+                            allowed=False,
+                            reason=DenialReason.DERIVED_ORIGIN_LINEAGE,
+                            detail=detail,
+                            needs_approval=True,
+                            suggestion=(
+                                "Human step-up approval required: derived-"
+                                "origin content preceded this gated action and "
+                                "the gate cannot verify its authority from "
+                                "provenance. This is a provenance decision, not "
+                                "a content scan. Resolving the approval is the "
+                                "deployment's behaviour, not the gate's."
+                            ),
+                        )
+
         # 10-11. v1.1 checks -- trust degradation and unattributed context
         # These run independently of both filters above.  Trust degradation
         # fires based on session state from notify_context_write(), not
