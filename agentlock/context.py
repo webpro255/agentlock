@@ -176,8 +176,15 @@ def _base_lineage_tokens(value: Any, min_len: int) -> set[tuple[str, str]]:
         c = _canon_url(m)
         if "." in c and len(c) >= 4:
             tokens.add(("url", c))
+    # The trailing period is stripped LAST, after the wrapping punctuation, so
+    # ``(summary.)`` and ``summary."`` normalize the same way.  Without it a
+    # sentence-final prose word carries a character that is in ``_STRUCTURAL``
+    # and so qualifies as distinctive, while ``_canon_url`` has always stripped
+    # the same character from the ``url`` spelling of the same token.  Trailing
+    # only, matching ``_canon_url``: a LEADING period is part of the value
+    # (``.bashrc``) and is left alone.
     for raw in re.split(r"\s+", text):
-        w = raw.strip().lower().strip("\"'()[]{}<>,;:!?")
+        w = raw.strip().lower().strip("\"'()[]{}<>,;:!?").rstrip(".")
         if _plain_qualifies(w, min_len):
             tokens.add(("str", w))
     return tokens
@@ -946,12 +953,33 @@ class ContextTracker:
               after the index of the last ``AUTHORITATIVE`` entry.  If no
               authoritative entry exists, all untrusted content is treated
               as post-authoritative.
+            * ``derived_origin`` (v1.10.3) -- any entry has authority
+              ``DERIVED`` (tool output / agent memory).
+            * ``derived_origin_post_authoritative`` (v1.10.3) -- a ``DERIVED``
+              entry exists after the index of the last ``AUTHORITATIVE``
+              entry, under the same ``-1`` convention as the untrusted fact.
 
-        An unknown/empty session is fully clean (both False).
+        The two v1.10.3 facts are ADDITIVE.  They are the DERIVED analogue of
+        the untrusted pair, and they exist because ``_taint_reachable``'s base
+        case tests ``UNTRUSTED`` and never reaches ``DERIVED``, which left the
+        write-gate with a correct action half and no taint half for
+        derived-origin content.  They are computed by a FLAT authority test,
+        not by the reachability walk: a derived entry is not "tainted", it is
+        content whose authority the gate cannot verify from provenance.
+        Neither one is read by anything except the step-10.5b branch in
+        ``policy.py``, and neither can change the value of ``tainted`` or
+        ``post_authoritative_taint``, which are computed exactly as before.
+
+        An unknown/empty session is fully clean (all four False).
         """
         state = self._states.get(session_id)
         if state is None or not state.provenance_log:
-            return {"tainted": False, "post_authoritative_taint": False}
+            return {
+                "tainted": False,
+                "post_authoritative_taint": False,
+                "derived_origin": False,
+                "derived_origin_post_authoritative": False,
+            }
 
         log = state.provenance_log
         # AM7 item 5: both facts key on REACHABILITY, not on authority alone.
@@ -978,9 +1006,24 @@ class ContextTracker:
             for i, entry in enumerate(log)
         )
 
+        # v1.10.3 -- the DERIVED analogue, by FLAT authority test.  The walk is
+        # deliberately not reused: reachability answers "does this chain back to
+        # untrusted content", and the derived question is "is content the gate
+        # cannot vouch for present at all".  Same ``-1`` convention as above.
+        derived_origin = any(
+            entry.authority is ContextAuthority.DERIVED for entry in log
+        )
+        derived_origin_post_authoritative = any(
+            entry.authority is ContextAuthority.DERIVED
+            and i > last_authoritative_idx
+            for i, entry in enumerate(log)
+        )
+
         return {
             "tainted": tainted,
             "post_authoritative_taint": post_authoritative_taint,
+            "derived_origin": derived_origin,
+            "derived_origin_post_authoritative": derived_origin_post_authoritative,
         }
 
     def parameter_lineage_check(

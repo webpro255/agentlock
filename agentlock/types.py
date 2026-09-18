@@ -210,6 +210,14 @@ class DenialReason(str, Enum):
     # does not allow.  This one is a claim that lost to an authenticated fact,
     # and an auditor should not have to guess which of the two happened.
     ROLE_MISMATCH = "role_mismatch"
+    # v1.10.3: a gated action on a session carrying DERIVED-origin content
+    # (tool output / agent memory) whose authority the gate cannot verify from
+    # provenance.  Deliberately DISTINCT from UNTRUSTED_LINEAGE, which is a
+    # claim about untrusted ancestry that this denial does NOT make: reusing
+    # that reason would attach evidence citing zero untrusted sources to a
+    # denial that has nothing to do with untrusted content, and would erase the
+    # DERIVED-versus-UNTRUSTED distinction from the audit record.
+    DERIVED_ORIGIN_LINEAGE = "derived_origin_lineage"
 
 
 class TokenStatus(str, Enum):
