@@ -707,6 +707,7 @@ class AuthorizationGate:
         is_membership_change: bool = False,
         amount: float = 0.0,
         metadata: dict[str, Any] | None = None,
+        session_id: str | None = None,
     ) -> AuthResult:
         """Authorize a tool call.
 
@@ -743,6 +744,15 @@ class AuthorizationGate:
                 action (delete, reserve, membership change).
             amount: Financial amount if applicable.
             metadata: Additional context.
+            session_id: The session this call belongs to (G2).  When given,
+                the session is resolved BY ID: a missing or expired session,
+                or one held by a different ``user_id``, is denied with
+                ``session_not_found`` (fail closed), and an empty ``user_id``
+                is taken from the session.  When omitted, the session is the
+                user's newest one, from ``get_by_user``, exactly as through
+                1.10.3.  That lookup is ambiguous when one user holds two live
+                sessions, and the audit record says it was used, with
+                ``metadata["session_resolution"] = "by_user"``.
 
         Returns:
             AuthResult with token if allowed, denial details if denied.
@@ -765,16 +775,70 @@ class AuthorizationGate:
             is_membership_change=is_membership_change,
         )
 
+        # G2: how the session was found, for the audit record only.  Set when
+        # the user lookup ran, which is the path that cannot tell two live
+        # sessions for one user apart.
+        _by_user = session_id is None and bool(user_id)
+
         def _class_meta() -> dict[str, Any] | None:
-            """Audit-only metadata.  ``None`` when the caller asserted nothing,
-            so the key is omitted from the record entirely."""
-            return {"asserted_classes": list(_asserted)} if _asserted else None
+            """Audit-only metadata.  ``None`` when the caller asserted nothing
+            and no user lookup ran, so the record carries no metadata."""
+            meta: dict[str, Any] = {}
+            if _asserted:
+                meta["asserted_classes"] = list(_asserted)
+            if _by_user:
+                meta["session_resolution"] = "by_user"
+            return meta or None
 
         # Resolve the session once.  E10: two lookups for the same caller ran
         # here through 1.10.0, one for hardening and one for role resolution,
         # and a rule about the session that lived at only one of them would be
         # a rule with a hole in it.
-        session = self._session_store.get_by_user(user_id) if user_id else None
+        #
+        # G2: an addressed session is resolved by id and nothing else.  The
+        # user lookup returns the user's NEWEST session, so through 1.10.3 a
+        # second live session for the same user made the first unreachable:
+        # its taint was invisible, and the second's taint governed calls meant
+        # for the first.  An id that names no live session, or names another
+        # user's, fails closed rather than falling back to the user lookup.
+        if session_id is not None:
+            session = self._session_store.get(session_id)
+            if session is None or (user_id and session.user_id != user_id):
+                record = self._audit.log(
+                    tool_name=tool_name,
+                    user_id=user_id,
+                    role=role,
+                    action="denied",
+                    reason=DenialReason.SESSION_NOT_FOUND.value,
+                    risk_level=(
+                        permissions.risk_level.value if permissions else "unknown"
+                    ),
+                    session_id=session_id,
+                    metadata=_class_meta(),
+                )
+                return AuthResult(
+                    allowed=False,
+                    decision=DecisionType.DENY,
+                    denial={
+                        "status": "denied",
+                        "reason": DenialReason.SESSION_NOT_FOUND.value,
+                        "detail": (
+                            f"No live session {session_id!r}"
+                            + (f" for {user_id!r}." if user_id else ".")
+                            + " An addressed session is never substituted."
+                        ),
+                        "suggestion": (
+                            "Re-authenticate to create a session, and address "
+                            "calls to the session_id it returns."
+                        ),
+                    },
+                    audit_id=record.audit_id,
+                )
+            user_id = user_id or session.user_id
+        else:
+            session = (
+                self._session_store.get_by_user(user_id) if user_id else None
+            )
         hardening_session_id = session.session_id if session else (
             metadata.get("session_id", "") if metadata else ""
         )
@@ -1783,6 +1847,7 @@ class AuthorizationGate:
         parameters: dict[str, Any] | None = None,
         effective_parameters: dict[str, Any] | None = None,
         modify_output_fn: Callable[[str], str] | None = None,
+        session_id: str | None = None,
     ) -> Any:
         """Execute a tool via its token (Layer 3).
 
@@ -1809,11 +1874,19 @@ class AuthorizationGate:
                 with, from ``AuthResult.effective_parameters``.
             modify_output_fn: Optional output transformer from
                 ``AuthResult.modify_output_fn`` (v1.2 MODIFY).
+            session_id: The session this call belongs to (G2).  When given,
+                it must name a live session held by the token's user, or the
+                call is refused with ``session_not_found`` before the token is
+                consumed.  When omitted, no session is consulted, as through
+                1.10.3.
 
         Returns:
             The (possibly modified and redacted) tool output.
 
         Raises:
+            DeniedError: with reason ``session_not_found``, when
+                ``session_id`` is given and names no live session for the
+                token's user.  The token is left unconsumed.
             Whatever ``func`` raises.  A failed execution is RECORDED (status
             "failed") and then re-raised unchanged: the evidence path observes,
             it never alters.
@@ -1837,6 +1910,31 @@ class AuthorizationGate:
             params = dict(token.effective_parameters)
         else:
             params = dict(parameters)
+
+        # G2: an addressed session must still be live, and the token's.
+        # Checked before the token is consumed, so a refusal here costs the
+        # caller nothing it could not retry with a live session.
+        if session_id is not None:
+            session = self._session_store.get(session_id)
+            if session is None or session.user_id != token.user_id:
+                record = self._audit.log(
+                    tool_name=tool_name,
+                    user_id=token.user_id,
+                    role=token.role,
+                    action="denied",
+                    reason=DenialReason.SESSION_NOT_FOUND.value,
+                    token_id=token.token_id,
+                    session_id=session_id,
+                )
+                raise DeniedError(
+                    DenialReason.SESSION_NOT_FOUND,
+                    f"No live session {session_id!r} for {token.user_id!r}.",
+                    suggestion=(
+                        "Re-authenticate to create a session, and address "
+                        "calls to the session_id it returns."
+                    ),
+                    audit_id=record.audit_id,
+                )
 
         # Validate and consume token (single-use).  A rejected token means
         # nothing was attempted, so no attempt record is written: absence here

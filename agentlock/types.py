@@ -218,6 +218,10 @@ class DenialReason(str, Enum):
     # denial that has nothing to do with untrusted content, and would erase the
     # DERIVED-versus-UNTRUSTED distinction from the audit record.
     DERIVED_ORIGIN_LINEAGE = "derived_origin_lineage"
+    # v1.11 (G2): a call addressed to a session by id named no live session,
+    # or a session held by another user.  Never answered by falling back to
+    # the user's newest session.
+    SESSION_NOT_FOUND = "session_not_found"
 
 
 class TokenStatus(str, Enum):

@@ -41,7 +41,7 @@ from agentlock import (
     LineagePolicyConfig,
 )
 from agentlock.audit import InMemoryAuditBackend
-from agentlock.exceptions import AgentLockError
+from agentlock.exceptions import AgentLockError, DeniedError
 from agentlock.schema import DataPolicyConfig
 
 BASELINE = "baseline of record, see docs/PREDICTIONS_v111_review_gaps.md"
@@ -230,7 +230,6 @@ class TestG2SessionIsolation:
         )
         assert not after.allowed
 
-    @pytest.mark.xfail(strict=True, reason=BASELINE)
     def test_a_call_addressed_to_clean_a_does_not_take_bs_taint(self):
         """Probe row 2, with the call addressed to A explicitly, which is the
         API the baseline found missing."""
@@ -255,6 +254,117 @@ class TestG2SessionIsolation:
             parameters={"to": CONTACT}, is_external=True,
         )
         assert r.allowed
+
+    def test_benign_twin_addressed_to_its_own_session(self):
+        g = _g2_gate()
+        a = g.create_session(user_id="alice", role="user")
+        _user_says(g, a.session_id)
+        r = g.authorize(
+            "send_email", user_id="alice", role="user",
+            parameters={"to": CONTACT}, is_external=True,
+            session_id=a.session_id,
+        )
+        assert r.allowed
+
+
+class TestG2CandidateASessionAddressing:
+    """Candidate A: ``session_id=`` on ``authorize()`` and ``execute()``."""
+
+    def test_addressed_tainted_a_still_denies_after_b_exists(self):
+        g = _g2_gate()
+        a = g.create_session(user_id="alice", role="user")
+        _user_says(g, a.session_id)
+        _taint(g, a.session_id)
+        g.create_session(user_id="alice", role="user")
+        r = g.authorize(
+            "send_email", user_id="alice", role="user",
+            parameters={"to": CONTACT}, is_external=True,
+            session_id=a.session_id,
+        )
+        assert r.denial["reason"] == "untrusted_lineage"
+
+    def test_an_unknown_session_id_fails_closed(self):
+        g = _g2_gate()
+        g.create_session(user_id="alice", role="user")
+        r = g.authorize(
+            "send_email", user_id="alice", role="user",
+            parameters={"to": CONTACT}, session_id="als_nope",
+        )
+        assert r.denial["reason"] == "session_not_found"
+
+    def test_a_destroyed_session_fails_closed(self):
+        g = _g2_gate()
+        a = g.create_session(user_id="alice", role="user")
+        g.session_store.destroy(a.session_id)
+        r = g.authorize(
+            "send_email", user_id="alice", role="user",
+            parameters={"to": CONTACT}, session_id=a.session_id,
+        )
+        assert r.denial["reason"] == "session_not_found"
+
+    def test_an_expired_session_fails_closed(self):
+        g = _g2_gate()
+        a = g.create_session(user_id="alice", role="user")
+        a.expires_at = 0.0
+        r = g.authorize(
+            "send_email", user_id="alice", role="user",
+            parameters={"to": CONTACT}, session_id=a.session_id,
+        )
+        assert r.denial["reason"] == "session_not_found"
+
+    def test_another_users_session_fails_closed(self):
+        g = _g2_gate()
+        a = g.create_session(user_id="alice", role="user")
+        g.create_session(user_id="mallory", role="user")
+        r = g.authorize(
+            "send_email", user_id="mallory", role="user",
+            parameters={"to": CONTACT}, session_id=a.session_id,
+        )
+        assert r.denial["reason"] == "session_not_found"
+
+    def test_an_empty_user_id_is_taken_from_the_session(self):
+        g = _g2_gate()
+        a = g.create_session(user_id="alice", role="user")
+        _user_says(g, a.session_id)
+        r = g.authorize(
+            "send_email", parameters={"to": CONTACT}, session_id=a.session_id,
+        )
+        assert r.allowed
+        assert r.token.user_id == "alice"
+        assert r.token.role == "user"
+
+    def test_the_user_lookup_is_flagged_in_the_audit_record(self):
+        backend = InMemoryAuditBackend()
+        g = AuthorizationGate(audit_backend=backend)
+        g.register_tool("t", AgentLockPermissions(
+            risk_level="low", allowed_roles=["user"],
+        ))
+        a = g.create_session(user_id="alice", role="user")
+        g.authorize("t", user_id="alice", role="user")
+        g.authorize("t", user_id="alice", role="user", session_id=a.session_id)
+        flags = [r.metadata.get("session_resolution") for r in backend.records]
+        assert flags == ["by_user", None]
+
+    def test_execute_refuses_a_gone_session_without_consuming_the_token(self):
+        g = _g4_gate()
+        a = g.get_session("alice")
+        auth = g.authorize("lookup", user_id="alice", role="user",
+                           parameters={}, session_id=a.session_id)
+        g.session_store.destroy(a.session_id)
+        with pytest.raises(DeniedError) as exc:
+            g.execute("lookup", lambda: "ok", token=auth.token,
+                      parameters={}, session_id=a.session_id)
+        assert exc.value.reason == "session_not_found"
+        assert g.execute("lookup", lambda: "ok", token=auth.token,
+                         parameters={}) == "ok"
+
+    def test_execute_with_a_live_session_runs(self):
+        g = _g4_gate()
+        a = g.get_session("alice")
+        auth = g.authorize("lookup", user_id="alice", role="user",
+                           parameters={}, session_id=a.session_id)
+        assert g.execute("lookup", lambda: "ok", token=auth.token,
+                         parameters={}, session_id=a.session_id) == "ok"
 
 
 # ---------------------------------------------------------------------------
