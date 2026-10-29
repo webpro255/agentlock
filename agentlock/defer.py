@@ -368,7 +368,12 @@ class DeferralManager:
         """
         queued = self._commit_queue.pop(session_id, [])
         now = time.time()
-        decide = deny if callable(deny) else (lambda _record, _d=deny: _d)
+        decide: Callable[[DeferralRecord], bool]
+        if callable(deny):
+            decide = deny
+        else:
+            always: bool = deny
+            decide = lambda _record: always  # noqa: E731
         for record in queued:
             if record.is_resolved:
                 # Terminal.  Not re-decided, and not even re-annotated.
