@@ -27,6 +27,7 @@ G4. Structured-output redaction (``probe_review_gaps.py``, G4 rows).
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import hashlib
 import json
@@ -41,6 +42,7 @@ from agentlock import (
     LineagePolicyConfig,
 )
 from agentlock.audit import InMemoryAuditBackend
+from agentlock.decorators import agentlock
 from agentlock.exceptions import AgentLockError, DeniedError, SessionConflictError
 from agentlock.schema import DataPolicyConfig
 
@@ -803,3 +805,99 @@ class TestG4StructuredRedaction:
         """Known limit, stated in the CHANGELOG: bytes are not walked."""
         payload = f"SSN {SSN}".encode()
         assert _run(_g4_gate(), payload) == payload
+
+    def test_set_output_is_redacted_and_stays_a_set(self):
+        out = _run(_g4_gate(), {SSN, CONTACT, "plain"})
+        assert out == {"[REDACTED:ssn]", "[REDACTED:email]", "plain"}
+        assert type(out) is set
+
+    def test_frozenset_output_is_redacted_and_stays_a_frozenset(self):
+        out = _run(_g4_gate(), {"rows": frozenset({SSN, 3})})
+        assert out == {"rows": frozenset({"[REDACTED:ssn]", 3})}
+        assert type(out["rows"]) is frozenset
+
+    def test_benign_twin_clean_set_is_returned_unchanged(self):
+        result = frozenset({"a", "b", 3})
+        assert _run(_g4_gate(), result) is result
+
+
+_G4_POLICY = {"prohibited_in_output": ["ssn", "email"], "redaction": "auto"}
+
+
+class TestG4DecoratorPaths:
+    """The ``@agentlock`` wrappers: the sync one runs through
+    ``gate.call``; the async one owns execution and redacts itself."""
+
+    def _gate(self):
+        g = AuthorizationGate()
+        g.create_session(user_id="alice", role="user")
+        return g
+
+    def test_sync_dict_result_is_redacted(self):
+        g = self._gate()
+
+        @agentlock(g, risk_level="low", allowed_roles=["user"],
+                   data_policy=_G4_POLICY)
+        def lookup():
+            return {"ssn": SSN, "rows": [CONTACT]}
+
+        assert lookup(_user_id="alice", _role="user") == {
+            "ssn": "[REDACTED:ssn]", "rows": ["[REDACTED:email]"],
+        }
+
+    def test_sync_set_result_is_redacted(self):
+        g = self._gate()
+
+        @agentlock(g, risk_level="low", allowed_roles=["user"],
+                   data_policy=_G4_POLICY)
+        def lookup():
+            return {SSN, "plain"}
+
+        assert lookup(_user_id="alice", _role="user") == {
+            "[REDACTED:ssn]", "plain",
+        }
+
+    def test_async_dict_result_is_redacted(self):
+        g = self._gate()
+
+        @agentlock(g, risk_level="low", allowed_roles=["user"],
+                   data_policy=_G4_POLICY)
+        async def lookup():
+            return {"ssn": SSN, "rows": (CONTACT, 1)}
+
+        out = asyncio.run(lookup(_user_id="alice", _role="user"))
+        assert out == {"ssn": "[REDACTED:ssn]", "rows": ("[REDACTED:email]", 1)}
+
+    def test_async_set_result_is_redacted(self):
+        g = self._gate()
+
+        @agentlock(g, risk_level="low", allowed_roles=["user"],
+                   data_policy=_G4_POLICY)
+        async def lookup():
+            return frozenset({SSN, "plain"})
+
+        out = asyncio.run(lookup(_user_id="alice", _role="user"))
+        assert out == frozenset({"[REDACTED:ssn]", "plain"})
+        assert type(out) is frozenset
+
+    def test_async_str_result_is_still_redacted(self):
+        g = self._gate()
+
+        @agentlock(g, risk_level="low", allowed_roles=["user"],
+                   data_policy=_G4_POLICY)
+        async def lookup():
+            return f"SSN {SSN}"
+
+        out = asyncio.run(lookup(_user_id="alice", _role="user"))
+        assert out == "SSN [REDACTED:ssn]"
+
+    def test_benign_twin_async_clean_dict_is_returned_unchanged(self):
+        g = self._gate()
+        result = {"name": "Bob", "tags": {"a", "b"}}
+
+        @agentlock(g, risk_level="low", allowed_roles=["user"],
+                   data_policy=_G4_POLICY)
+        async def lookup():
+            return result
+
+        assert asyncio.run(lookup(_user_id="alice", _role="user")) is result

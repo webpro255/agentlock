@@ -227,13 +227,11 @@ def agentlock(
                         captured_result, auth_result.modify_output_fn
                     )
 
-                # Apply redaction if configured
-                redacted = gate.redact_output(tool_name, captured_result) \
-                    if isinstance(captured_result, str) else None
-                if redacted and redacted.was_redacted:
-                    return redacted.redacted
-
-                return captured_result
+                # Apply redaction if configured.  G4: every str leaf of a
+                # structured result, as ``gate.execute`` does on the sync
+                # path, not only a str result.
+                redacted, count = gate.redact_result(tool_name, captured_result)
+                return redacted if count else captured_result
 
             async_wrapper._agentlock_tool_name = tool_name  # type: ignore[attr-defined]
             async_wrapper._agentlock_permissions = perms  # type: ignore[attr-defined]

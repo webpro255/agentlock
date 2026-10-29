@@ -217,11 +217,14 @@ def _redact_str_leaves(engine: RedactionEngine, value: Any) -> tuple[Any, int]:
     G4.  Redaction in ``execute()`` ran behind ``isinstance(result, str)``, so
     a tool returning a mapping or a sequence handed its prohibited data back
     untouched.  The walk has the shape of ``context._iter_param_leaves``:
-    ``dict`` values, ``list`` and ``tuple`` items, recursively.  Dictionary
-    KEYS are not redacted, for the reason ``apply_output_modifier`` gives.
-    The container type is rebuilt: a named tuple through ``_make``, any other
-    ``tuple`` as a ``tuple``, a ``dict`` or ``list`` subclass as the plain
-    type.  Anything else is returned unchanged, ``bytes`` included.
+    ``dict`` values, ``list``, ``tuple``, ``set``, and ``frozenset`` items,
+    recursively.  Dictionary KEYS are not redacted, for the reason
+    ``apply_output_modifier`` gives.  The container type is rebuilt: a named
+    tuple through ``_make``, any other ``tuple`` as a ``tuple``, a ``set`` or
+    ``frozenset`` as the same of the two, a ``dict``, ``list``, or set
+    subclass as the plain type.  Redacted set members can collide, so a
+    rebuilt set may be smaller than the original; the count is per leaf.
+    Anything else is returned unchanged, ``bytes`` included.
 
     Returns the rebuilt value and the number of redactions summed over every
     leaf.  With zero redactions the ORIGINAL object is returned, so a clean
@@ -251,6 +254,18 @@ def _redact_str_leaves(engine: RedactionEngine, value: Any) -> tuple[Any, int]:
         if hasattr(type(value), "_make"):
             return type(value)._make(items), total
         return tuple(items), total
+    if isinstance(value, (set, frozenset)):
+        total = 0
+        members = []
+        for item in value:
+            new_item, count = _redact_str_leaves(engine, item)
+            members.append(new_item)
+            total += count
+        if not total:
+            return value, 0
+        if isinstance(value, frozenset):
+            return frozenset(members), total
+        return set(members), total
     return value, 0
 
 
@@ -2435,6 +2450,19 @@ class AuthorizationGate:
         )
 
     # -- Redaction (standalone) ---------------------------------------------
+
+    def redact_result(self, tool_name: str, value: Any) -> tuple[Any, int]:
+        """Redact every ``str`` leaf of a tool result (G4).
+
+        The walk ``execute()`` applies, for callers that own execution, such
+        as the async ``@agentlock`` wrapper.  Returns the rebuilt value and
+        the number of redactions; with none, or with no redaction configured
+        for the tool, the original object and zero.
+        """
+        engine = self._redaction_engines.get(tool_name)
+        if engine is None:
+            return value, 0
+        return _redact_str_leaves(engine, value)
 
     def redact_output(self, tool_name: str, text: str) -> RedactionResult:
         """Apply redaction to a string using the tool's data policy.
