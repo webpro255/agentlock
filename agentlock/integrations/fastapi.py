@@ -31,6 +31,7 @@ Requires: ``fastapi`` and ``starlette`` (``pip install fastapi``)
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -263,6 +264,102 @@ def _jwt_denial(reason: str, detail: str) -> dict[str, Any]:
     }
 
 
+def _parameters_from_body(
+    content_type: str, body: bytes,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """The parameters ``authorize()`` is asked about, from the request body.
+
+    G3.  Through 1.10.3 neither entry point passed parameters at all, so every
+    request was authorized as the EMPTY call and parameter lineage, recipient
+    policy, ``max_records``, and the MODIFY path never saw the body the handler
+    then ran with.
+
+    Fail closed, JSON only:
+
+    * an empty body is the empty call, ``{}``, passed explicitly;
+    * ``application/json`` (parameters such as ``charset`` ignored) is parsed,
+      and must be a JSON object;
+    * any other content type with a non-empty body is refused with reason
+      ``unsupported_content_type``, because a body the gate cannot read is a
+      body it cannot have authorized.
+
+    The query string is not read.  Returns ``(parameters, None)`` or
+    ``(None, denial_body)``.
+    """
+    if not body:
+        return {}, None
+    media_type = content_type.split(";", 1)[0].strip().lower()
+    if media_type != "application/json":
+        return None, _body_denial(
+            "unsupported_content_type",
+            f"The request carries a {media_type or 'untyped'} body. This "
+            f"integration authorizes the parameters a tool runs with, and it "
+            f"reads them only from an application/json body; a body it "
+            f"cannot read is not authorized.",
+            "Send the tool parameters as a JSON object with Content-Type: "
+            "application/json.",
+        )
+    try:
+        parameters = json.loads(body)
+    except ValueError as exc:
+        return None, _body_denial(
+            "invalid_json_body",
+            f"The application/json body did not parse: {exc}.",
+            "Send the tool parameters as a valid JSON object.",
+        )
+    if not isinstance(parameters, dict):
+        return None, _body_denial(
+            "invalid_json_body",
+            f"The application/json body is a JSON "
+            f"{type(parameters).__name__}, not an object, so it names no "
+            f"parameters.",
+            "Send the tool parameters as a JSON object.",
+        )
+    return parameters, None
+
+
+def _body_denial(reason: str, detail: str, suggestion: str) -> dict[str, Any]:
+    """The 403 body for a request whose parameters could not be read."""
+    return {
+        "error": "agentlock_denied",
+        "detail": {
+            "status": "denied",
+            "reason": reason,
+            "detail": detail,
+            "suggestion": suggestion,
+        },
+        "audit_id": "",
+    }
+
+
+async def _buffer_body(receive: Any) -> tuple[bytes | None, Any]:
+    """Read the whole ASGI request body and return a ``receive`` that replays it.
+
+    The handler downstream reads the body through ``receive`` too, so the
+    middleware hands it the exact bytes it authorized rather than a second
+    read of the stream.  ``None`` means the client disconnected first.
+    """
+    chunks: list[bytes] = []
+    while True:
+        message = await receive()
+        if message["type"] != "http.request":
+            return None, receive
+        chunks.append(message.get("body", b""))
+        if not message.get("more_body", False):
+            break
+    body = b"".join(chunks)
+    replayed = False
+
+    async def replay() -> Any:
+        nonlocal replayed
+        if not replayed:
+            replayed = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        return await receive()
+
+    return body, replay
+
+
 # ---------------------------------------------------------------------------
 # ASGI Middleware
 # ---------------------------------------------------------------------------
@@ -331,6 +428,22 @@ class AgentLockMiddleware:
     deployment that exposes this middleware directly to untrusted clients has
     to strip client-supplied ``X-AgentLock-*`` at its edge, or configure
     ``jwt_key`` and authenticate by token instead.
+
+    Parameters (G3).  The request body is what is authorized.  A body sent as
+    ``application/json`` must be a JSON object and is passed to
+    ``authorize()`` as ``parameters``; an empty body, including every bodiless
+    GET, is passed as ``parameters={}``.  Any other content type with a
+    non-empty body is refused with 403 and reason
+    ``unsupported_content_type``, and a JSON body that does not parse to an
+    object with reason ``invalid_json_body``.  The query string is not read.
+    The body is buffered and replayed to the handler, so the handler reads
+    the exact bytes that were authorized.  Through 1.10.3 no parameters were
+    passed, so every request was authorized as the empty call.
+
+    This middleware does NOT call ``execute()``.  It authorizes the call and
+    leaves ``AuthResult`` in ``request.state.agentlock_auth``; the handler runs
+    the tool, and the token is not consumed on the gate-observed path unless
+    the handler hands it to ``gate.execute()`` itself.
 
     If a request does not map to a tool, it passes through unmodified.
 
@@ -462,11 +575,24 @@ class AgentLockMiddleware:
                 or ""
             )
 
+        # G3: authorize the call the handler will run, which is the body.
+        body, receive = await _buffer_body(receive)
+        if body is None:
+            return
+        parameters, body_denial = _parameters_from_body(
+            request.headers.get("content-type", ""), body,
+        )
+        if body_denial is not None:
+            response = json_response_cls(status_code=403, content=body_denial)
+            await response(scope, receive, send)
+            return
+
         # Authorize
         auth = self.gate.authorize(
             tool_name,
             user_id=user_id,
             role=role,
+            parameters=parameters,
         )
 
         if not auth.allowed:
@@ -546,6 +672,13 @@ def require_agentlock(
     headers, and through 1.10.2 it read the headers whenever a request
     presented nothing it recognized as a token.
 
+    Parameters follow the same rule as :class:`AgentLockMiddleware` (G3): a
+    JSON object body is authorized as ``parameters``, an empty body as
+    ``parameters={}``, and any other non-empty body is refused with 403,
+    reason ``unsupported_content_type`` or ``invalid_json_body``.  Like the
+    middleware, this dependency does NOT call ``execute()``: the handler runs
+    the tool, and consumes the token only by passing it to ``gate.execute()``.
+
     Returns:
         A FastAPI dependency callable.
 
@@ -610,10 +743,20 @@ def require_agentlock(
                 or ""
             )
 
+        # G3: authorize the call the handler will run, which is the body.
+        # Starlette caches it on the request, so the handler reads the same
+        # bytes.
+        parameters, body_denial = _parameters_from_body(
+            request.headers.get("content-type", ""), await request.body(),
+        )
+        if body_denial is not None:
+            raise fastapi_mod.HTTPException(status_code=403, detail=body_denial)
+
         auth = gate.authorize(
             tool_name,
             user_id=user_id,
             role=role,
+            parameters=parameters,
         )
 
         if not auth.allowed:

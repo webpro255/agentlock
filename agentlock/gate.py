@@ -28,6 +28,8 @@ Example::
 
 from __future__ import annotations
 
+import hashlib
+import json
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterable
@@ -192,6 +194,82 @@ def _asserted_classes(**flags: bool) -> list[str]:
     return [name for name in _ASSERTED_CLASS_FLAGS if flags.get(name)]
 
 
+def _permissions_fingerprint(permissions: AgentLockPermissions | None) -> str | None:
+    """A stable digest of a permission block, for the G1 commit re-check.
+
+    The block has no policy version of its own: ``version`` is the SCHEMA
+    version and does not move when a deployer edits roles, scope, or lineage
+    policy under it.  The digest covers every field, ``version`` included, so
+    any re-registration that changes the block changes it, and one that
+    re-registers the identical block does not.
+    """
+    if permissions is None:
+        return None
+    canonical = json.dumps(
+        permissions.model_dump(mode="json"), sort_keys=True, default=str,
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _redact_str_leaves(engine: RedactionEngine, value: Any) -> tuple[Any, int]:
+    """Redact every ``str`` leaf of a (possibly nested) tool result.
+
+    G4.  Redaction in ``execute()`` ran behind ``isinstance(result, str)``, so
+    a tool returning a mapping or a sequence handed its prohibited data back
+    untouched.  The walk has the shape of ``context._iter_param_leaves``:
+    ``dict`` values, ``list``, ``tuple``, ``set``, and ``frozenset`` items,
+    recursively.  Dictionary KEYS are not redacted, for the reason
+    ``apply_output_modifier`` gives.  The container type is rebuilt: a named
+    tuple through ``_make``, any other ``tuple`` as a ``tuple``, a ``set`` or
+    ``frozenset`` as the same of the two, a ``dict``, ``list``, or set
+    subclass as the plain type.  Redacted set members can collide, so a
+    rebuilt set may be smaller than the original; the count is per leaf.
+    Anything else is returned unchanged, ``bytes`` included.
+
+    Returns the rebuilt value and the number of redactions summed over every
+    leaf.  With zero redactions the ORIGINAL object is returned, so a clean
+    result is not copied.
+    """
+    if isinstance(value, str):
+        redaction = engine.redact(value)
+        return redaction.redacted, len(redaction.redactions)
+    if isinstance(value, dict):
+        total = 0
+        rebuilt: dict[Any, Any] = {}
+        for key, item in value.items():
+            rebuilt[key], count = _redact_str_leaves(engine, item)
+            total += count
+        return (rebuilt, total) if total else (value, 0)
+    if isinstance(value, (list, tuple)):
+        total = 0
+        items = []
+        for item in value:
+            new_item, count = _redact_str_leaves(engine, item)
+            items.append(new_item)
+            total += count
+        if not total:
+            return value, 0
+        if isinstance(value, list):
+            return items, total
+        make = getattr(type(value), "_make", None)
+        if make is not None:
+            return make(items), total
+        return tuple(items), total
+    if isinstance(value, (set, frozenset)):
+        total = 0
+        members = []
+        for item in value:
+            new_item, count = _redact_str_leaves(engine, item)
+            members.append(new_item)
+            total += count
+        if not total:
+            return value, 0
+        if isinstance(value, frozenset):
+            return frozenset(members), total
+        return set(members), total
+    return value, 0
+
+
 class AuthorizationGate:
     """Central authorization enforcement point.
 
@@ -214,12 +292,16 @@ class AuthorizationGate:
         velocity_config: VelocityConfig | None = None,
         combo_config: ComboConfig | None = None,
         receipt_signer: ReceiptSigner | None = None,
+        single_session_per_user: bool = False,
     ) -> None:
         self._tools: dict[str, AgentLockPermissions] = {}
         self._policy = PolicyEngine()
         self._rate_limiter = RateLimiter()
         self._token_store = TokenStore(default_ttl=token_ttl)
-        self._session_store = SessionStore()
+        # G2 candidate B: off by default, which is the 1.10.3 behavior.
+        self._session_store = SessionStore(
+            single_session_per_user=single_session_per_user,
+        )
         self._audit = AuditLogger(backend=audit_backend or InMemoryAuditBackend())
         self._redaction_engines: dict[str, RedactionEngine] = {}
         self._context_tracker = ContextTracker()
@@ -611,6 +693,7 @@ class AuthorizationGate:
         data_boundary: DataBoundary = DataBoundary.AUTHENTICATED_USER_ONLY,
         metadata: dict[str, Any] | None = None,
         known_contacts: Iterable[str] | None = None,
+        replace: bool = False,
     ) -> Session:
         """Create an authenticated session after out-of-band auth completes.
 
@@ -625,18 +708,37 @@ class AuthorizationGate:
             known_contacts: Recipient addresses for the known-contacts
                 recipient policy.  Populated only from deployer config at
                 session creation, never from tool or model output.
+            replace: G2.  End the user's live session, if any, and audit
+                that, before creating this one.  With ``False``, the default,
+                a gate built with ``single_session_per_user=True`` raises
+                ``SessionConflictError`` for a user who holds a live session.
 
         Returns:
             The created session.
+
+        Raises:
+            SessionConflictError: see ``replace``.
         """
-        return self._session_store.create(
+        replaced = self._session_store.get_by_user(user_id) if replace else None
+        session = self._session_store.create(
             user_id=user_id,
             role=role,
             data_boundary=data_boundary,
             max_duration=self._session_duration,
             metadata=metadata,
             known_contacts=known_contacts,
+            replace=replace,
         )
+        if replaced is not None:
+            self._audit.log(
+                tool_name="",
+                user_id=user_id,
+                role=replaced.role,
+                action="session_replaced",
+                session_id=replaced.session_id,
+                metadata={"replaced_by": session.session_id},
+            )
+        return session
 
     def get_session(self, user_id: str) -> Session | None:
         """Get active session for a user."""
@@ -664,6 +766,7 @@ class AuthorizationGate:
         is_membership_change: bool = False,
         amount: float = 0.0,
         metadata: dict[str, Any] | None = None,
+        session_id: str | None = None,
     ) -> AuthResult:
         """Authorize a tool call.
 
@@ -700,6 +803,15 @@ class AuthorizationGate:
                 action (delete, reserve, membership change).
             amount: Financial amount if applicable.
             metadata: Additional context.
+            session_id: The session this call belongs to (G2).  When given,
+                the session is resolved BY ID: a missing or expired session,
+                or one held by a different ``user_id``, is denied with
+                ``session_not_found`` (fail closed), and an empty ``user_id``
+                is taken from the session.  When omitted, the session is the
+                user's newest one, from ``get_by_user``, exactly as through
+                1.10.3.  That lookup is ambiguous when one user holds two live
+                sessions, and the audit record says it was used, with
+                ``metadata["session_resolution"] = "by_user"``.
 
         Returns:
             AuthResult with token if allowed, denial details if denied.
@@ -722,16 +834,70 @@ class AuthorizationGate:
             is_membership_change=is_membership_change,
         )
 
+        # G2: how the session was found, for the audit record only.  Set when
+        # the user lookup ran, which is the path that cannot tell two live
+        # sessions for one user apart.
+        _by_user = session_id is None and bool(user_id)
+
         def _class_meta() -> dict[str, Any] | None:
-            """Audit-only metadata.  ``None`` when the caller asserted nothing,
-            so the key is omitted from the record entirely."""
-            return {"asserted_classes": list(_asserted)} if _asserted else None
+            """Audit-only metadata.  ``None`` when the caller asserted nothing
+            and no user lookup ran, so the record carries no metadata."""
+            meta: dict[str, Any] = {}
+            if _asserted:
+                meta["asserted_classes"] = list(_asserted)
+            if _by_user:
+                meta["session_resolution"] = "by_user"
+            return meta or None
 
         # Resolve the session once.  E10: two lookups for the same caller ran
         # here through 1.10.0, one for hardening and one for role resolution,
         # and a rule about the session that lived at only one of them would be
         # a rule with a hole in it.
-        session = self._session_store.get_by_user(user_id) if user_id else None
+        #
+        # G2: an addressed session is resolved by id and nothing else.  The
+        # user lookup returns the user's NEWEST session, so through 1.10.3 a
+        # second live session for the same user made the first unreachable:
+        # its taint was invisible, and the second's taint governed calls meant
+        # for the first.  An id that names no live session, or names another
+        # user's, fails closed rather than falling back to the user lookup.
+        if session_id is not None:
+            session = self._session_store.get(session_id)
+            if session is None or (user_id and session.user_id != user_id):
+                record = self._audit.log(
+                    tool_name=tool_name,
+                    user_id=user_id,
+                    role=role,
+                    action="denied",
+                    reason=DenialReason.SESSION_NOT_FOUND.value,
+                    risk_level=(
+                        permissions.risk_level.value if permissions else "unknown"
+                    ),
+                    session_id=session_id,
+                    metadata=_class_meta(),
+                )
+                return AuthResult(
+                    allowed=False,
+                    decision=DecisionType.DENY,
+                    denial={
+                        "status": "denied",
+                        "reason": DenialReason.SESSION_NOT_FOUND.value,
+                        "detail": (
+                            f"No live session {session_id!r}"
+                            + (f" for {user_id!r}." if user_id else ".")
+                            + " An addressed session is never substituted."
+                        ),
+                        "suggestion": (
+                            "Re-authenticate to create a session, and address "
+                            "calls to the session_id it returns."
+                        ),
+                    },
+                    audit_id=record.audit_id,
+                )
+            user_id = user_id or session.user_id
+        else:
+            session = (
+                self._session_store.get_by_user(user_id) if user_id else None
+            )
         hardening_session_id = session.session_id if session else (
             metadata.get("session_id", "") if metadata else ""
         )
@@ -1740,6 +1906,7 @@ class AuthorizationGate:
         parameters: dict[str, Any] | None = None,
         effective_parameters: dict[str, Any] | None = None,
         modify_output_fn: Callable[[str], str] | None = None,
+        session_id: str | None = None,
     ) -> Any:
         """Execute a tool via its token (Layer 3).
 
@@ -1766,11 +1933,19 @@ class AuthorizationGate:
                 with, from ``AuthResult.effective_parameters``.
             modify_output_fn: Optional output transformer from
                 ``AuthResult.modify_output_fn`` (v1.2 MODIFY).
+            session_id: The session this call belongs to (G2).  When given,
+                it must name a live session held by the token's user, or the
+                call is refused with ``session_not_found`` before the token is
+                consumed.  When omitted, no session is consulted, as through
+                1.10.3.
 
         Returns:
             The (possibly modified and redacted) tool output.
 
         Raises:
+            DeniedError: with reason ``session_not_found``, when
+                ``session_id`` is given and names no live session for the
+                token's user.  The token is left unconsumed.
             Whatever ``func`` raises.  A failed execution is RECORDED (status
             "failed") and then re-raised unchanged: the evidence path observes,
             it never alters.
@@ -1794,6 +1969,31 @@ class AuthorizationGate:
             params = dict(token.effective_parameters)
         else:
             params = dict(parameters)
+
+        # G2: an addressed session must still be live, and the token's.
+        # Checked before the token is consumed, so a refusal here costs the
+        # caller nothing it could not retry with a live session.
+        if session_id is not None:
+            session = self._session_store.get(session_id)
+            if session is None or session.user_id != token.user_id:
+                record = self._audit.log(
+                    tool_name=tool_name,
+                    user_id=token.user_id,
+                    role=token.role,
+                    action="denied",
+                    reason=DenialReason.SESSION_NOT_FOUND.value,
+                    token_id=token.token_id,
+                    session_id=session_id,
+                )
+                raise DeniedError(
+                    DenialReason.SESSION_NOT_FOUND,
+                    f"No live session {session_id!r} for {token.user_id!r}.",
+                    suggestion=(
+                        "Re-authenticate to create a session, and address "
+                        "calls to the session_id it returns."
+                    ),
+                    audit_id=record.audit_id,
+                )
 
         # Validate and consume token (single-use).  A rejected token means
         # nothing was attempted, so no attempt record is written: absence here
@@ -1885,20 +2085,22 @@ class AuthorizationGate:
                 )
                 result = modified
 
-        # Redact output if configured (defense-in-depth, runs after MODIFY)
+        # Redact output if configured (defense-in-depth, runs after MODIFY).
+        # G4: every str leaf of a dict, list, or tuple result, not only a
+        # str result.  One audit record per call, carrying the total.
         engine = self._redaction_engines.get(tool_name)
-        if engine and isinstance(result, str):
-            redaction = engine.redact(result)
-            if redaction.was_redacted:
+        if engine:
+            redacted, count = _redact_str_leaves(engine, result)
+            if count:
                 self._audit.log(
                     tool_name=tool_name,
                     user_id=token.user_id,
                     role=token.role,
                     action="redacted",
                     risk_level=self._tools[tool_name].risk_level.value,
-                    metadata={"redactions": len(redaction.redactions)},
+                    metadata={"redactions": count},
                 )
-                return redaction.redacted
+                return redacted
 
         return result
 
@@ -2246,9 +2448,23 @@ class AuthorizationGate:
             parameters=parameters,
             effective_parameters=result.effective_parameters,
             modify_output_fn=result.modify_output_fn,
+            session_id=auth_kwargs.get("session_id"),
         )
 
     # -- Redaction (standalone) ---------------------------------------------
+
+    def redact_result(self, tool_name: str, value: Any) -> tuple[Any, int]:
+        """Redact every ``str`` leaf of a tool result (G4).
+
+        The walk ``execute()`` applies, for callers that own execution, such
+        as the async ``@agentlock`` wrapper.  Returns the rebuilt value and
+        the number of redactions; with none, or with no redaction configured
+        for the tool, the original object and zero.
+        """
+        engine = self._redaction_engines.get(tool_name)
+        if engine is None:
+            return value, 0
+        return _redact_str_leaves(engine, value)
 
     def redact_output(self, tool_name: str, text: str) -> RedactionResult:
         """Apply redaction to a string using the tool's data policy.
@@ -2446,10 +2662,16 @@ class AuthorizationGate:
         evaluated.  Without it the record carries no flags and the commit-time
         re-decision falls back to FAIL-CLOSED (denied on taint), which is
         exactly the pre-v1.4 behavior.
+
+        v1.11 (G1): the record also snapshots what the commit-time re-check
+        compares against: the caller's ``user_id`` and ``role`` from the live
+        session ``session_id`` names, if it names one, and a fingerprint of
+        the tool's permission block as registered now.
         """
         summary = self._context_tracker.lineage_summary(session_id)
         key = "post_authoritative_taint" if require_post_authoritative else "tainted"
         taint_at_call = {**summary, "gated_on": key}
+        session = self._session_store.get(session_id)
         action_flags = (
             ActionFlags(
                 is_financial=is_financial,
@@ -2469,6 +2691,12 @@ class AuthorizationGate:
             parameters,
             taint_at_call=taint_at_call,
             action_flags=action_flags,
+            user_id=session.user_id if session else "",
+            role=session.role if session else "",
+            permissions_fingerprint=_permissions_fingerprint(
+                self._tools.get(tool_name)
+            ),
+            session_live_at_queue=session is not None,
         )
 
     def resolve_deferred_commits(
@@ -2504,6 +2732,24 @@ class AuthorizationGate:
         declarations anywhere this reduces to ``deny = tainted``, byte-identical
         to the pre-v1.4 path.
 
+        v1.11 (G1): before any of that, and whether or not the session is
+        tainted, the record is re-checked against what can change between
+        queue and commit.  Through 1.10.3 the untainted branch returned
+        before the registry was consulted, so a queued action committed after
+        its tool was unregistered, after the caller's role was revoked, and
+        after the caller's session was destroyed, each of which a fresh
+        ``authorize()`` at that moment would refuse or could not vouch for.
+        In order, each denying with its own reason:
+
+        * the tool is still registered (``unregistered_at_commit``);
+        * the record's role is still in ``allowed_roles``
+          (``role_revoked_at_commit``); a record queued with no live session
+          carries no role and skips this check;
+        * the record's session is still live, when it was live at queue time
+          (``session_gone_at_commit``);
+        * the permission block is unchanged since queue time
+          (``policy_changed_at_commit``), compared by fingerprint.
+
         Returns the resolved DeferralRecords; execution of committed actions
         is left to the caller.
         """
@@ -2520,6 +2766,13 @@ class AuthorizationGate:
                 if permissions is not None
                 else None
             )
+
+            # G1, FIRST: what can change between queue and commit without the
+            # session's taint changing at all.
+            reason = self._commit_recheck_reason(record, permissions, session_id)
+            if reason:
+                record.denial_reason = reason
+                return True
 
             # E6, FIRST: the per-parameter lineage checks, re-run against the
             # COMPLETE episode context.  These are independent of the session
@@ -2586,6 +2839,31 @@ class AuthorizationGate:
                 },
             )
         return resolved
+
+    def _commit_recheck_reason(
+        self,
+        record: DeferralRecord,
+        permissions: AgentLockPermissions | None,
+        session_id: str,
+    ) -> str:
+        """Re-check registration, role, session, and policy at commit (G1).
+
+        Returns the denial reason, or an empty string when nothing changed.
+        """
+        if permissions is None:
+            return "unregistered_at_commit"
+        if record.role and (
+            not permissions.allowed_roles
+            or record.role not in permissions.allowed_roles
+        ):
+            return DenialReason.ROLE_REVOKED_AT_COMMIT.value
+        if record.session_live_at_queue and self._session_store.get(
+            record.session_id or session_id
+        ) is None:
+            return DenialReason.SESSION_GONE_AT_COMMIT.value
+        if _permissions_fingerprint(permissions) != record.permissions_fingerprint:
+            return DenialReason.POLICY_CHANGED_AT_COMMIT.value
+        return ""
 
     def _commit_lineage_reason(
         self,

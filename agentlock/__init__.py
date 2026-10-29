@@ -34,7 +34,7 @@ Copyright 2026 David Grice
 SPDX-License-Identifier: AGPL-3.0-or-later
 """
 
-__version__ = "1.10.3"
+__version__ = "1.11.0"
 
 from agentlock.action_class_audit import (
     ActionClassAudit,
@@ -81,6 +81,7 @@ from agentlock.exceptions import (
     RateLimitedError,
     SchemaValidationError,
     ScopeViolationError,
+    SessionConflictError,
     SessionExpiredError,
     StepUpRequiredError,
     TokenError,
@@ -298,6 +299,7 @@ __all__ = [
     "ScopeViolationError",
     "RateLimitedError",
     "SessionExpiredError",
+    "SessionConflictError",
     "ApprovalRequiredError",
     "TrustDegradedError",
     "UnattributedContextError",

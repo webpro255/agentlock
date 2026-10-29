@@ -218,6 +218,16 @@ class DenialReason(str, Enum):
     # denial that has nothing to do with untrusted content, and would erase the
     # DERIVED-versus-UNTRUSTED distinction from the audit record.
     DERIVED_ORIGIN_LINEAGE = "derived_origin_lineage"
+    # v1.11 (G2): a call addressed to a session by id named no live session,
+    # or a session held by another user.  Never answered by falling back to
+    # the user's newest session.
+    SESSION_NOT_FOUND = "session_not_found"
+    # v1.11 (G1): the commit-time re-check of what can change between a
+    # deferred action's queueing and its commit.  ``unregistered_at_commit``
+    # predates these and is written as a plain string.
+    ROLE_REVOKED_AT_COMMIT = "role_revoked_at_commit"
+    SESSION_GONE_AT_COMMIT = "session_gone_at_commit"
+    POLICY_CHANGED_AT_COMMIT = "policy_changed_at_commit"
 
 
 class TokenStatus(str, Enum):

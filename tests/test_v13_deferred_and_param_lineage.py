@@ -79,6 +79,11 @@ class TestDeferredCommit:
     def test_deferred_never_tainted_is_committed(self):
         """no taint ever -> COMMIT (utility preserved)."""
         gate, sid = self._fresh()
+        # v1.11 (G1): an unregistered tool no longer commits on the untainted
+        # path, so the tool is registered for the utility case to be measured.
+        gate.register_tool("send_direct_message", AgentLockPermissions(
+            risk_level="high", allowed_roles=["user"],
+        ))
         gate.defer_consequential(sid, "send_direct_message", {"recipient": "bob"})
         # a benign DERIVED read does not taint
         gate.notify_context_write(
