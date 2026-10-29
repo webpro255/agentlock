@@ -429,6 +429,43 @@ class TestG2CandidateASessionAddressing:
                          parameters={}, session_id=a.session_id) == "ok"
 
 
+class TestDestroySupersededSession:
+    """``destroy`` of a superseded session left the user's live session
+    unreachable by user lookup; a user-addressed call then found no session
+    and was allowed as host-trusted."""
+
+    def test_destroying_a_keeps_b_reachable_by_user(self):
+        g = _g2_gate()
+        a = g.create_session(user_id="alice", role="user")
+        b = g.create_session(user_id="alice", role="user")
+        g.session_store.destroy(a.session_id)
+        assert g.session_store.get_by_user("alice").session_id == b.session_id
+
+    def test_destroying_a_does_not_open_tainted_b(self):
+        g = _g2_gate()
+        a = g.create_session(user_id="alice", role="user")
+        b = g.create_session(user_id="alice", role="user")
+        _user_says(g, b.session_id)
+        _taint(g, b.session_id)
+        call = {
+            "user_id": "alice", "role": "user",
+            "parameters": {"to": CONTACT}, "is_external": True,
+        }
+        assert g.authorize("send_email", **call).denial["reason"] == (
+            "untrusted_lineage"
+        )
+        g.session_store.destroy(a.session_id)
+        assert g.authorize("send_email", **call).denial["reason"] == (
+            "untrusted_lineage"
+        )
+
+    def test_benign_twin_destroying_the_live_session_clears_the_pointer(self):
+        g = _g2_gate()
+        a = g.create_session(user_id="alice", role="user")
+        g.session_store.destroy(a.session_id)
+        assert g.session_store.get_by_user("alice") is None
+
+
 class TestG2CandidateBSingleSession:
     """Candidate B: ``single_session_per_user=True`` refuses a second live
     session unless ``replace=True``.  Off by default; these run with it on."""

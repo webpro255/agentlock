@@ -143,10 +143,16 @@ class SessionStore:
         return self.get(sid)
 
     def destroy(self, session_id: SessionId) -> None:
-        """Destroy a session."""
+        """Destroy a session.
+
+        The per-user pointer is cleared only when it still points at this
+        session.  Through 1.10.3, destroying a superseded session
+        cleared the pointer to the user's live one, so user-addressed calls
+        found no session and were treated as host-trusted.
+        """
         session = self._sessions.pop(session_id, None)
-        if session:
-            self._user_sessions.pop(session.user_id, None)
+        if session and self._user_sessions.get(session.user_id) == session_id:
+            del self._user_sessions[session.user_id]
 
     def cleanup_expired(self) -> int:
         """Remove all expired sessions.  Returns count removed."""
