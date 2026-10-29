@@ -141,7 +141,7 @@ def agentlock(
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 user_id = kwargs.pop("_user_id", "")
                 role = kwargs.pop("_role", "")
-                kwargs.pop("_session_id", "")
+                session_id = kwargs.pop("_session_id", None) or None
                 meta = kwargs.pop("_metadata", None)
 
                 # G1: the gate is shown the whole call, positionals and
@@ -159,6 +159,7 @@ def agentlock(
                     role=role,
                     parameters=params,
                     metadata=meta,
+                    session_id=session_id,
                 )
                 auth_result.raise_if_denied()
                 assert auth_result.token is not None
@@ -191,6 +192,7 @@ def agentlock(
                     tool_name,
                     token_id=auth_result.token.token_id,
                     parameters=effective,
+                    session_id=session_id or "",
                 )
                 started = time.time()
                 try:
@@ -206,6 +208,7 @@ def agentlock(
                         duration_ms=(time.time() - started) * 1000,
                         error_type=type(exc).__name__,
                         attempt_audit_id=(attempt.audit_id if attempt else ""),
+                        session_id=session_id or "",
                     )
                     raise
                 gate.confirm_execution(
@@ -215,6 +218,7 @@ def agentlock(
                     parameters=effective,
                     duration_ms=(time.time() - started) * 1000,
                     attempt_audit_id=(attempt.audit_id if attempt else ""),
+                    session_id=session_id or "",
                 )
 
                 # E1: the output modifier, in the same position
@@ -243,7 +247,7 @@ def agentlock(
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
                 user_id = kwargs.pop("_user_id", "")
                 role = kwargs.pop("_role", "")
-                kwargs.pop("_session_id", "")
+                session_id = kwargs.pop("_session_id", None) or None
                 meta = kwargs.pop("_metadata", None)
 
                 # G1, as above.  The gate is handed the bound call; the
@@ -269,6 +273,7 @@ def agentlock(
                     role=role,
                     parameters=params,
                     metadata=meta,
+                    session_id=session_id,
                 )
 
             sync_wrapper._agentlock_tool_name = tool_name  # type: ignore[attr-defined]

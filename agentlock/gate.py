@@ -2448,6 +2448,7 @@ class AuthorizationGate:
             parameters=parameters,
             effective_parameters=result.effective_parameters,
             modify_output_fn=result.modify_output_fn,
+            session_id=auth_kwargs.get("session_id"),
         )
 
     # -- Redaction (standalone) ---------------------------------------------

@@ -431,6 +431,63 @@ class TestG2CandidateASessionAddressing:
                          parameters={}, session_id=a.session_id) == "ok"
 
 
+class TestG2DecoratorSessionAddressing:
+    """Candidate A on the ``@agentlock`` path: ``_session_id`` reaches the
+    gate.  Through 1.11.0 both wrappers popped it and discarded it, so a
+    decorated call was always user-addressed."""
+
+    def _gate(self):
+        g = AuthorizationGate()
+        a = g.create_session(user_id="alice", role="user")
+        _user_says(g, a.session_id)
+        _taint(g, a.session_id)
+        b = g.create_session(user_id="alice", role="user")
+        _user_says(g, b.session_id)
+        return g, a, b
+
+    # The wrapper has no way to assert a call-time action class, so the
+    # tool declares one in its block: a deletion is gated on session taint.
+    _PERMS = AgentLockPermissions(
+        risk_level="high", allowed_roles=["user"], version="1.3",
+        lineage_policy=LineagePolicyConfig(enabled=True, decision="deny"),
+        action_class={"is_deletion": True},
+    )
+
+    def test_sync_addressed_to_tainted_a_denies_and_clean_b_allows(self):
+        g, a, b = self._gate()
+
+        @agentlock(g, permissions=self._PERMS)
+        def delete_contact(contact):
+            return f"deleted {contact}"
+
+        with pytest.raises(DeniedError) as exc:
+            delete_contact(contact=CONTACT, _user_id="alice", _role="user",
+                           _session_id=a.session_id)
+        assert exc.value.reason == "untrusted_lineage"
+        assert delete_contact(
+            contact=CONTACT, _user_id="alice", _role="user",
+            _session_id=b.session_id,
+        ) == f"deleted {CONTACT}"
+
+    def test_async_addressed_to_tainted_a_denies_and_clean_b_allows(self):
+        g, a, b = self._gate()
+
+        @agentlock(g, permissions=self._PERMS)
+        async def delete_contact(contact):
+            return f"deleted {contact}"
+
+        with pytest.raises(DeniedError) as exc:
+            asyncio.run(delete_contact(
+                contact=CONTACT, _user_id="alice", _role="user",
+                _session_id=a.session_id,
+            ))
+        assert exc.value.reason == "untrusted_lineage"
+        assert asyncio.run(delete_contact(
+            contact=CONTACT, _user_id="alice", _role="user",
+            _session_id=b.session_id,
+        )) == f"deleted {CONTACT}"
+
+
 class TestDestroySupersededSession:
     """``destroy`` of a superseded session left the user's live session
     unreachable by user lookup; a user-addressed call then found no session
