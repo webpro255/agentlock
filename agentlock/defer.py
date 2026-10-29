@@ -114,6 +114,10 @@ class DeferralRecord:
     # above are taken from that session.
     permissions_fingerprint: str | None = None
     session_live_at_queue: bool = False
+    # v1.11 (G1 candidate B): the fresh ``AuthResult`` a ``commit_recheck``
+    # of "full" took at commit, allowed or not.  ``None`` under "changed".
+    # Typed loosely because ``AuthResult`` lives in the gate.
+    commit_auth: Any = None
 
     @property
     def is_resolved(self) -> bool:

@@ -270,6 +270,13 @@ class DeferPolicyConfig(BaseModel):
     trust_below_threshold: bool = True
     timeout_seconds: int = Field(default=60, ge=1)
     timeout_action: str = "deny"  # "deny" or "escalate"
+    # v1.11 (G1): what ``resolve_deferred_commits`` re-checks before the
+    # taint re-decision.  "changed" re-checks registration, role, session
+    # liveness, and the permission block's fingerprint.  "full" re-runs
+    # ``authorize()`` over the queued parameters with the record's user and
+    # role and commits only on allow.  Any other value runs both.  Read from
+    # the block registered at commit time, whether or not ``enabled`` is set.
+    commit_recheck: str = "changed"  # "changed" or "full"
 
     model_config = {"extra": "forbid"}
 
