@@ -280,3 +280,117 @@ It is not a description of a fix and it is not a design. Section 2 is the
 engine at `6f73879`, measured twice. Section 3 is the list of decisions that
 the fix depends on, with none taken. Section 4 is what is already known to be
 incomplete about this baseline. Everything after this line is append only.
+
+---
+
+## AMENDMENT 1 (2026-10-29): fix/review-gaps built by measurement, decisions of record, release predictions
+
+Branch `fix/review-gaps`, cut from `probe/review-gaps` at `eb238f5`. Built as
+candidates behind acceptance tests, each defaulting to the old behavior until
+chosen; David picked from the measurements. History kept as built, including
+the candidate later removed.
+
+### Decisions of record, from measurement
+
+**D-G1: (b), the "changed" re-check.** Candidate B ("full" re-authorization at
+commit) was built (`e68bd74`) and measured against A (`1983850`). B commits in
+two cases where A denies: a destroyed session (no session means host trusted,
+the D2 prediction) and a permission block widened between queue and commit
+(not predicted). B also resolves the session by `user_id`, so the G2 ambiguity
+returns through the commit path. B removed (`e366ee0`). "Policy version" is a
+SHA-256 of the whole permission block snapshotted at queue time, because
+`permissions.version` is a schema version and does not move when roles change.
+New denial reasons: `role_revoked_at_commit`, `session_gone_at_commit`,
+`policy_changed_at_commit`; `unregistered_at_commit` already existed.
+
+**D-G2: (c), both, with B off by default.** A (`35c9b3d`): `session_id` on
+`authorize()` and `execute()`, resolved first when given; missing, expired, or
+another user's session denies `session_not_found`; user lookup kept as the
+fallback with audit metadata `session_resolution: "by_user"`. B (`268b3a4`):
+`single_session_per_user` on `AuthorizationGate` and `SessionStore`, raising
+`SessionConflictError` on a second live session unless `replace=True`. Measured
+cost of B on: one existing test
+(`test_session.py::test_create_replaces_previous_for_same_user`). Unmeasured
+cost: any deployment creating a session per request. B stays off in 1.11.0,
+is recommended in the CHANGELOG, and becomes the default in 2.0. Probe row G2-1
+(user-addressed caller, no `session_id`, B off) stays open and is listed under
+Known limits.
+
+**D-G3: (b), JSON body only, fail closed.** All four adapter paths (`fastapi.py`
+middleware and dependency, `flask.py` decorator and extension) parse an
+`application/json` body and pass it as `parameters`; any other content type
+with a body is refused 403 `unsupported_content_type`; unparseable JSON is
+refused `invalid_json_body`. GET with no body passes `parameters={}`. The query
+string is not authorized (Known limits). The adapters still do not call
+`execute()`.
+
+**D-G4: (a), walk the leaves.** `gate.execute()` and the decorator paths redact
+every `str` leaf of `dict`, `list`, `tuple`, named tuple, `set`, and
+`frozenset` results, rebuilt as the same type; the async decorator path uses a
+new public `gate.redact_result()`. A set can shrink when redacted members
+collide (documented). `bytes` results are untouched (Known limits).
+
+**G5, found during the build, fixed (`65836fc`).** `SessionStore.destroy(A)`
+cleared the user's session pointer even when it already pointed at a newer
+live session B, orphaning B; the next `authorize()` found no session and ran
+as a trusted host. Measured at v1.10.3: tainted B went from deny to allow after
+`destroy(A)`. Now the pointer is cleared only when it points at the destroyed
+session.
+
+**Also in this release.** The `@agentlock` decorator popped `_session_id` and
+discarded it; it now passes it to `authorize()` and `execute()` (`fc1b1d0`),
+and `gate.call()` passes it to `execute()` as well. One pre-existing mypy error
+(`defer.py` lambda) resolved (`15ae55a`). One existing test edited:
+`test_v13_deferred_and_param_lineage.py::test_deferred_commit_no_taint`
+registered its tool, because the old assertion encoded the fail-open row.
+
+### Scoreboard, acceptance tests against the baseline
+
+| Gap | Rows | At `eb238f5` | At `3cb09fb` |
+|---|---|---|---|
+| G1 | 3 | xfail (committed) | pass (denied, per-check reason) |
+| G2 | 2 + addressing | row 1 xfail, row 2 xfail | row 1 xfail (by design, B off), rest pass |
+| G3 | 4 adapter paths | xfail (200) | pass (403 `param_lineage`) |
+| G4 | 4 + decorator + sets | dict/list xfail | pass |
+| G5 | 1 | fail-open (measured) | pass |
+| Benign twins | one per gap | pass | pass |
+
+### Suite lines, full extras (`crypto`, `mcp`, `fastapi`, `flask`, `python-jose`)
+
+| Commit | Line |
+|---|---|
+| `eb238f5` baseline | 1818 passed, 25 skipped (without python-jose) |
+| `3cb09fb` | 1912 passed, 9 skipped, 1 xfailed |
+
+mypy `agentlock/ --ignore-missing-imports`: 0 errors. ruff: clean on every
+touched file.
+
+### Release predictions, frozen before the release commands run
+
+**R1.** The release commit is the CHANGELOG reword after `3cb09fb`
+("docs: scope the session_id known limit to integrations/"), and the tag
+`v1.11.0` points at it. `pyproject.toml`, `agentlock/__init__.py` and
+`CITATION.cff` already read 1.11.0 at that commit, so no version bump happens
+after the tag (the 1.10.3 slip cannot recur).
+
+**R2.** `python -m build` from the tag produces `agentlock-1.11.0.tar.gz` and
+`agentlock-1.11.0-py3-none-any.whl`; `twine check` PASSED on both;
+`Metadata-Version: 2.4`, `Version: 1.11.0`.
+
+**R3.** A fresh venv with only the wheel and the four extras prints
+`1.11.0` from `agentlock.__version__`, and the two probe scripts under
+`tests/probes/` run against it print the step 13 report's G1 block (three
+denied rows with per-check reasons) and the G4 block (dict and list redacted).
+G2 and G3 probe rows still print GAP, because those scripts call the engine
+without `session_id` and without parameters; that is the documented default.
+
+**R4.** The full suite against the installed wheel, in `/tmp/al-probe-venv`:
+1912 passed, 9 skipped, 1 xfailed.
+
+**R5.** `grep -rn "Co-Authored-By" .git/logs` over the branch's commits returns
+0; `grep -rnP "\x{2014}" agentlock tests docs CHANGELOG.md README.md` returns 0.
+
+### What this amendment is not
+
+It is not the release. Everything above R1 is measured; R1 to R5 are what the
+release is scored against, and AMENDMENT 2 records the score.
