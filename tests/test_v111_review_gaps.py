@@ -290,8 +290,8 @@ def _fastapi_middleware_client(g):
     app = fastapi.FastAPI()
     ran: list[object] = []
 
-    @app.post("/send")
-    async def send(payload: dict = fastapi.Body(...)):  # noqa: B008
+    @app.api_route("/send", methods=["GET", "POST"])
+    async def send(payload: dict | None = fastapi.Body(None)):  # noqa: B008
         ran.append(payload)
         return {"ok": True}
 
@@ -312,9 +312,9 @@ def _fastapi_dependency_client(g):
     app = fastapi.FastAPI()
     ran: list[object] = []
 
-    @app.post("/send")
+    @app.api_route("/send", methods=["GET", "POST"])
     async def send(
-        payload: dict = fastapi.Body(...),  # noqa: B008
+        payload: dict | None = fastapi.Body(None),  # noqa: B008
         auth=fastapi.Depends(require_agentlock(g, "send_email")),  # noqa: B008
     ):
         ran.append(payload)
@@ -330,10 +330,10 @@ def _flask_decorator_client(g):
     app = flask.Flask(f"{__name__}.decorator")
     ran: list[object] = []
 
-    @app.post("/send")
+    @app.route("/send", methods=["GET", "POST"])
     @agentlock_required(g, "send_email")
     def send():
-        ran.append(flask.request.get_json())
+        ran.append(flask.request.get_json(silent=True))
         return {"ok": True}
 
     return app.test_client(), ran
@@ -346,9 +346,9 @@ def _flask_extension_client(g):
     app = flask.Flask(f"{__name__}.extension")
     ran: list[object] = []
 
-    @app.post("/send")
+    @app.route("/send", methods=["GET", "POST"])
     def send():
-        ran.append(flask.request.get_json())
+        ran.append(flask.request.get_json(silent=True))
         return {"ok": True}
 
     AgentLockFlask(
@@ -374,8 +374,15 @@ def _denial(response) -> dict:
     return body["detail"]
 
 
+def _post_raw(client, body: bytes, content_type: str):
+    """POST raw bytes; flask's test client and httpx name the argument
+    differently."""
+    key = "data" if type(client).__module__.startswith("flask") else "content"
+    headers = {**HEADERS, "Content-Type": content_type}
+    return client.post("/send", headers=headers, **{key: body})
+
+
 class TestG3AdapterParameterBinding:
-    @pytest.mark.xfail(strict=True, reason=BASELINE)
     @pytest.mark.parametrize("make_client", ADAPTERS)
     def test_planted_recipient_in_the_body_is_denied(self, make_client):
         client, ran = make_client(_g3_gate())
@@ -390,6 +397,52 @@ class TestG3AdapterParameterBinding:
         response = client.post("/send", json={"to": CONTACT}, headers=HEADERS)
         assert response.status_code == 200
         assert ran == [{"to": CONTACT}]
+
+    @pytest.mark.parametrize("make_client", ADAPTERS)
+    def test_a_non_json_body_is_refused(self, make_client):
+        client, ran = make_client(_g3_gate())
+        response = client.post(
+            "/send", data={"to": ATTACKER_URL}, headers=HEADERS,
+        )
+        assert response.status_code == 403
+        assert _denial(response)["reason"] == "unsupported_content_type"
+        assert ran == []
+
+    @pytest.mark.parametrize("make_client", ADAPTERS)
+    def test_a_json_body_that_is_not_an_object_is_refused(self, make_client):
+        client, ran = make_client(_g3_gate())
+        response = _post_raw(client, b"[1, 2]", "application/json")
+        assert response.status_code == 403
+        assert _denial(response)["reason"] == "invalid_json_body"
+        assert ran == []
+
+    @pytest.mark.parametrize("make_client", ADAPTERS)
+    def test_a_bodiless_get_is_authorized_as_the_empty_call(self, make_client):
+        g = _g3_gate()
+        seen: list[dict] = []
+        authorize = g.authorize
+
+        def spy(tool_name, **kwargs):
+            seen.append(kwargs)
+            return authorize(tool_name, **kwargs)
+
+        g.authorize = spy
+        client, ran = make_client(g)
+        response = client.get("/send", headers=HEADERS)
+        assert response.status_code == 200
+        assert [k["parameters"] for k in seen] == [{}]
+        assert ran == [None]
+
+    @pytest.mark.parametrize("make_client", ADAPTERS)
+    def test_json_with_a_charset_parameter_is_read(self, make_client):
+        client, ran = make_client(_g3_gate())
+        response = _post_raw(
+            client, json.dumps({"to": ATTACKER_URL}).encode(),
+            "application/json; charset=utf-8",
+        )
+        assert response.status_code == 403
+        assert _denial(response)["reason"] == "param_lineage"
+        assert ran == []
 
 
 # ---------------------------------------------------------------------------

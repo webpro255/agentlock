@@ -31,6 +31,7 @@ Requires: ``flask`` (``pip install flask``)
 from __future__ import annotations
 
 import functools
+import json
 from collections.abc import Callable, Sequence
 from typing import Any, TypeVar
 
@@ -250,6 +251,76 @@ def _jwt_denial_response(reason: str, detail: str) -> Any:
     }), 401
 
 
+def _parameters_from_body() -> tuple[dict[str, Any] | None, Any]:
+    """The parameters ``authorize()`` is asked about, from the current request.
+
+    G3, matching the FastAPI integration.  Through 1.10.3 neither entry point
+    passed parameters at all, so every request was authorized as the EMPTY
+    call and parameter lineage, recipient policy, ``max_records``, and the
+    MODIFY path never saw the body the view then ran with.
+
+    Fail closed, JSON only:
+
+    * an empty body is the empty call, ``{}``, passed explicitly;
+    * ``application/json`` is parsed, and must be a JSON object;
+    * any other content type with a non-empty body is refused with reason
+      ``unsupported_content_type``, because a body the gate cannot read is a
+      body it cannot have authorized.
+
+    The query string and form fields are not read.  The body is read with
+    ``cache=True``, so the view reads the same bytes.  Returns
+    ``(parameters, None)`` or ``(None, response)`` with a 403 response.
+    """
+    flask_mod = _import_flask()
+    request = flask_mod.request
+    body = request.get_data(cache=True)
+    if not body:
+        return {}, None
+    media_type = (request.mimetype or "").lower()
+    if media_type != "application/json":
+        return None, _body_denial_response(
+            "unsupported_content_type",
+            f"The request carries a {media_type or 'untyped'} body. This "
+            f"integration authorizes the parameters a tool runs with, and it "
+            f"reads them only from an application/json body; a body it "
+            f"cannot read is not authorized.",
+            "Send the tool parameters as a JSON object with Content-Type: "
+            "application/json.",
+        )
+    try:
+        parameters = json.loads(body)
+    except ValueError as exc:
+        return None, _body_denial_response(
+            "invalid_json_body",
+            f"The application/json body did not parse: {exc}.",
+            "Send the tool parameters as a valid JSON object.",
+        )
+    if not isinstance(parameters, dict):
+        return None, _body_denial_response(
+            "invalid_json_body",
+            f"The application/json body is a JSON "
+            f"{type(parameters).__name__}, not an object, so it names no "
+            f"parameters.",
+            "Send the tool parameters as a JSON object.",
+        )
+    return parameters, None
+
+
+def _body_denial_response(reason: str, detail: str, suggestion: str) -> Any:
+    """The 403 response for a request whose parameters could not be read."""
+    flask_mod = _import_flask()
+    return flask_mod.jsonify({
+        "error": "agentlock_denied",
+        "detail": {
+            "status": "denied",
+            "reason": reason,
+            "detail": detail,
+            "suggestion": suggestion,
+        },
+        "audit_id": "",
+    }), 403
+
+
 def _extract_identity(
     user_id_header: str = HEADER_USER_ID,
     role_header: str = HEADER_ROLE,
@@ -338,6 +409,20 @@ def agentlock_required(
     reason ``jwt_required``, and the identity headers are never consulted.
     With no key configured the token is ignored for identity entirely.
 
+    Parameters (G3).  The request body is what is authorized: a JSON object
+    body sent as ``application/json`` is passed to ``authorize()`` as
+    ``parameters``, and an empty body, including every bodiless GET, as
+    ``parameters={}``.  Any other content type with a non-empty body is
+    refused with 403 and reason ``unsupported_content_type``, and a JSON body
+    that does not parse to an object with reason ``invalid_json_body``.  The
+    query string and form fields are not read.  Through 1.10.3 no parameters
+    were passed, so every request was authorized as the empty call.
+
+    This decorator does NOT call ``execute()``.  It leaves the ``AuthResult``
+    in ``flask.g.agentlock_auth``; the view runs the tool, and the token is
+    not consumed on the gate-observed path unless the view hands it to
+    ``gate.execute()`` itself.
+
     Raises:
         IntegrationUnsupportedError: if ``jwt_key`` is set and python-jose is
             not installed.  Raised when the decorator is built, not when a
@@ -371,10 +456,16 @@ def agentlock_required(
             except _JwtIdentityError as exc:
                 return _jwt_denial_response(exc.reason, str(exc))
 
+            # G3: authorize the call the view will run, which is the body.
+            parameters, body_denial = _parameters_from_body()
+            if body_denial is not None:
+                return body_denial
+
             auth = gate.authorize(
                 tool_name,
                 user_id=user_id,
                 role=role,
+                parameters=parameters,
             )
 
             if not auth.allowed:
@@ -449,6 +540,13 @@ class AgentLockFlask:
     the adapter recognized as a token was identified by header even under a
     configured key, so the verification applied only to clients that chose to
     present a token.
+
+    Parameters follow the same rule as :func:`agentlock_required` (G3): a
+    JSON object body is authorized as ``parameters``, an empty body as
+    ``parameters={}``, and any other non-empty body is refused with 403,
+    reason ``unsupported_content_type`` or ``invalid_json_body``.  Like the
+    decorator, this extension does NOT call ``execute()``: the view runs the
+    tool, and consumes the token only by passing it to ``gate.execute()``.
 
     Raises:
         IntegrationUnsupportedError: if ``jwt_key`` is set and python-jose is
@@ -550,11 +648,17 @@ class AgentLockFlask:
         except _JwtIdentityError as exc:
             return _jwt_denial_response(exc.reason, str(exc))
 
+        # G3: authorize the call the view will run, which is the body.
+        parameters, body_denial = _parameters_from_body()
+        if body_denial is not None:
+            return body_denial
+
         assert self.gate is not None
         auth = self.gate.authorize(
             tool_name,
             user_id=user_id,
             role=role,
+            parameters=parameters,
         )
 
         if not auth.allowed:
