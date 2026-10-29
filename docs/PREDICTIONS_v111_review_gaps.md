@@ -394,3 +394,90 @@ without `session_id` and without parameters; that is the documented default.
 
 It is not the release. Everything above R1 is measured; R1 to R5 are what the
 release is scored against, and AMENDMENT 2 records the score.
+
+
+---
+
+## AMENDMENT 2 (2026-10-29): v1.11.0 released, release predictions scored
+
+Tag `v1.11.0` at `7e9eb5d` (merge of `fix/review-gaps` at `6357c71` into
+`main`, no fast-forward). PyPI: https://pypi.org/project/agentlock/1.11.0/.
+Scored against R1 to R5 of AMENDMENT 1, verbatim from the hands block.
+
+### Scoreboard
+
+| Prediction | Predicted | Observed | Score |
+|---|---|---|---|
+| R1 | tag on the CHANGELOG reword commit; no version bump after the tag | `git rev-parse v1.11.0^{commit}` = `7e9eb5d`, the merge commit; the branch tip `6357c71` (AMENDMENT 1 docs) sits one commit after the reword `6b30c5c`; version 1.11.0 in `pyproject.toml:7`, `__init__.py:37`, `CITATION.cff:10` before the tag | MATCH on the invariant that matters (no post-tag bump); the tagged commit is the merge, not the reword, because the amendment landed first and the merge was `--no-ff`. R1 named the wrong commit. |
+| R2 | sdist and wheel built from the tag, `twine check` PASSED x2 | `Successfully built agentlock-1.11.0.tar.gz and agentlock-1.11.0-py3-none-any.whl`; `PASSED` on both | MATCH |
+| R3 | clean venv imports 1.11.0 from site-packages; `probe_deferred_commit.py` prints three denied rows with per-check reasons | first attempt imported from the build checkout (run from inside the clone, cwd on `sys.path`); re-run from `/tmp`: `version 1.11.0 from /tmp/al111-verify/lib/python3.14/site-packages/agentlock/__init__.py`; probe: `role_revoked_at_commit`, `unregistered_at_commit`, `session_gone_at_commit` | MATCH, after the verify was re-run from outside the clone |
+| R4 | full suite against the installed wheel: 1912 passed, 9 skipped, 1 xfailed | first attempt ran against checkout source (same cause as R3); copying `tests/` out of the clone broke collection (1 error, repo-relative paths); with `agentlock/` moved aside in the clone so imports resolve to site-packages: `1912 passed, 9 skipped, 1 xfailed, 54 warnings in 3.32s` on Python 3.14.6, pytest 9.2.0 | MATCH, on the third run |
+| R5 | 0 `Co-Authored-By` in `v1.10.3..v1.11.0`; 0 em dashes in `agentlock`, `tests`, `docs`, `CHANGELOG.md`, `README.md` | trailers: `0`. Em dashes: `1`, at `docs/PREDICTIONS_v18_recipient.md:900`, a pre-existing v1.8 sentence that quotes the character while describing its removal from the schema files | trailers MATCH; em dash MISS as written. The hit predates this branch and is the character under discussion, not prose. Left in place. |
+
+### Defects in the release procedure, found while scoring
+
+**P1.** The clean-venv verify in the hands block runs `python -c` and `pytest`
+from inside the build clone, so Python imports the checkout rather than the
+installed wheel. The block has done this since at least 1.9.0 (the 1.10.2
+record names `/tmp/al1102-wheel` but ran from the clone). Fix for the next
+block: `cd /tmp` before the import check, and run the suite with the clone's
+`agentlock/` directory moved aside, or run from a copy of `tests/` only if
+every test is made repo-root independent. Recorded here so the next release's
+R3 and R4 are measured on the artifact.
+
+**P2.** `git clone --branch v1.11.0` printed `warning: refs/tags/v1.11.0
+ce2bf82... is not a commit!` and checked out `7e9eb5d` detached. The warning
+is git resolving the annotated tag object; the checkout is correct. Not a
+defect in the release, noted so it is not mistaken for one next time.
+
+**P3.** The em-dash grep in the hands block has no `--binary-files=without-match`,
+so `.pyc` files flood stderr and the count on stdout is read without seeing
+what matched. Add the flag.
+
+**P4.** The AMENDMENT 1 append command named a path the file was not at; the
+commit succeeded because the file had been placed by another route. Harmless
+here, but the block should verify the append with a `grep -n "^## AMENDMENT"`
+before committing.
+
+**P5.** CI `ruff check agentlock/ tests/` fails on the tag with 52 findings,
+all in `tests/probes/` (line length, one-line statements, lambda assignment,
+import order). The probe scripts are measurement records frozen by Section 2 of
+this document, not code to be reformatted, so on `main` after the tag each
+is held verbatim under `[tool.ruff.lint.per-file-ignores]` in
+`pyproject.toml`, on the same terms as the two external-review oracles
+(`tests/test_v110_system_review.py`, `tests/test_v1101_system_followup.py`):
+each entry lists only the rules that file trips
+(`probe_deferred_commit.py`: E501, E701, E702, E731, I001;
+`probe_review_gaps.py`: B007, E401, E501, I001). Unlike an exclude, the
+probes stay linted for every other rule. The
+hands block's "ruff clean on touched files" check ran on the engine files
+only and did not catch it; the next block runs the same command CI runs.
+
+### What shipped, one line each, for the record
+
+- G1: commit-time re-check of registration, role, session liveness, and
+  permission-block hash; three new denial reasons.
+- G2: `session_id` on `authorize()` and `execute()`; `single_session_per_user`
+  opt-in; decorator passes `_session_id` through; `gate.call()` passes it to
+  `execute()`.
+- G3: HTTP adapters authorize the JSON body, fail closed on other content types
+  and on invalid JSON.
+- G4: str-leaf redaction over dict, list, tuple, named tuple, set, frozenset on
+  `execute()` and both decorator paths; `gate.redact_result()` public.
+- G5: `SessionStore.destroy` no longer orphans a newer live session.
+- Suite 1834 to 1912; mypy 1 to 0; one existing test edited (registered its
+  tool); one candidate built and removed (G1 "full").
+
+### Still open after this release
+
+- G2 row 1 for user-addressed callers with `single_session_per_user` off
+  (default until 2.0).
+- Query string not authorized by the HTTP adapters; adapters still do not call
+  `execute()`.
+- `bytes` results not redacted.
+- None of `agentlock/integrations/` passes `session_id`; the five standalone
+  adapters and `agentlock-browser` not yet checked against 1.11.0.
+- Receipt hardening (deferred to the next release; the agentlock#3 comment
+  waits for it).
+- The two 2026-10-28 lineage candidates (bare-host token, decode in untrusted
+  ingestion) are unchanged and still pre-measurement.

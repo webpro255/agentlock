@@ -121,6 +121,13 @@ ignore = ["SIM108", "SIM114"]
 # ignore is a statement about a file, and copying a longer list than the file
 # needs would hide a rule starting to fire.
 "tests/test_v1101_system_followup.py" = ["E501", "E701", "I001", "SIM105"]
+# The two v1.11 probe scripts, on the same terms.  Each is a measurement
+# record frozen by Section 2 of docs/PREDICTIONS_v111_review_gaps.md: its
+# output was scored as written, so reformatting it after the score would
+# leave the record describing a script that no longer exists.  Each lists
+# only the rules that file actually trips.
+"tests/probes/probe_deferred_commit.py" = ["E501", "E701", "E702", "E731", "I001"]
+"tests/probes/probe_review_gaps.py" = ["B007", "E401", "E501", "I001"]
 
 [tool.coverage.run]
 source = ["agentlock"]
