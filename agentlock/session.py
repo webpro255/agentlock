@@ -12,7 +12,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
-from agentlock.exceptions import SessionExpiredError
+from agentlock.exceptions import SessionConflictError, SessionExpiredError
 from agentlock.types import DataBoundary, SessionId
 
 
@@ -73,11 +73,19 @@ class SessionStore:
     """In-memory session store.
 
     Production deployments should use Redis, database, or equivalent.
+
+    Args:
+        single_session_per_user: G2 candidate B.  When ``True``, ``create``
+            refuses a second live session for a user unless the caller passes
+            ``replace=True``.  ``False``, the default, keeps the 1.10.3
+            behavior: a second session silently becomes the user's session
+            for every lookup by user.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, single_session_per_user: bool = False) -> None:
         self._sessions: dict[SessionId, Session] = {}
         self._user_sessions: dict[str, SessionId] = {}
+        self._single_session_per_user = single_session_per_user
 
     def create(
         self,
@@ -87,8 +95,22 @@ class SessionStore:
         max_duration: int = 900,
         metadata: dict[str, Any] | None = None,
         known_contacts: Iterable[str] | None = None,
+        replace: bool = False,
     ) -> Session:
-        """Create a new authenticated session."""
+        """Create a new authenticated session.
+
+        G2.  With ``replace=True`` the user's live session, if any, is
+        destroyed first.  With ``replace=False``, the default, a live session
+        for the user raises ``SessionConflictError`` when the store was built
+        with ``single_session_per_user=True``, and is silently superseded for
+        lookups by user otherwise, as through 1.10.3.
+        """
+        existing = self.get_by_user(user_id)
+        if existing is not None:
+            if replace:
+                self.destroy(existing.session_id)
+            elif self._single_session_per_user:
+                raise SessionConflictError(user_id, existing.session_id)
         session = Session(
             user_id=user_id,
             role=role,

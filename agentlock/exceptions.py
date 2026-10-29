@@ -217,6 +217,28 @@ class StepUpRequiredError(AgentLockError):
         )
 
 
+class SessionConflictError(AgentLockError):
+    """A session was requested for a user who already holds a live one (G2).
+
+    Raised by ``SessionStore.create`` when the store refuses a second live
+    session per user and the caller did not pass ``replace=True``.  The gate
+    resolves an unaddressed call by user, so two live sessions for one user
+    are two contexts it cannot tell apart.
+
+    Attributes:
+        user_id: The user who already holds a session.
+        session_id: The live session that was not replaced.
+    """
+
+    def __init__(self, user_id: str, session_id: str) -> None:
+        self.user_id = user_id
+        self.session_id = session_id
+        super().__init__(
+            f"session_conflict: {user_id!r} already holds live session "
+            f"{session_id!r}; pass replace=True to end it and start another"
+        )
+
+
 class ModifyAppliedError(AgentLockError):
     """Tool output was modified by a MODIFY policy.
 

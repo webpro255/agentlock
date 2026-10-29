@@ -41,7 +41,7 @@ from agentlock import (
     LineagePolicyConfig,
 )
 from agentlock.audit import InMemoryAuditBackend
-from agentlock.exceptions import AgentLockError, DeniedError
+from agentlock.exceptions import AgentLockError, DeniedError, SessionConflictError
 from agentlock.schema import DataPolicyConfig
 
 BASELINE = "baseline of record, see docs/PREDICTIONS_v111_review_gaps.md"
@@ -365,6 +365,68 @@ class TestG2CandidateASessionAddressing:
                            parameters={}, session_id=a.session_id)
         assert g.execute("lookup", lambda: "ok", token=auth.token,
                          parameters={}, session_id=a.session_id) == "ok"
+
+
+class TestG2CandidateBSingleSession:
+    """Candidate B: ``single_session_per_user=True`` refuses a second live
+    session unless ``replace=True``.  Off by default; these run with it on."""
+
+    def test_probe_row_1_is_closed_with_the_refusal_on(self):
+        g = AuthorizationGate(single_session_per_user=True)
+        g.register_tool("send_email", _g2_gate().get_permissions("send_email"))
+        a = g.create_session(user_id="alice", role="user")
+        _user_says(g, a.session_id)
+        _taint(g, a.session_id)
+        with pytest.raises(SessionConflictError) as exc:
+            g.create_session(user_id="alice", role="user")
+        assert exc.value.session_id == a.session_id
+        after = g.authorize(
+            "send_email", user_id="alice", role="user",
+            parameters={"to": CONTACT}, is_external=True,
+        )
+        assert after.denial["reason"] == "untrusted_lineage"
+
+    def test_replace_ends_the_old_session_and_audits_it(self):
+        backend = InMemoryAuditBackend()
+        g = AuthorizationGate(audit_backend=backend, single_session_per_user=True)
+        a = g.create_session(user_id="alice", role="user")
+        b = g.create_session(user_id="alice", role="user", replace=True)
+        assert g.session_store.get(a.session_id) is None
+        assert g.get_session("alice").session_id == b.session_id
+        replaced = [r for r in backend.records if r.action == "session_replaced"]
+        assert len(replaced) == 1
+        assert replaced[0].session_id == a.session_id
+        assert replaced[0].metadata == {"replaced_by": b.session_id}
+
+    def test_benign_twin_replacement_session_is_clean(self):
+        g = AuthorizationGate(single_session_per_user=True)
+        g.register_tool("send_email", _g2_gate().get_permissions("send_email"))
+        a = g.create_session(user_id="alice", role="user")
+        _taint(g, a.session_id)
+        b = g.create_session(user_id="alice", role="user", replace=True)
+        _user_says(g, b.session_id)
+        r = g.authorize(
+            "send_email", user_id="alice", role="user",
+            parameters={"to": CONTACT}, is_external=True,
+        )
+        assert r.allowed
+
+    def test_other_users_are_unaffected(self):
+        g = AuthorizationGate(single_session_per_user=True)
+        g.create_session(user_id="alice", role="user")
+        g.create_session(user_id="bob", role="user")
+
+    def test_an_expired_session_does_not_conflict(self):
+        g = AuthorizationGate(single_session_per_user=True)
+        a = g.create_session(user_id="alice", role="user")
+        a.expires_at = 0.0
+        g.create_session(user_id="alice", role="user")
+
+    def test_default_off_keeps_the_old_supersede_behavior(self):
+        g = AuthorizationGate()
+        g.create_session(user_id="alice", role="user")
+        b = g.create_session(user_id="alice", role="user")
+        assert g.get_session("alice").session_id == b.session_id
 
 
 # ---------------------------------------------------------------------------

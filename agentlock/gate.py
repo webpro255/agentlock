@@ -257,12 +257,16 @@ class AuthorizationGate:
         velocity_config: VelocityConfig | None = None,
         combo_config: ComboConfig | None = None,
         receipt_signer: ReceiptSigner | None = None,
+        single_session_per_user: bool = False,
     ) -> None:
         self._tools: dict[str, AgentLockPermissions] = {}
         self._policy = PolicyEngine()
         self._rate_limiter = RateLimiter()
         self._token_store = TokenStore(default_ttl=token_ttl)
-        self._session_store = SessionStore()
+        # G2 candidate B: off by default, which is the 1.10.3 behavior.
+        self._session_store = SessionStore(
+            single_session_per_user=single_session_per_user,
+        )
         self._audit = AuditLogger(backend=audit_backend or InMemoryAuditBackend())
         self._redaction_engines: dict[str, RedactionEngine] = {}
         self._context_tracker = ContextTracker()
@@ -654,6 +658,7 @@ class AuthorizationGate:
         data_boundary: DataBoundary = DataBoundary.AUTHENTICATED_USER_ONLY,
         metadata: dict[str, Any] | None = None,
         known_contacts: Iterable[str] | None = None,
+        replace: bool = False,
     ) -> Session:
         """Create an authenticated session after out-of-band auth completes.
 
@@ -668,18 +673,37 @@ class AuthorizationGate:
             known_contacts: Recipient addresses for the known-contacts
                 recipient policy.  Populated only from deployer config at
                 session creation, never from tool or model output.
+            replace: G2.  End the user's live session, if any, and audit
+                that, before creating this one.  With ``False``, the default,
+                a gate built with ``single_session_per_user=True`` raises
+                ``SessionConflictError`` for a user who holds a live session.
 
         Returns:
             The created session.
+
+        Raises:
+            SessionConflictError: see ``replace``.
         """
-        return self._session_store.create(
+        replaced = self._session_store.get_by_user(user_id) if replace else None
+        session = self._session_store.create(
             user_id=user_id,
             role=role,
             data_boundary=data_boundary,
             max_duration=self._session_duration,
             metadata=metadata,
             known_contacts=known_contacts,
+            replace=replace,
         )
+        if replaced is not None:
+            self._audit.log(
+                tool_name="",
+                user_id=user_id,
+                role=replaced.role,
+                action="session_replaced",
+                session_id=replaced.session_id,
+                metadata={"replaced_by": session.session_id},
+            )
+        return session
 
     def get_session(self, user_id: str) -> Session | None:
         """Get active session for a user."""
