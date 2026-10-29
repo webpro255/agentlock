@@ -35,7 +35,7 @@ Four enforcement gaps reported by an external review of the 1.10.3 wheel, each r
 
 - **The HTTP adapters do not authorize the query string.** Only the JSON body is passed to `authorize()`; query parameters reach the handler without being seen by the gate. Form bodies are not a gap of the same kind: a non-JSON body is refused before the handler runs. A route that reads tool parameters from the query string is authorized as the empty call for those parameters, as every route was through 1.10.3.
 
-- **G2 probe row 1 stays open for callers that do not address a session and leave `single_session_per_user` off.** With the 1.11.0 defaults, a second `create_session` for a user who holds a tainted session succeeds, and a later call that addresses neither session reads the clean new one and is allowed. Pass `session_id=` to `authorize()` and `execute()`, or set `single_session_per_user=True`, to close it. None of the in-repo integrations passes `session_id`; the strict `xfail` in `tests/test_v111_review_gaps.py` records this row.
+- **G2 probe row 1 stays open for callers that do not address a session and leave `single_session_per_user` off.** With the 1.11.0 defaults, a second `create_session` for a user who holds a tainted session succeeds, and a later call that addresses neither session reads the clean new one and is allowed. Pass `session_id=` to `authorize()` and `execute()`, or set `single_session_per_user=True`, to close it. None of the files under `agentlock/integrations/` passes `session_id` to `authorize()`; the `@agentlock` decorator does, as of this release, via `_session_id`. The strict `xfail` in `tests/test_v111_review_gaps.py` records this row.
 
 ## [1.10.3] - 2026-09-18
 
