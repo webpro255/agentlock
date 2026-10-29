@@ -28,6 +28,8 @@ Example::
 
 from __future__ import annotations
 
+import hashlib
+import json
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterable
@@ -190,6 +192,23 @@ def _asserted_classes(**flags: bool) -> list[str]:
     boundary that keeps the two uses separate.
     """
     return [name for name in _ASSERTED_CLASS_FLAGS if flags.get(name)]
+
+
+def _permissions_fingerprint(permissions: AgentLockPermissions | None) -> str | None:
+    """A stable digest of a permission block, for the G1 commit re-check.
+
+    The block has no policy version of its own: ``version`` is the SCHEMA
+    version and does not move when a deployer edits roles, scope, or lineage
+    policy under it.  The digest covers every field, ``version`` included, so
+    any re-registration that changes the block changes it, and one that
+    re-registers the identical block does not.
+    """
+    if permissions is None:
+        return None
+    canonical = json.dumps(
+        permissions.model_dump(mode="json"), sort_keys=True, default=str,
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 def _redact_str_leaves(engine: RedactionEngine, value: Any) -> tuple[Any, int]:
@@ -2613,10 +2632,16 @@ class AuthorizationGate:
         evaluated.  Without it the record carries no flags and the commit-time
         re-decision falls back to FAIL-CLOSED (denied on taint), which is
         exactly the pre-v1.4 behavior.
+
+        v1.11 (G1): the record also snapshots what the commit-time re-check
+        compares against: the caller's ``user_id`` and ``role`` from the live
+        session ``session_id`` names, if it names one, and a fingerprint of
+        the tool's permission block as registered now.
         """
         summary = self._context_tracker.lineage_summary(session_id)
         key = "post_authoritative_taint" if require_post_authoritative else "tainted"
         taint_at_call = {**summary, "gated_on": key}
+        session = self._session_store.get(session_id)
         action_flags = (
             ActionFlags(
                 is_financial=is_financial,
@@ -2636,6 +2661,12 @@ class AuthorizationGate:
             parameters,
             taint_at_call=taint_at_call,
             action_flags=action_flags,
+            user_id=session.user_id if session else "",
+            role=session.role if session else "",
+            permissions_fingerprint=_permissions_fingerprint(
+                self._tools.get(tool_name)
+            ),
+            session_live_at_queue=session is not None,
         )
 
     def resolve_deferred_commits(
@@ -2671,6 +2702,24 @@ class AuthorizationGate:
         declarations anywhere this reduces to ``deny = tainted``, byte-identical
         to the pre-v1.4 path.
 
+        v1.11 (G1): before any of that, and whether or not the session is
+        tainted, the record is re-checked against what can change between
+        queue and commit.  Through 1.10.3 the untainted branch returned
+        before the registry was consulted, so a queued action committed after
+        its tool was unregistered, after the caller's role was revoked, and
+        after the caller's session was destroyed, each of which a fresh
+        ``authorize()`` at that moment would refuse or could not vouch for.
+        In order, each denying with its own reason:
+
+        * the tool is still registered (``unregistered_at_commit``);
+        * the record's role is still in ``allowed_roles``
+          (``role_revoked_at_commit``); a record queued with no live session
+          carries no role and skips this check;
+        * the record's session is still live, when it was live at queue time
+          (``session_gone_at_commit``);
+        * the permission block is unchanged since queue time
+          (``policy_changed_at_commit``), compared by fingerprint.
+
         Returns the resolved DeferralRecords; execution of committed actions
         is left to the caller.
         """
@@ -2687,6 +2736,13 @@ class AuthorizationGate:
                 if permissions is not None
                 else None
             )
+
+            # G1, FIRST: what can change between queue and commit without the
+            # session's taint changing at all.
+            reason = self._commit_recheck_reason(record, permissions, session_id)
+            if reason:
+                record.denial_reason = reason
+                return True
 
             # E6, FIRST: the per-parameter lineage checks, re-run against the
             # COMPLETE episode context.  These are independent of the session
@@ -2753,6 +2809,31 @@ class AuthorizationGate:
                 },
             )
         return resolved
+
+    def _commit_recheck_reason(
+        self,
+        record: DeferralRecord,
+        permissions: AgentLockPermissions | None,
+        session_id: str,
+    ) -> str:
+        """Re-check registration, role, session, and policy at commit (G1).
+
+        Returns the denial reason, or an empty string when nothing changed.
+        """
+        if permissions is None:
+            return "unregistered_at_commit"
+        if record.role and (
+            not permissions.allowed_roles
+            or record.role not in permissions.allowed_roles
+        ):
+            return DenialReason.ROLE_REVOKED_AT_COMMIT.value
+        if record.session_live_at_queue and self._session_store.get(
+            record.session_id or session_id
+        ) is None:
+            return DenialReason.SESSION_GONE_AT_COMMIT.value
+        if _permissions_fingerprint(permissions) != record.permissions_fingerprint:
+            return DenialReason.POLICY_CHANGED_AT_COMMIT.value
+        return ""
 
     def _commit_lineage_reason(
         self,

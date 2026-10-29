@@ -120,7 +120,6 @@ class TestG1DeferredCommit:
         g, s = _g1_queue()
         assert _resolutions(g, s) == [("committed", None)]
 
-    @pytest.mark.xfail(strict=True, reason=BASELINE)
     def test_role_revoked_before_commit_is_denied(self):
         g, s = _g1_queue()
         g.register_tool("send_email", _g1_perms(["admin"]))
@@ -131,17 +130,64 @@ class TestG1DeferredCommit:
         assert fresh.denial["reason"] == "insufficient_role"
         assert _resolutions(g, s) == [("denied", "role_revoked_at_commit")]
 
-    @pytest.mark.xfail(strict=True, reason=BASELINE)
     def test_tool_unregistered_before_commit_is_denied(self):
         g, s = _g1_queue()
         g._tools.pop("send_email")
         assert _resolutions(g, s) == [("denied", "unregistered_at_commit")]
 
-    @pytest.mark.xfail(strict=True, reason=BASELINE)
     def test_session_destroyed_before_commit_is_denied(self):
         g, s = _g1_queue()
         g.session_store.destroy(s.session_id)
         assert _resolutions(g, s) == [("denied", "session_gone_at_commit")]
+
+
+class TestG1CandidateAChangedRecheck:
+    """Candidate A: the commit-time re-check of what can change."""
+
+    def test_benign_twin_identical_re_registration_still_commits(self):
+        g, s = _g1_queue()
+        g.register_tool("send_email", _g1_perms(["user"]))
+        assert _resolutions(g, s) == [("committed", None)]
+
+    def test_a_changed_policy_is_denied(self):
+        g, s = _g1_queue()
+        g.register_tool("send_email", _g1_perms(["user", "admin"]))
+        assert _resolutions(g, s) == [("denied", "policy_changed_at_commit")]
+
+    def test_the_record_carries_the_queue_time_snapshot(self):
+        g, s = _g1_queue()
+        (record,) = g.peek_deferred_commits(s.session_id)
+        assert (record.user_id, record.role) == ("alice", "user")
+        assert record.session_live_at_queue is True
+        assert record.permissions_fingerprint
+
+    def test_the_recheck_runs_on_the_tainted_path_too(self):
+        """Taint still present at commit: before G1 an unregistered tool was
+        denied here already; a revoked role now is too, with its own reason."""
+        g, s = _g1_queue()
+        g.notify_context_write(
+            s.session_id, ContextSource.WEB_CONTENT, _h("late"),
+            tool_name="fetch_url", content="late page",
+        )
+        g.register_tool("send_email", _g1_perms(["admin"]))
+        assert _resolutions(g, s) == [("denied", "role_revoked_at_commit")]
+
+    def test_a_context_only_session_skips_role_and_session_checks(self):
+        """A record queued against an id with no authenticated session
+        carries no role and no live session; only registration and policy
+        are re-checked."""
+        g = AuthorizationGate()
+        g.register_tool("send_email", _g1_perms(["user"]))
+        g.notify_context_write(
+            "ctx-only", ContextSource.USER_MESSAGE, _h("u"),
+            content=f"send to {CONTACT}",
+        )
+        g.defer_consequential(
+            "ctx-only", "send_email", {"to": CONTACT},
+            is_external=True, record_action_flags=True,
+        )
+        res = g.resolve_deferred_commits("ctx-only")
+        assert [(x.resolution, x.denial_reason) for x in res] == [("committed", None)]
 
 
 class TestG1FirstAttemptShape:

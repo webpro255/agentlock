@@ -107,6 +107,13 @@ class DeferralRecord:
     # nothing, which the gate treats as FAIL-CLOSED (gated on taint) -- the
     # exact pre-v1.4 behavior.
     action_flags: ActionFlags | None = None
+    # v1.11 (G1): what the commit-time re-check compares against.  A
+    # fingerprint of the tool's permission block as registered at queue time
+    # (``None`` when it was not registered), and whether ``session_id`` named
+    # a live authenticated session at queue time.  ``user_id`` and ``role``
+    # above are taken from that session.
+    permissions_fingerprint: str | None = None
+    session_live_at_queue: bool = False
 
     @property
     def is_resolved(self) -> bool:
@@ -287,6 +294,10 @@ class DeferralManager:
         *,
         taint_at_call: dict[str, Any] | None = None,
         action_flags: ActionFlags | None = None,
+        user_id: str = "",
+        role: str = "",
+        permissions_fingerprint: str | None = None,
+        session_live_at_queue: bool = False,
     ) -> DeferralRecord:
         """Queue a consequential action for end-of-turn commit/deny.
 
@@ -311,6 +322,10 @@ class DeferralManager:
             reason=f"'{tool_name}' deferred for end-of-turn commit review.",
             taint_at_call=taint_at_call,
             action_flags=action_flags,
+            user_id=user_id,
+            role=role,
+            permissions_fingerprint=permissions_fingerprint,
+            session_live_at_queue=session_live_at_queue,
         )
         self._deferrals[record.deferral_id] = record
         self._commit_queue.setdefault(session_id, []).append(record)
