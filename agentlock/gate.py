@@ -2720,16 +2720,6 @@ class AuthorizationGate:
         * the permission block is unchanged since queue time
           (``policy_changed_at_commit``), compared by fingerprint.
 
-        That is ``defer_policy.commit_recheck="changed"``, the default.  With
-        ``"full"`` the four checks are replaced by a fresh ``authorize()`` of
-        the queued call, under the record's user and role, resolved by user
-        as an unaddressed call is; the record commits only if it allows, and
-        carries the result as ``record.commit_auth``.  A destroyed session is
-        where the two differ: the fresh call finds no session, which
-        ``authorize()`` treats as a host-trusted caller, and allows.  Either
-        way the taint re-decision below still runs, so neither mode commits
-        anything 1.10.3 denied.
-
         Returns the resolved DeferralRecords; execution of committed actions
         is left to the caller.
         """
@@ -2748,30 +2738,11 @@ class AuthorizationGate:
             )
 
             # G1, FIRST: what can change between queue and commit without the
-            # session's taint changing at all.  The mode is read from the
-            # block registered NOW; an unregistered tool has none, and takes
-            # the "changed" path, which denies it.
-            record.commit_auth = None
-            mode = (
-                permissions.defer_policy.commit_recheck
-                if permissions is not None and permissions.defer_policy
-                else "changed"
-            )
-            if mode != "full":
-                reason = self._commit_recheck_reason(
-                    record, permissions, session_id
-                )
-                if reason:
-                    record.denial_reason = reason
-                    return True
-            if mode != "changed" and permissions is not None:
-                fresh = self._commit_reauthorize(record)
-                record.commit_auth = fresh
-                if not fresh.allowed:
-                    record.denial_reason = (fresh.denial or {}).get(
-                        "reason", "unknown"
-                    )
-                    return True
+            # session's taint changing at all.
+            reason = self._commit_recheck_reason(record, permissions, session_id)
+            if reason:
+                record.denial_reason = reason
+                return True
 
             # E6, FIRST: the per-parameter lineage checks, re-run against the
             # COMPLETE episode context.  These are independent of the session
@@ -2863,22 +2834,6 @@ class AuthorizationGate:
         if _permissions_fingerprint(permissions) != record.permissions_fingerprint:
             return DenialReason.POLICY_CHANGED_AT_COMMIT.value
         return ""
-
-    def _commit_reauthorize(self, record: DeferralRecord) -> AuthResult:
-        """A fresh ``authorize()`` of a queued call (G1 candidate B).
-
-        Over the snapshotted parameters, with the record's user, role, and
-        action classes.  It is a real authorization: it is audited, counts
-        against the rate limit, and issues a token on allow.
-        """
-        flags = asdict(record.action_flags) if record.action_flags else {}
-        return self.authorize(
-            record.tool_name,
-            user_id=record.user_id,
-            role=record.role,
-            parameters=record.parameters,
-            **flags,
-        )
 
     def _commit_lineage_reason(
         self,

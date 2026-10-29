@@ -42,7 +42,7 @@ from agentlock import (
 )
 from agentlock.audit import InMemoryAuditBackend
 from agentlock.exceptions import AgentLockError, DeniedError, SessionConflictError
-from agentlock.schema import DataPolicyConfig, DeferPolicyConfig
+from agentlock.schema import DataPolicyConfig
 
 BASELINE = "baseline of record, see docs/PREDICTIONS_v111_review_gaps.md"
 
@@ -190,90 +190,20 @@ class TestG1CandidateAChangedRecheck:
         assert [(x.resolution, x.denial_reason) for x in res] == [("committed", None)]
 
 
-def _g1_perms_mode(roles: list[str], mode: str) -> AgentLockPermissions:
-    return _g1_perms(roles).model_copy(
-        update={"defer_policy": DeferPolicyConfig(commit_recheck=mode)},
-    )
+class TestG1D2DestroyedSession:
+    """Baseline doc Section 4, D2: a fresh ``authorize()`` with no session
+    trusts the host and would allow, so only the explicit session-liveness
+    rule of the commit-time re-check denies this row."""
 
-
-def _g1_queue_mode(mode: str):
-    g, s = _g1_queue()
-    g.register_tool("send_email", _g1_perms_mode(["user"], mode))
-    # Re-queue under the mode's block, so its fingerprint is the snapshot.
-    g.clear_deferred_commits(s.session_id)
-    g.defer_consequential(
-        s.session_id, "send_email", {"to": CONTACT},
-        is_external=True, record_action_flags=True,
-    )
-    return g, s
-
-
-class TestG1CandidateBFullReauthorization:
-    """Candidate B: ``defer_policy.commit_recheck="full"``."""
-
-    def test_d2_destroyed_session_full_allows_changed_denies(self):
-        """The one difference the baseline doc predicts (Section 4, D2):
-        with no session the fresh ``authorize()`` trusts the host."""
-        g, s = _g1_queue_mode("full")
+    def test_d2_destroyed_session_is_denied_session_gone_at_commit(self):
+        g, s = _g1_queue()
         g.session_store.destroy(s.session_id)
-        (record,) = g.resolve_deferred_commits(s.session_id)
-        assert (record.resolution, record.denial_reason) == ("committed", None)
-        assert record.commit_auth.allowed
-
-        g, s = _g1_queue_mode("changed")
-        g.session_store.destroy(s.session_id)
-        assert _resolutions(g, s) == [("denied", "session_gone_at_commit")]
-
-    def test_benign_twin_full_commits_and_carries_the_fresh_grant(self):
-        g, s = _g1_queue_mode("full")
-        (record,) = g.resolve_deferred_commits(s.session_id)
-        assert (record.resolution, record.denial_reason) == ("committed", None)
-        assert record.commit_auth.allowed
-        assert record.commit_auth.token is not None
-        assert record.commit_auth.token.user_id == "alice"
-
-    def test_full_role_revoked_is_denied_with_the_fresh_reason(self):
-        g, s = _g1_queue_mode("full")
-        g.register_tool("send_email", _g1_perms_mode(["admin"], "full"))
-        (record,) = g.resolve_deferred_commits(s.session_id)
-        assert (record.resolution, record.denial_reason) == (
-            "denied", "insufficient_role",
+        fresh = g.authorize(
+            "send_email", user_id="alice", role="user",
+            parameters={"to": CONTACT}, is_external=True,
         )
-        assert not record.commit_auth.allowed
-
-    def test_full_unregistered_is_denied(self):
-        g, s = _g1_queue_mode("full")
-        g._tools.pop("send_email")
-        assert _resolutions(g, s) == [("denied", "unregistered_at_commit")]
-
-    def test_full_does_not_deny_a_policy_change_the_fresh_call_allows(self):
-        """Measured, not predicted by the baseline doc: widening the block
-        between queue and commit denies under "changed" (fingerprint) and
-        commits under "full" (the fresh call allows)."""
-        g, s = _g1_queue_mode("full")
-        g.register_tool("send_email", _g1_perms_mode(["user", "admin"], "full"))
-        assert _resolutions(g, s) == [("committed", None)]
-
-        g, s = _g1_queue_mode("changed")
-        g.register_tool(
-            "send_email", _g1_perms_mode(["user", "admin"], "changed"),
-        )
-        assert _resolutions(g, s) == [("denied", "policy_changed_at_commit")]
-
-    def test_an_unknown_mode_runs_both(self):
-        g, s = _g1_queue_mode("bogus")
-        g.session_store.destroy(s.session_id)
+        assert fresh.allowed
         assert _resolutions(g, s) == [("denied", "session_gone_at_commit")]
-        g, s = _g1_queue_mode("bogus")
-        (record,) = g.resolve_deferred_commits(s.session_id)
-        assert record.resolution == "committed"
-        assert record.commit_auth.allowed
-
-    def test_changed_leaves_commit_auth_empty(self):
-        g, s = _g1_queue_mode("changed")
-        (record,) = g.resolve_deferred_commits(s.session_id)
-        assert record.resolution == "committed"
-        assert record.commit_auth is None
 
 
 class TestG1FirstAttemptShape:
