@@ -27,8 +27,10 @@ G4. Structured-output redaction (``probe_review_gaps.py``, G4 rows).
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
+from collections import namedtuple
 
 import pytest
 
@@ -38,6 +40,7 @@ from agentlock import (
     ContextSource,
     LineagePolicyConfig,
 )
+from agentlock.audit import InMemoryAuditBackend
 from agentlock.exceptions import AgentLockError
 from agentlock.schema import DataPolicyConfig
 
@@ -219,10 +222,8 @@ class TestG2SessionIsolation:
             parameters={"to": CONTACT}, is_external=True,
         )
         assert before.denial["reason"] == "untrusted_lineage"
-        try:
+        with contextlib.suppress(AgentLockError):
             g.create_session(user_id="alice", role="user")
-        except AgentLockError:
-            pass
         after = g.authorize(
             "send_email", user_id="alice", role="user",
             parameters={"to": CONTACT}, is_external=True,
@@ -290,7 +291,7 @@ def _fastapi_middleware_client(g):
     ran: list[object] = []
 
     @app.post("/send")
-    async def send(payload: dict = fastapi.Body(...)):
+    async def send(payload: dict = fastapi.Body(...)):  # noqa: B008
         ran.append(payload)
         return {"ok": True}
 
@@ -313,8 +314,8 @@ def _fastapi_dependency_client(g):
 
     @app.post("/send")
     async def send(
-        payload: dict = fastapi.Body(...),
-        auth=fastapi.Depends(require_agentlock(g, "send_email")),
+        payload: dict = fastapi.Body(...),  # noqa: B008
+        auth=fastapi.Depends(require_agentlock(g, "send_email")),  # noqa: B008
     ):
         ran.append(payload)
         return {"ok": True}
@@ -418,12 +419,10 @@ class TestG4StructuredRedaction:
         out = _run(_g4_gate(), f"SSN {SSN} mail {CONTACT}")
         assert out == "SSN [REDACTED:ssn] mail [REDACTED:email]"
 
-    @pytest.mark.xfail(strict=True, reason=BASELINE)
     def test_dict_output_is_redacted(self):
         out = _run(_g4_gate(), {"ssn": SSN, "contact": CONTACT})
         assert out == {"ssn": "[REDACTED:ssn]", "contact": "[REDACTED:email]"}
 
-    @pytest.mark.xfail(strict=True, reason=BASELINE)
     def test_list_output_is_redacted(self):
         out = _run(_g4_gate(), [SSN, CONTACT])
         assert out == ["[REDACTED:ssn]", "[REDACTED:email]"]
@@ -436,3 +435,47 @@ class TestG4StructuredRedaction:
         result = {"name": "Bob", "visits": 3, "tags": ["a", "b"], "ok": True}
         out = _run(_g4_gate(), result)
         assert out == result
+        assert out is result
+
+    def test_tuple_and_named_tuple_keep_their_type(self):
+        Row = namedtuple("Row", ["ssn", "visits"])
+        out = _run(_g4_gate(), (SSN, 3))
+        assert out == ("[REDACTED:ssn]", 3)
+        assert type(out) is tuple
+        row = _run(_g4_gate(), Row(SSN, 3))
+        assert row == Row("[REDACTED:ssn]", 3)
+        assert type(row) is Row
+
+    def test_nested_leaves_are_redacted_and_non_str_leaves_kept(self):
+        out = _run(_g4_gate(), {
+            "rows": [{"ssn": SSN, "n": 1}, (CONTACT, None)],
+            "count": 2,
+        })
+        assert out == {
+            "rows": [{"ssn": "[REDACTED:ssn]", "n": 1}, ("[REDACTED:email]", None)],
+            "count": 2,
+        }
+
+    def test_dict_keys_are_not_redacted(self):
+        out = _run(_g4_gate(), {SSN: SSN})
+        assert out == {SSN: "[REDACTED:ssn]"}
+
+    def test_one_audit_record_with_the_total(self):
+        backend = InMemoryAuditBackend()
+        g = AuthorizationGate(audit_backend=backend)
+        g.register_tool("lookup", AgentLockPermissions(
+            risk_level="low", allowed_roles=["user"], version="1.3",
+            data_policy=DataPolicyConfig(
+                prohibited_in_output=["ssn", "email"], redaction="auto",
+            ),
+        ))
+        g.create_session(user_id="alice", role="user")
+        _run(g, {"a": f"{SSN} {CONTACT}", "b": [SSN]})
+        redacted = [r for r in backend.records if r.action == "redacted"]
+        assert len(redacted) == 1
+        assert redacted[0].metadata == {"redactions": 3}
+
+    def test_bytes_are_left_untouched(self):
+        """Known limit, stated in the CHANGELOG: bytes are not walked."""
+        payload = f"SSN {SSN}".encode()
+        assert _run(_g4_gate(), payload) == payload

@@ -192,6 +192,49 @@ def _asserted_classes(**flags: bool) -> list[str]:
     return [name for name in _ASSERTED_CLASS_FLAGS if flags.get(name)]
 
 
+def _redact_str_leaves(engine: RedactionEngine, value: Any) -> tuple[Any, int]:
+    """Redact every ``str`` leaf of a (possibly nested) tool result.
+
+    G4.  Redaction in ``execute()`` ran behind ``isinstance(result, str)``, so
+    a tool returning a mapping or a sequence handed its prohibited data back
+    untouched.  The walk has the shape of ``context._iter_param_leaves``:
+    ``dict`` values, ``list`` and ``tuple`` items, recursively.  Dictionary
+    KEYS are not redacted, for the reason ``apply_output_modifier`` gives.
+    The container type is rebuilt: a named tuple through ``_make``, any other
+    ``tuple`` as a ``tuple``, a ``dict`` or ``list`` subclass as the plain
+    type.  Anything else is returned unchanged, ``bytes`` included.
+
+    Returns the rebuilt value and the number of redactions summed over every
+    leaf.  With zero redactions the ORIGINAL object is returned, so a clean
+    result is not copied.
+    """
+    if isinstance(value, str):
+        redaction = engine.redact(value)
+        return redaction.redacted, len(redaction.redactions)
+    if isinstance(value, dict):
+        total = 0
+        rebuilt: dict[Any, Any] = {}
+        for key, item in value.items():
+            rebuilt[key], count = _redact_str_leaves(engine, item)
+            total += count
+        return (rebuilt, total) if total else (value, 0)
+    if isinstance(value, (list, tuple)):
+        total = 0
+        items = []
+        for item in value:
+            new_item, count = _redact_str_leaves(engine, item)
+            items.append(new_item)
+            total += count
+        if not total:
+            return value, 0
+        if isinstance(value, list):
+            return items, total
+        if hasattr(type(value), "_make"):
+            return type(value)._make(items), total
+        return tuple(items), total
+    return value, 0
+
+
 class AuthorizationGate:
     """Central authorization enforcement point.
 
@@ -1885,20 +1928,22 @@ class AuthorizationGate:
                 )
                 result = modified
 
-        # Redact output if configured (defense-in-depth, runs after MODIFY)
+        # Redact output if configured (defense-in-depth, runs after MODIFY).
+        # G4: every str leaf of a dict, list, or tuple result, not only a
+        # str result.  One audit record per call, carrying the total.
         engine = self._redaction_engines.get(tool_name)
-        if engine and isinstance(result, str):
-            redaction = engine.redact(result)
-            if redaction.was_redacted:
+        if engine:
+            redacted, count = _redact_str_leaves(engine, result)
+            if count:
                 self._audit.log(
                     tool_name=tool_name,
                     user_id=token.user_id,
                     role=token.role,
                     action="redacted",
                     risk_level=self._tools[tool_name].risk_level.value,
-                    metadata={"redactions": len(redaction.redactions)},
+                    metadata={"redactions": count},
                 )
-                return redaction.redacted
+                return redacted
 
         return result
 
