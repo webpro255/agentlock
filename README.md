@@ -314,6 +314,7 @@ changelog. That is how we intend to keep working.
 
 | version | highlights | tests |
 |---------|-----------|-------|
+| 1.11.0  | external review of the 1.10.3 wheel: a deferred action is re-checked at commit for registration, role, session liveness and policy version; `authorize()` and `execute()` address a session by `session_id`, and a second live session per user can be refused with `single_session_per_user`; destroying a superseded session no longer orphans the live one; the HTTP adapters authorize the JSON body and fail closed on other content types; redaction reaches every `str` leaf of structured results on every path | 1894 with the `crypto` and `mcp` extras plus `fastapi` and `flask`, without `python-jose`, 25 skipped and 1 expected failure |
 | 1.10.3  | extractor hygiene: a `str` lineage token strips a trailing period, matching `_canon_url`, so a sentence-final prose word is no longer distinctive, which removes false-positive denials and adds none; derived-origin external actions escalate to `needs_approval` under the new opt-in `gate_derived_origin`, off by default, fail-closed, escalating the whole class rather than reading content | 1834 with the `crypto` and `mcp` extras plus `fastapi`, `flask` and `python-jose`, 9 skipped |
 | 1.10.2  | verified identity and one denial predicate: a bearer token carries identity only once it has been verified against a configured key, a token that fails verification is refused rather than falling back to the identity headers, and a configured key refuses a request that presents no token at all rather than identifying it by header; an execution reported after a TIMEOUT denial is classified as one rather than as an ordinary completion | 1746 with the `crypto` and `mcp` extras plus `fastapi`, `flask` and `python-jose`, 9 skipped |
 | 1.10.1  | recheck: the reviewer re-ran the oracle against the published 1.10.0 wheel and added 32 cases; resolved path containment resolves before it normalizes and returns the path it checked; one MCP payload walker serving both the declared transformation and the data policy, covering embedded resources; recipient restriction parses the whole value rather than its first address | 1688 with the `crypto` and `mcp` extras plus `fastapi` and `flask`, 9 skipped |
@@ -456,6 +457,8 @@ either way: they prove nothing on their own, and a deployment facing untrusted
 clients directly has to strip client-supplied `X-AgentLock-*` at its edge or
 authenticate by verified token instead.
 
+As of 1.11.0 both HTTP adapters authorize the request's JSON body as the tool parameters and refuse, with 403 and the handler not run, any non-empty body of another content type; the query string is still not authorized.
+
 The contract every wrapper now follows is one sentence long: `authorize()`
 returns the parameters the call will actually run with and the transformation
 its return value will pass through, and the wrapper does both.
@@ -477,7 +480,7 @@ Because there is one applier and one binding inverse, adding an execution route
 means calling them rather than reimplementing them, and the shape of a tool's
 return no longer decides whether its declared policy runs. What the contract does
 not cover is listed under Limits in the changelog: the two HTTP adapters authorize
-a request without its body and so run none of the per-parameter checks, and
+a request's JSON body but not its query string, and
 anything past a `__wrapped__` boundary is the application's own code.
 
 Full feature history:

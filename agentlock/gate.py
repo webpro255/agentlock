@@ -251,8 +251,9 @@ def _redact_str_leaves(engine: RedactionEngine, value: Any) -> tuple[Any, int]:
             return value, 0
         if isinstance(value, list):
             return items, total
-        if hasattr(type(value), "_make"):
-            return type(value)._make(items), total
+        make = getattr(type(value), "_make", None)
+        if make is not None:
+            return make(items), total
         return tuple(items), total
     if isinstance(value, (set, frozenset)):
         total = 0
